@@ -64,10 +64,10 @@ class PressureNS(PDEFunc):
         rhs_val, grad_Ix, grad_Iy = aux_input
 
         #resid = grad_Ix * dpdx + grad_Iy * dpdy + 1 * d2pdx2 + 1 * d2pdy2 - rhs_val
-        #resid = 1 * d2pdx2 + 1 * d2pdy2 - rhs_val
+        resid = 1 * d2pdx2 + 1 * d2pdy2 - rhs_val
         #resid = laplacian - rhs_val
-        k = 0.1
-        resid =  k * laplacian +  (1 - k)*(d2pdx2 + d2pdy2) - rhs_val
+        #k = 0.1
+        #resid =  k * laplacian +  (1 - k)*(d2pdx2 + d2pdy2) - rhs_val
 
 
         return resid

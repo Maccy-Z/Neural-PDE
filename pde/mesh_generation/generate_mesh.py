@@ -1,11 +1,9 @@
 import numpy as np
-import sys
-import pickle
 from cprint import c_print
-import json
+from matplotlib import pyplot as plt
 import meshpy.triangle as tri
 from pde.mesh_generation.mesh_gen_utils import (MeshProps, min_dist_to_boundary,
-                            plot_mesh, extract_mesh_data)
+                            plot_mesh, extract_mesh_data, plot_edges)
 from pde.mesh_generation.geometries import MeshFacet, Circle, Box, Line, Ellipse
 from pde.graph_grid.graph_store import P_Types as PT
 from pde.utils import dict_key_by_value
@@ -172,6 +170,7 @@ def gen_mesh_time(xmin, xmax, ymin, ymax, areas=None):
     ]
     mesh, marker_tags = create_mesh(coords, mesh_props)
     point_props, markers, _ = extract_mesh_data(mesh)
+
     points, _ = point_props
     p_markers, _ = markers
 
@@ -198,6 +197,59 @@ def gen_mesh_time(xmin, xmax, ymin, ymax, areas=None):
     #p_tags = [marker_tags[int(i)] for i in p_markers]
 
     return points, p_tags
+
+
+def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None):
+    if areas is None:
+        min_area = 5.e-3
+        max_area = 10e-3
+    else:
+        min_area, max_area = areas
+
+    circle_center = (0.5, 0.4)
+    circle_radius = 0.5
+
+    bound_ln = np.sqrt(min_area)
+    # print(lnscale)
+
+    mesh_props = MeshProps(min_area, max_area, lengthscale=0.5)
+
+    coords = [
+                Line([xmin, ymin], [xmax, ymin], True, name="Wall"),     # Bottom
+                Line([xmin, ymax], [xmax, ymax], True, name="Wall"),     # Top
+                Line([xmin, ymin], [xmin, ymax], True, name="Left"),    # Left
+                Line([xmax, ymax], [xmax, ymin], True, name="Right"),   # Right
+        # Circle((1.0, 0.5), circle_radius, lnscale, True, name="Right"),
+
+    ]
+    mesh, marker_tags = create_mesh(coords, mesh_props)
+    _point_props, _markers, _edges = extract_mesh_data(mesh)
+
+    points, triangles = _point_props
+    p_markers, _ = _markers
+    int_edges, bound_edges = _edges
+
+    # Set corner tags very carefully
+    corners = [[xmin, xmin], [xmin, ymax], [xmax, ymax], [xmax, ymin]]
+    wall_tag = dict_key_by_value(marker_tags, "Wall")
+    for i, (point, tag) in enumerate(zip(points, p_markers, strict=True)):
+        if np.any(np.all(np.isclose(corners, point), axis=1)):
+            p_markers[i] = wall_tag        # Corresponds to wall
+    p_tags = [marker_tags[int(i)] for i in p_markers]
+
+    # Value points
+
+    # plot_mesh(centroids, centroids[:, 0])
+
+    # Flux edges
+    # n_bound_edge = bound_edges.shape[0]
+    # n_int_edge = int_edges.shape[0]
+    #
+    # all_edges = np.concatenate((bound_edges, int_edges))
+    # plot_edges(points, bound_edges, title="boundary edges")
+    # plot_edges(points, int_edges, title="interior edges")
+
+    return points, triangles, (int_edges, bound_edges)
 
 
 def main():

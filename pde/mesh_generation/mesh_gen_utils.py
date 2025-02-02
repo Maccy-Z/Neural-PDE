@@ -74,13 +74,6 @@ def extract_mesh_data(mesh):
 
 
 def plot_mesh(points, p_markers):
-    # Points: List of (x, y) coordinates
-    # Elements: List of 3-tuples of triangle vertex indices
-    # Facets: List of 2-tuples of bounding edge vertex indices
-    #point_props, markers, edges = extract_mesh_data(mesh)
-    # points, _ = point_props
-    # p_markers, _ = markers
-
     # Plot the points
     cmap = cm.viridis
     norm = mcolors.Normalize(vmin=min(p_markers), vmax=max(p_markers))
@@ -95,9 +88,23 @@ def plot_mesh(points, p_markers):
     )
     # Plot bounding facets (edges)
     plt.gca().set_aspect('equal', adjustable='box')
-    plt.xlabel('X-axis')
-    plt.ylabel('Y-axis')
     plt.title('2D CFD Mesh')
     # plt.grid(True)
     plt.tight_layout()
     plt.show()
+
+def plot_edges(coords, edge_idx, title=""):
+    """ Plot the edges of the mesh.
+        coords.shape = (n, 2)
+        edge_idx.shape = (m, 2)
+    """
+    points = coords[edge_idx]   # shape = (m, 2, 2)
+    for edge in points:
+        plt.plot(edge[:, 0], edge[:, 1], 'k-')
+
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.tight_layout()
+    plt.title(title)
+    plt.show()
+
+

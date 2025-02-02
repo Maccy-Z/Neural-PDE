@@ -206,6 +206,20 @@ def plot_points(Xs, value, title=""):
     plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis')
     plt.show()
 
+def plot_edges(coords, edge_idx, title=""):
+    """ Plot the edges of the mesh.
+        coords.shape = (n, 2)
+        edge_idx.shape = (m, 2)
+    """
+    points = coords[edge_idx]   # shape = (m, 2, 2)
+    for edge in points:
+        plt.plot(edge[:, 0], edge[:, 1], 'k-')
+
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.tight_layout()
+    plt.title(title)
+    plt.show()
+
 
 if __name__ == "__main__":
     # Sample data: list of (x, y) coordinates and their scalar values

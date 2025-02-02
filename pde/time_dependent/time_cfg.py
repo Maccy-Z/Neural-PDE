@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 @dataclass()
 class ConfigTime:
-    time_domain: tuple[int] = (0, 0.04)
+    time_domain: tuple[int] = (0, 0.08)
     timesteps: int = 80
     substeps: int = 2
 

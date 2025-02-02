@@ -107,9 +107,9 @@ class UGraphTime(UBase):
         types = [p.point_type for p in points]
         assert types.count(T.Ghost) == types.count(T.NeumCentralBC), "Number of ghost points must equal central Neumann BC points."
 
-        for idx, t_p in setup_dict.items():
-            P_type = t_p.point_type
-            assert P_type[0] == P_type[1]
+        # for idx, t_p in setup_dict.items():
+        #     P_type = t_p.point_type
+        #     assert P_type[0] == P_type[1]
 
     def __init__(self, setup_dict: dict[int, T_Point], N_component, grad_acc:int = 2, max_degree:int = 2, device="cpu"):
         """ Initialize the graph with a set of points.
@@ -144,7 +144,6 @@ class UGraphTime(UBase):
         grad_setup_dict = {}
         for idx, t_p in self.setup_dict.items():
             P_type = t_p.point_type
-            assert P_type[0] == P_type[1]
             if P_type[0] == TT.NORMAL:
                 grad_setup_dict[idx] = Point(T.GRAD, t_p.X, value=None)
             else:
