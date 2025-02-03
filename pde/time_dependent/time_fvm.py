@@ -1,74 +1,25 @@
 import torch
 from cprint import c_print
+from matplotlib import pyplot as plt
 
-from pde.graph_grid.graph_store import Point,  Deriv, T_Point
-from pde.graph_grid.graph_store import P_TimeTypes as TT
 from pde.config import Config
 from pde.mesh_generation.generate_mesh import gen_mesh_fvm
 from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges
 from pde.time_dependent.time_cfg import ConfigTime
-from pde.time_dependent.U_time_graph import UGraphTime, UTemp
-
-from matplotlib import pyplot as plt
-
-class FVMNodes:
-    centroids: torch.Tensor  # shape = (n_triangles, 2)
-    values: torch.Tensor  # shape = (n_triangles, N_component)
-
-    def __init__(self, centroids, values):
-        self.centroids = centroids
-        self.values = values
-
-class FVMEdges:
-    normals: torch.Tensor  # shape = (n_edges, 2)
-
-    tri_to_edge: torch.Tensor  # shape = (n_triangles, 3)
-    edge_to_tri: dict[int, torch.Tensor]  # shape = {n_edges}[anit_idx, para_idx], ordered so triangle parallel to edge normal comes last, antiparallel first.
-    edge_to_tri_w: dict[int, torch.Tensor]  # shape = {n_edges}[w_anti, w_para]
-
-    bc_edge_mask: torch.Tensor  # shape = (n_edges)
-
-    fluxes: torch.Tensor  # shape = (n_edges, N_component)
-
-    def __init__(self, n_edges, n_triangles, n_comp, normals, edge_to_tri, edge_to_tri_w, bc_edge_mask):
-        self.n_edges = n_edges
-        self.n_triangles = n_triangles
-        self.n_comp = n_comp
-
-        self.normals = normals
-        self.edge_to_tri = edge_to_tri
-        self.edge_to_tri_w = edge_to_tri_w
-        self.bc_edge_mask = bc_edge_mask
-
-        self.fluxes = torch.empty(n_edges, n_comp)
-
-    def edge_fluxes(self, Us, bc_flux):
-        """ Compute fluxes for each edge.
-            Us.shape = (n_triangles, N_component)
-        """
-        flux_vals = []
-        for edge, tri in self.edge_to_tri.items():
-            if tri.shape[0] == 1:
-                continue
-            w = self.edge_to_tri_w[edge]
-            Us_edge = Us[tri]       # shape = [2, N_component]
-            fluxes = w[0] * Us_edge[0] + w[1] * Us_edge[1]
-            flux_val = torch.sum(fluxes * self.normals[edge], dim=-1)
-
-            flux_vals.append(flux_val)
-
-        flux_vals = torch.stack(flux_vals)
-        self.fluxes[~self.bc_edge_mask] = flux_vals
-        self.fluxes[self.bc_edge_mask] = bc_flux
-
-
-
 
 class FVMMesh:
+    n_cells: int
+    n_edges: int
+    n_bc_edge: int
+
+    areas: torch.Tensor  # shape = (n_cells)
     normals: torch.Tensor  # shape = (n_edges, 2)
     lengths: torch.Tensor  # shape = (n_edges)
-    centroids: torch.Tensor  # shape = (n_triangles, 2)
-
+    centroids: torch.Tensor  # shape = (n_cells, 2)
+    tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
+    tri_edge_sign: torch.Tensor  # shape = (n_cells, 3)
+    edge_to_tri: dict[int, torch.Tensor]  # shape = {n_edges}[2]        # Mapping edge to triangle indices. Ordered [antiparallel, parallel] to edge normal.
+    edge_to_tri_w: dict[int, torch.Tensor]  # shape = {n_updt_edge}[2]
 
     def __init__(self, vertices, triangles, edges, bc_edge_mask, device="cuda"):
         self.vertices = vertices
@@ -77,23 +28,31 @@ class FVMMesh:
         self.bc_edge_mask = bc_edge_mask
         self.device = device
 
+        self.n_cells = triangles.shape[0]
+        self.n_edges = edges.shape[0]
+        self.n_bc_edge = bc_edge_mask.sum().item()
+        assert edges.shape[0] == bc_edge_mask.shape[0], f'Different number of edges from bc edge mask {edges.shape = }, {bc_edge_mask.shape = }'
+
         self._compute_edge_props(vertices, triangles, edges)
 
     def _compute_edge_props(self, vertices, triangles, edges):
         # Compute edge normals and lengths
         edge_vertex = vertices[edges]
-        edge_vectors = edge_vertex[:, 1] - edge_vertex[:, 0]
-        #lengths = torch.norm(edge_vectors, dim=1, keepdim=True)
+        edge_vectors = edge_vertex[:, 1] - edge_vertex[:, 0]        # Ordering is used as edge index from here.
         normals = torch.stack([edge_vectors[:, 1], -edge_vectors[:, 0]], dim=1)
         self.normals = normals                          # shape = [n_edges, 2]
         midpoints = torch.mean(edge_vertex, dim=1)      # shape = [n_edges, 2]
 
         # Triangle area and centroid
         tri_points = vertices[triangles]
-        self.centroids = torch.mean(tri_points, dim=1)  # shape = [n_triangles, 2]
+        self.areas = self._tri_area(tri_points)
+        self.centroids = torch.mean(tri_points, dim=1)  # shape = [n_cells, 2]
 
-        tri_to_edge = self._get_tri_edges(triangles, edges) # shape = [n_triangles, 3]
-        unique_edges, inverse_indices = torch.unique(tri_to_edge, sorted=True, return_inverse=True)
+
+        # Compute mapping of edges to triangles
+        tri_to_edge = self._get_tri_edges(triangles, edges) # shape = [n_cells, 3]
+        self.tri_to_edge = tri_to_edge
+        unique_edges, _ = torch.unique(tri_to_edge, sorted=True, return_inverse=True)
         edge_to_tri, tri_edge_idxs = {}, {}
         for edge in unique_edges:
             pos = (edge == tri_to_edge).nonzero()
@@ -101,11 +60,15 @@ class FVMMesh:
             edge_to_tri[edge.item()] = pos[:, 0]
             tri_edge_idxs[edge.item()] = pos[:, 1]
 
-
+        # edges = tri_to_edge[481]
+        # print(edges)
+        # print(tri_points[481])
+        # print(edge_vectors[edges])
+        # print(self.centroids[481])
+        # exit(7)
 
         # Sort triangle in order of edge signed direction
-        tri_edge_signs = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals)
-        self.tri_edge_sign = tri_edge_signs
+        self.tri_edge_signs = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals)
         # ORDER: [-, +], so edge normal parallel to center comes last.
         edge_to_tri_ordered = {}
         p_m, m_p = torch.tensor([1, -1]), torch.tensor([-1, 1])
@@ -113,20 +76,18 @@ class FVMMesh:
             tri_idx = edge_to_tri[edge]
             tri_edge = tri_edge_idxs[edge]
 
-            order = tri_edge_signs[tri_idx, tri_edge]
+            order = self.tri_edge_signs[tri_idx, tri_edge]
 
             # Boundary edges only have 1 triangle
             if order.shape[0] == 1:
                 assert self.bc_edge_mask[edge] == True, "Inconsistent boundary bug"
-                if order.item() == 1:
-                    edge_to_tri_ordered[edge] = tri_idx
-                elif order.item() == -1:
-                    edge_to_tri_ordered[edge] = tri_idx
+                edge_to_tri_ordered[edge] = tri_idx
             else:
                 if torch.all(order == p_m):
                     edge_to_tri_ordered[edge] = torch.flip(tri_idx, dims=[0])
                 elif torch.all(order == m_p):
                     edge_to_tri_ordered[edge] = tri_idx
+        self.edge_to_tri = edge_to_tri_ordered
 
         # Compute distance from triangle centroid to edge midpoint
         # weight = [d_far / (d_far + d_near)]
@@ -143,31 +104,33 @@ class FVMMesh:
             w_para = d[0] / (d[0] + d[1])
             edge_to_tri_w[edge] = torch.stack([w_anti, w_para], dim=0)
 
-            print()
-            print(f'{d = }')
-            print(f'{edge_to_tri_w[edge]}')
         self.edge_to_tri_w = edge_to_tri_w
-        exit(4)
 
-        # Flux interpolation factor for converting cell value to flux.
-        flux_interp = []
-        for edge, tri in edge_to_tri.items():
-            if tri.shape[0] == 1:
-                continue
+    def _tri_area(self, vertices):
+        """ vertices.shape = (n_cells, 3, 2) """
+        a = vertices[:, 0]
+        b = vertices[:, 1]
+        c = vertices[:, 2]
 
-            print(edge, tri)
+        # Compute the vectors for each triangle
+        ab = b - a  # shape [n, 2]
+        ac = c - a  # shape [n, 2]
 
+        # Compute the 2D cross product (determinant) for each triangle
+        cross = ab[:, 0] * ac[:, 1] - ab[:, 1] * ac[:, 0]  # shape [n]
 
-        plot_edges(vertices, edges, title="Edges")
-        plot_points(self.centroids, torch.zeros_like(self.centroids[:, 0]), title="Centroids")
-        exit(7)
+        # Triangle area is half the absolute value of the cross product
+        area = 0.5 * torch.abs(cross)
 
+        return area
 
-        return normals
 
     def _tri_edge_sign(self, centroids, edge_vectors, midpoints, tri_to_edge, normals):
         signs = []
+
+        j = 0
         for edge, center in zip(tri_to_edge, centroids):
+
             edge_vect = edge_vectors[edge]      # shape = [3, 2]
             midpoint = midpoints[edge]      # shape = [3, 2]
             normal = normals[edge]          # shape = [3, 2]
@@ -186,16 +149,23 @@ class FVMMesh:
             assert torch.all(sign_X == sign_dot), f'{sign_X = }, {sign_dot = }'
 
             signs.append(sign_dot)
+
+            # if j == 15:
+            #     print(edge, center)
+            #     print(edge_vect)
+            #     print(sign_dot)
+            #     exit("Found it ")
+            # j += 1
+
+
+
         signs = torch.stack(signs).long()
-
         return signs
-
-
 
     def _get_tri_edges(self, triangles, edges):
         """
             Compute which edges belong to each triangle
-            triangles.shape = (n_triangles, 3)
+            triangles.shape = (n_cells, 3)
             edges.shape = (n_edges, 2)
         """
         # 1) Normalize each edge (sort nodes in ascending order).
@@ -240,137 +210,150 @@ class FVMMesh:
         return tri_to_edge
 
 
+class FVMCells:
+    values: torch.Tensor  # shape = (n_cells, N_component)
+    areas: torch.Tensor  # shape = (n_cells)
+    tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
+    tri_edge_sign: torch.Tensor  # shape = (n_cells, 3)
+
+    def __init__(self, mesh: FVMMesh, n_component, init_val=None):
+        self.tri_to_edge = mesh.tri_to_edge
+        self.tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1)
+        self.areas = mesh.areas
+        n_cells = mesh.n_cells
+        if init_val is None:
+            self.values = torch.zeros(n_cells, n_component)
+        else:
+            assert init_val.shape == (n_cells, n_component), f'Incorrect us init shape {init_val.shape = }'
+            self.values = init_val.clone()
+
+    def update_cells(self, fluxes, dt):
+        """ Update cell values using fluxes.
+            fluxes.shape = (n_edges, N_component)
+
+            du/dt = -div(flux) = -sum_i (sign_i * flux_i)
+        """
+        divs = []
+        for i, tri in enumerate(self.tri_to_edge):
+
+            divergence = torch.sum(self.tri_edge_sign[i] * fluxes[tri], dim=0) / self.areas[i]
+            divs.append(divergence * dt)
+            if i == 481:
+                print(f'{i = }, div = {divergence}, signs = {self.tri_edge_sign[i].squeeze().tolist() }, fluxes = {fluxes[tri].squeeze()}, area = {self.areas[i]:.3g}')
+            self.values[i] -= dt * divergence
+
+        # divs = torch.stack(divs)
+        # biggest = divs.abs().max()
+        # if biggest > 10:
+        #     print(torch.argmax(divs.abs()))
+        #exit("Done step")
+
+class FVMEdges:
+    n_edges: int
+
+    normals: torch.Tensor  # shape = (n_edges, 2)
+    tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
+    edge_to_tri: dict[int, torch.Tensor]  # shape = {n_edges}[anit_idx, para_idx], ordered so triangle parallel to edge normal comes last, antiparallel first.
+    edge_to_tri_w: dict[int, torch.Tensor]  # shape = {n_edges}[w_anti, w_para]
+    bc_edge_mask: torch.Tensor  # shape = (n_edges)
+
+    fluxes: torch.Tensor  # shape = (n_edges, N_component)
+
+    def __init__(self, mesh: FVMMesh, n_comp):
+        self.n_edges = mesh.n_edges
+
+        self.normals = mesh.normals
+        self.edge_to_tri = mesh.edge_to_tri
+        self.edge_to_tri_w = mesh.edge_to_tri_w
+        self.bc_edge_mask = mesh.bc_edge_mask
+
+        self.fluxes = torch.empty(self.n_edges, n_comp)
+
+    def edge_fluxes(self, Us, u_face_bc):
+        """ Compute fluxes for each edge.
+            Us.shape = (n_cells, N_component)
+            Linear flux interpolation: flux = w_anti * U_anti + w_para * U_para
+
+        """
+        u_face = []
+        for edge, tri in self.edge_to_tri.items():
+            if tri.shape[0] == 1:
+                continue
+            w = self.edge_to_tri_w[edge]
+            Us_edge = Us[tri]       # shape = [2, N_component]
+            # Linear interpolate face values
+            face_scal = w[0] * Us_edge[0] + w[1] * Us_edge[1]
+            face_vect = face_scal * torch.tensor([1, 0])
+            # Flux = face_val dot normal
+            flux_val = torch.dot(face_vect, self.normals[edge])
+
+            u_face.append(flux_val)
+
+        u_face = torch.stack(u_face)    # shape = [n_updt_edges, N_component]
+        self.fluxes[~self.bc_edge_mask] = u_face.unsqueeze(-1)
+        self.fluxes[self.bc_edge_mask] = u_face_bc
+
+        return self.fluxes
+
+
+class FVMSolver:
+    mesh: FVMMesh
+    edges: FVMEdges
+    cells: FVMCells
+
+    def __init__(self, mesh: FVMMesh, n_comp, us_init=None):
+        self.mesh = mesh
+        self.edges = FVMEdges(mesh, n_comp)
+        self.cells = FVMCells(mesh, n_comp, us_init)
+
+        self.plot_flux(torch.zeros(mesh.n_edges, n_comp))
+        self.plot_cells(self.cells.values[:, 0], title="Inital Cell Values")
+
+        dt = 0.01
+        for i in range(21):
+            fluxes = self.edges.edge_fluxes(self.cells.values, torch.zeros(mesh.n_bc_edge, n_comp))
+            self.cells.update_cells(fluxes, dt)
+
+            if i % 1 == 0:
+                #self.plot_flux(fluxes, title=f"Fluxes at t={i * dt :.2g}")
+                self.plot_cells(self.cells.values[:, 0], title=f"Values at t={i * dt :.2g}")
+
+    def plot_flux(self, fluxes, title="Fluxes"):
+        plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes[:, 0].abs())
+
+    def plot_cells(self, value, title="Cell Values"):
+        plot_points(self.mesh.centroids.cpu(), value, title=title)
+
+
 
 def mesh_graph(cfg):
     N_comp = 2
 
     xmin, xmax = 0, 3
     ymin, ymax = 0.0, 1.5
-    Xs, tri_idx, (int_edgs, bound_edgs) = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[6e-3, 10e-3])
+    Xs, tri_idx, (int_edgs, bound_edgs) = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[10e-3, 15e-3])
     Xs = torch.from_numpy(Xs).float()
     tri_idx = torch.from_numpy(tri_idx).int()
     int_edgs, bound_edgs = torch.from_numpy(int_edgs), torch.from_numpy(bound_edgs)
     all_edgs = torch.cat([int_edgs, bound_edgs], dim=0)
     bc_edge_mask = torch.cat([torch.zeros_like(int_edgs[:, 0], dtype=torch.bool), torch.ones_like(bound_edgs[:, 0], dtype=torch.bool)], dim=0)
+
+
     mesh = FVMMesh(Xs, tri_idx, all_edgs, bc_edge_mask)
 
+    cent_x = mesh.centroids[:, 0].unsqueeze(-1).clone()
+    us_init = 3.5 - cent_x
+
+    solver = FVMSolver(mesh, 1, us_init=us_init)
 
     exit(4)
     c_print(f'Number of mesh points: {len(Xs)}', "green")
 
-    # Set up time-graph
-    setup_T = []
-    for i, (X, tag) in enumerate(zip(Xs, p_tags)):
-        if tag == "Wall" or tag == "Left" or tag == "Right":
-            value = [0 for _ in range(N_comp)]
-            setup_T.append(T_Point([TT.FIXED], X, init_val=value))
-        elif tag == "Normal":
-            x, y = X
-            a, b = x-1.5, y-0.75
-            if a**2 + b**2 < 0.25:
-                value = [1]
-            else:
-                value = [0]
-            setup_T.append(T_Point([TT.NORMAL], X, init_val=value))
-        else:
-            raise ValueError(f"Unknown tag {tag}")
-
-    setup_T = {i: point for i, point in enumerate(setup_T)}
-    u_graph_time = UGraphTime(setup_T, N_component=N_comp, grad_acc=2, device=cfg.DEVICE)
-    # plot_points(u_graph_time._Xs, u_graph_time.dirich_mask[:, 0], title="grad mask")
-    with open("./save_u_graph_T2.pth", "wb") as f:
-        torch.save(u_graph_time, f)
-    return u_graph_time
 
 
 def load_graph(cfg):
     u_graph_T = torch.load("save_u_graph_T2.pth", weights_only=False)
     return u_graph_T
-
-class PDEFn:
-    def __init__(self, u_graph_T: UGraphTime, cfg_in, cfg_T):
-        self.u_graph_T = u_graph_T
-        self.cfg_in = cfg_in
-        self.cfg_T = cfg_T
-
-        self.dt = cfg_T.dt
-
-    def solve(self, t, step_no):
-        us = self.u_graph_T.get_all_us_Xs()[0]
-
-        grads = self.u_graph_T.get_grads()
-        us_t = grads[(0, 0)]
-        # dudt = - laplacian(u)
-        laplacian = grads[(2, 0)] + grads[(0, 2)]
-
-        #u_t+1 = u_t + dt * dudt
-        u_t_1 = us_t + self.dt * laplacian
-
-
-        self.u_graph_T.set_grid(u_t_1)
-
-
-
-class TimePDEBase:
-    """ Have a main PDE U_graph that is updated with every t. For update:
-        1) Clone U_graph.
-        1.1) Clone U_graph if we want state to be saved for later
-        2) Solve PDE with U_graph
-        3) Update time-PDE with new values.
-
-        Assume graph doesn't change so deriv calc and intermediate sparse caches can be kept.
-        """
-    cfg_T: ConfigTime
-    cfg_in: Config
-
-    PDE_timefn: PDEFn
-
-    u_graph_main: UGraphTime
-    u_saves: dict[int, UTemp]
-
-    def __init__(self, u_graph_T: UGraphTime, cfg_T: ConfigTime, cfg_in: Config):
-        """ u_graph_T: Time graph.
-            u_graph_PDE: Graph for internal PDE solver.
-        """
-        self.u_graph_T = u_graph_T
-        self.cfg_T = cfg_T
-        self.cfg_in = cfg_in
-        self.u_saves = {}
-        self.Xs = None
-        self.PDE_timefn = PDEFn(u_graph_T, cfg_in, cfg_T) #ExplicitNS(u_graph_T, u_graph_PDE, cfg_in, cfg_T)
-
-        self.device = "cuda"
-        self.dtype = torch.float32
-
-    def solve(self):
-        cfg_T = self.cfg_T
-
-        self.Xs = self.u_graph_T.get_all_us_Xs()[1]
-        self.u_saves[0] = self.u_graph_T.get_all_us_Xs()[0].clone()
-        timesteps = torch.linspace(cfg_T.time_domain[0], cfg_T.time_domain[1], cfg_T.timesteps * cfg_T.substeps, dtype=self.dtype)
-        for step_num, t in enumerate(timesteps):
-            print(f'\n{step_num = }, t = {t.item():.3g}')
-
-            # if step_num == 5:
-            #     dirich_mask = self.u_graph_T.dirich_mask
-            #     dirich_values = torch.zeros_like(self.u_graph_T._us)[dirich_mask]
-            #     print(f'{dirich_values.shape = }')
-            #     self.u_graph_T.set_bc(dirich_bc=dirich_values)
-
-            self.PDE_timefn.solve(t, step_num)
-
-            if step_num % cfg_T.substeps == 0:
-                self.u_saves[step_num+1] = self.u_graph_T.get_all_us_Xs()[0].clone()
-
-            if step_num == 50:
-                break
-
-        for step, us in self.u_saves.items():
-            plot_interp_graph(self.Xs, us[:, 0], title=f"Vx Step {step}")
-
-
-    def update_boundary(self):
-        pass
 
 
 def main():
@@ -385,8 +368,8 @@ def main():
     #u_g_T = load_graph(cfg)
     u_g_T = mesh_graph(cfg)
 
-    time_pde = TimePDEBase(u_g_T, time_cfg, cfg)
-    time_pde.solve()
+    # time_pde = TimePDEBase(u_g_T, time_cfg, cfg)
+    # time_pde.solve()
 
     # saved_graphs = time_pde.u_saves
     # for t, graph in saved_graphs.items():

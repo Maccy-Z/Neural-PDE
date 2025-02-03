@@ -198,22 +198,45 @@ def plot_interp_graph(points, values, resolution=1000, title='Nearest Neighbor I
     plt.tight_layout()
     plt.show()
 
-def plot_points(Xs, value, title=""):
+
+def plot_points(Xs, value, lims=None, title=""):
     Xs = Xs.cpu()
     value = value.cpu()
 
     plt.title(title)
-    plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis')
+    if lims is None:
+        plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis')
+    else:
+        plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis', vmin=lims[0], vmax=lims[1])
+    plt.colorbar()
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.tight_layout()
     plt.show()
 
-def plot_edges(coords, edge_idx, title=""):
+
+def plot_edges(coords, edge_idx, color=None, title=""):
     """ Plot the edges of the mesh.
         coords.shape = (n, 2)
         edge_idx.shape = (m, 2)
     """
+    coords = coords.cpu().detach().numpy()
+    edge_idx = edge_idx.cpu().detach().numpy()
+
+    if color is not None:
+        colormap = plt.get_cmap("viridis")
+        edge_scalar = color.cpu().detach().numpy()
+        # Normalize scalar values to the range [0, 1].
+        if edge_scalar.max() != edge_scalar.min():
+            norm_scalar = (edge_scalar - edge_scalar.min()) / (edge_scalar.max() - edge_scalar.min())
+        else:
+            norm_scalar = np.zeros_like(edge_scalar)
+        edge_colors = colormap(norm_scalar)
+    else:
+        edge_colors = np.array(['k'] * len(edge_idx))
+
     points = coords[edge_idx]   # shape = (m, 2, 2)
-    for edge in points:
-        plt.plot(edge[:, 0], edge[:, 1], 'k-')
+    for edge, c in zip(points, edge_colors):
+        plt.plot(edge[:, 0], edge[:, 1], color=c)
 
     plt.gca().set_aspect('equal', adjustable='box')
     plt.tight_layout()
