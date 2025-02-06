@@ -1,12 +1,13 @@
 import numpy as np
 from cprint import c_print
-from matplotlib import pyplot as plt
 import meshpy.triangle as tri
+from copy import deepcopy
+import time
+
 from pde.mesh_generation.mesh_gen_utils import (MeshProps, min_dist_to_boundary,
-                            plot_mesh, extract_mesh_data, plot_edges)
+                            plot_mesh, extract_mesh_data)
 from pde.mesh_generation.geometries import MeshFacet, Circle, Box, Line, Ellipse
 from pde.graph_grid.graph_store import P_Types as PT
-from pde.utils import dict_key_by_value
 
 # Custom function to control mesh refinement
 def refine_fn(vertices, area, props: MeshProps, points, segments):
@@ -60,12 +61,12 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
 
         marker_names[mark_id] = facets.name
 
-
     # Create the mesh info object
     mesh_info = tri.MeshInfo()
-    mesh_info.set_points(points, point_markers=p_marks)
-    mesh_info.set_facets(segments, facet_markers=seg_marks)
-    mesh_info.set_holes(holes)
+    mesh_info.set_holes(deepcopy(holes))
+    mesh_info.set_points(deepcopy(points), point_markers=deepcopy(p_marks))
+    mesh_info.set_facets(deepcopy(segments), facet_markers=deepcopy(seg_marks))
+    time.sleep(1.)
 
     # Create the mesh
     mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg))
@@ -145,6 +146,7 @@ def generate_box_points_spacing(xmax, ymax, spacing=1.0):
     idxs = ["Wall" for _ in range(len(bottom))] + ["Right" for _ in range(len(right))] + ["Wall" for _ in range(len(top))] + ["Left" for _ in range(len(left))]
     return box_points, idxs
 
+
 def gen_mesh_time(xmin, xmax, ymin, ymax, areas=None):
     if areas is None:
         min_area = 5.e-3
@@ -165,7 +167,7 @@ def gen_mesh_time(xmin, xmax, ymin, ymax, areas=None):
                 Line([xmin, ymax], [xmax, ymax], True, name="Wall"),     # Top
                 Line([xmin, ymin], [xmin, ymax], True, name="Left"),    # Left
                 Line([xmax, ymax], [xmax, ymin], True, name="Right"),   # Right
-        # Circle((1.0, 0.5), circle_radius, lnscale, True, name="Right"),
+              # Circle((1.0, 0.5), circle_radius, lnscale, True, name="Right"),
 
     ]
     mesh, marker_tags = create_mesh(coords, mesh_props)
@@ -206,11 +208,6 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None):
     else:
         min_area, max_area = areas
 
-    circle_center = (0.5, 0.4)
-    circle_radius = 0.5
-
-    bound_ln = np.sqrt(min_area)
-    # print(lnscale)
 
     mesh_props = MeshProps(min_area, max_area, lengthscale=0.5)
 
@@ -219,43 +216,25 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None):
                 Line([xmin, ymax], [xmax, ymax], True, name="Wall"),     # Top
                 Line([xmin, ymin], [xmin, ymax], True, name="Left"),    # Left
                 Line([xmax, ymax], [xmax, ymin], True, name="Right"),   # Right
-        # Circle((1.0, 0.5), circle_radius, lnscale, True, name="Right"),
-
     ]
+
     mesh, marker_tags = create_mesh(coords, mesh_props)
     _point_props, _markers, _edges = extract_mesh_data(mesh)
 
     points, triangles = _point_props
-    p_markers, _ = _markers
+    _, f_markers = _markers
     int_edges, bound_edges = _edges
 
-    # Set corner tags very carefully
-    corners = [[xmin, xmin], [xmin, ymax], [xmax, ymax], [xmax, ymin]]
-    wall_tag = dict_key_by_value(marker_tags, "Wall")
-    for i, (point, tag) in enumerate(zip(points, p_markers, strict=True)):
-        if np.any(np.all(np.isclose(corners, point), axis=1)):
-            p_markers[i] = wall_tag        # Corresponds to wall
-    p_tags = [marker_tags[int(i)] for i in p_markers]
+    # Change maker back to string
+    f_tag = [marker_tags[int(i)] for i in f_markers]
 
-    # Value points
-
-    # plot_mesh(centroids, centroids[:, 0])
-
-    # Flux edges
-    # n_bound_edge = bound_edges.shape[0]
-    # n_int_edge = int_edges.shape[0]
-    #
-    # all_edges = np.concatenate((bound_edges, int_edges))
-    # plot_edges(points, bound_edges, title="boundary edges")
-    # plot_edges(points, int_edges, title="interior edges")
-
-    return points, triangles, (int_edges, bound_edges)
+    return points, triangles, (int_edges, bound_edges), f_tag
 
 
 def main():
     #exit(4)
     try:
-        points, p_tags = gen_mesh_time()
+        points, triangles, (int_edges, bound_edges), f_tag = gen_mesh_fvm(0, 2, 0, 2)
         #pickle.dump((points, p_tags), sys.stdout.buffer)
     except Exception as e:
         raise e
