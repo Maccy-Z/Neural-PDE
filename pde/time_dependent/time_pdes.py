@@ -16,7 +16,7 @@ def mesh_graph(cfg):
 
     xmin, xmax = 0, 3
     ymin, ymax = 0.0, 1.5
-    Xs, p_tags = gen_mesh_time(xmin, xmax, ymin, ymax, areas=[1e-3, 5e-3])
+    Xs, p_tags = gen_mesh_time(xmin, xmax, ymin, ymax, areas=[2e-3, 5e-3])
     Xs = torch.from_numpy(Xs).float()
     c_print(f'Number of mesh points: {len(Xs)}', "green")
 
@@ -34,6 +34,8 @@ def mesh_graph(cfg):
                 value = [1.5, 0]
             else:
                 value = [1, 0]
+            value = [1, 0]
+
             setup_T.append(T_Point([TT.FIXED, TT.FIXED], X, init_val=value))
         elif tag == "Right":
             value = [1, 0]
@@ -143,10 +145,10 @@ class TimePDEBase:
             update = self.PDE_timefn.solve(t, step_num)
             self.u_graph_T._us = update # set_grid_irreg(update)
 
-            if step_num % cfg_T.substeps == 0:
+            if step_num % 3 == 0:
                 self.u_saves[step_num+1] = self.u_graph_T.get_all_us_Xs()[0].clone()
 
-            if step_num == 50:
+            if step_num == 31:
                 break
 
         for step, us in self.u_saves.items():

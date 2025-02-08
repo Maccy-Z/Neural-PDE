@@ -29,7 +29,7 @@ class ExplicitNS:
 
         self.p_solver = NeuralPDEGraph(pde_fn_inner, self.dp_graph, cfg)
 
-        self.mu = 0.005
+        self.mu = 0.05
         self.rho = 1
         self.dt = cfg_T.dt
 
@@ -111,7 +111,7 @@ class ExplicitNS:
 
         # Solve pressure equation multiple times
         # P_n+1 = P_n + DP_i = P_n + sum_i dp_i
-        iters = 3 if step_num >= 8 else 2
+        iters = 1 if step_num >= 8 else 1
         for i in range(iters):
             self.dp_graph.reset()
             self.v_star_graph.set_grid(v_star_updt)
@@ -131,7 +131,7 @@ class ExplicitNS:
             dP_grads = self.p_deriv_calc.derivative(dp_i, get_orders=[(1, 0), (0, 1)])
             grad_dP = torch.cat([dP_grads[(1, 0)], dP_grads[(0, 1)]], dim=1)
             # Compute update factor: w = div_u (u) dot div_u(grad_p(dP)) / div_u(grad_p(dP))^2
-            w = self._compute_w(div_v_s, grad_dP)
+            w = self._compute_w(div_v_s, grad_dP) * 0 + 1
             # V_star_i+1 = V_star_i - w * dt/rho grad(dp_i)
             v_star_updt = v_star_updt - w * self.dt / self.rho * grad_dP[self.V_star_mask]
 
@@ -163,16 +163,27 @@ class ExplicitNS:
             v_updt_grad = self.v_s_deriv_calc.derivative(v_star_updt_, get_orders=[(1, 0), (0, 1)])
             div_v_s_updt = v_updt_grad[(1, 0)][..., 0] + v_updt_grad[(0, 1)][..., 1]
             div_v_s_updt[~self.V_star_mask] = 0
-            div_v_s_updt = div_v_s_updt * self.rho / self.cfg_T.dt
-            print(f'{step_num}: Divergence: {div_v_s_updt.norm().item():.4g}, w: {w.item():.4g}')
+            div_v_s_updt = div_v_s_updt #* self.rho / self.cfg_T.dt
+            print(f'{step_num}: Divergence: {div_v_s_updt.abs().mean().item():.4g}, w: {w.item():.4g}')
 
-            # if step_num == 8 and i == 1:
-            #     exit(7)
+            # if step_num > 10:
+            #     k = div_v_s_updt[self.V_star_mask].unsqueeze(-1)
+            #     f_k = (k/10).abs().clamp(0, 1)
+            #     v_star_updt = v_star_updt * (1 -  f_k)
+            #
+            #
+            # self.v_star_graph.set_grid(v_star_updt)
+            # self.v_star_graph.set_bc()
+            #
+            # v_star_updt_ = self.v_star_graph.get_all_us_Xs()[0]
+            # v_updt_grad = self.v_s_deriv_calc.derivative(v_star_updt_, get_orders=[(1, 0), (0, 1)])
+            # div_v_s_updt = v_updt_grad[(1, 0)][..., 0] + v_updt_grad[(0, 1)][..., 1]
+            # div_v_s_updt[~self.V_star_mask] = 0
+            # div_v_s_updt = div_v_s_updt #* self.rho / self.cfg_T.dt
+            # print(f'{step_num}: Divergence: {div_v_s_updt.norm().item():.4g}, w: {w.item():.4g}')
 
 
         p_new = p_old + Dp
-
-        # plot_interp_graph(_X, p_new, title=f"P new- Step {t}")
         p_new = p_new[self.P_updt_mask]
         self.p_graph_PDE.set_grid(p_new)
 
@@ -441,7 +452,7 @@ class SemiExplNS:
         us_new = [v_i[:, 0], v_i[:, 1]]
 
         """ Plotting """
-        if step_num==69:
+        if step_num==10:
             plot_graph = self.v_star_graph
             _X = self.v_star_graph.get_all_us_Xs()[1]
 

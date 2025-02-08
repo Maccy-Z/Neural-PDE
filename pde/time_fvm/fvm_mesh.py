@@ -1,6 +1,51 @@
 import torch
 
 
+def build_sparse_gradient_matrix(cell_to_neigh_idx, G_mat, dim):
+    """
+    Build a sparse gradient matrix for one spatial dimension.
+
+    Args:
+        cell_to_neigh_idx (list[Tensor]): List of 1D tensors, where cell_to_neigh_idx[i]
+                                          holds the neighbor indices for cell i.
+        G_mat (list[Tensor]): List of 2D tensors. For each cell i, G_mat[i] has shape
+                              [n_dims, num_neighbors_i]. The row corresponding to `dim`
+                              gives the weights for that cell in that spatial dimension.
+        dim (int): The spatial dimension for which to build the matrix (e.g., 0 for x, 1 for y).
+
+    Returns:
+        A (torch.sparse.FloatTensor): A sparse matrix of shape [n_cells, n_cells] that
+                                      computes the contribution along the given dimension.
+    """
+    n_cells = len(cell_to_neigh_idx)
+    rows, cols = [], []
+    vals = []
+
+    for i in range(n_cells):
+        diag_val = 0.0  # To accumulate the weight for the diagonal (self) contribution.
+        # Get the neighbors for cell i.
+        neighs = cell_to_neigh_idx[i]
+        num_neigh = neighs.shape[0]
+
+        for k in range(num_neigh):
+            j = int(neighs[k].item())
+            # Extract the gradient weight for cell i, neighbor k in the given dimension.
+            g_val = G_mat[i][dim, k]
+            # Off-diagonal: add contribution from neighbor j.
+            rows.append(i), cols.append(j)
+            vals.append(g_val)
+            diag_val += g_val
+
+        # Diagonal: subtract the sum of the weights.
+        rows.append(i), cols.append(i)
+        vals.append(-diag_val)
+
+    # Build the sparse matrix.
+    indices = torch.tensor([rows, cols], dtype=torch.long)
+    values = torch.tensor(vals, dtype=G_mat[0].dtype)
+    A = torch.sparse_coo_tensor(indices, values, (n_cells, n_cells))
+    return A
+
 class FVMMesh:
     n_cells: int
     n_edges: int
@@ -102,27 +147,18 @@ class FVMMesh:
         edge_dist = torch.stack(edge_dist)
         edge_dist_bc = torch.stack(edge_dist_bc)
 
-        # Use padding to turn everything into efficient tensors
-        max_neigh = max(len(neigh) for neigh in cell_to_neigh_idx)
-        n_cells = len(cell_to_neigh_idx)
-        neigh_idx_pad = torch.zeros(n_cells, max_neigh, dtype=torch.long)
-        mask = torch.zeros(n_cells, max_neigh, dtype=torch.bool)
+
         # Premultiply A_inv with d_i.T
         A_inv_di_T = []
         for A_inv, d_i in zip(cell_A_inv, cell_d_i):
             A_inv_di_T.append(A_inv @ d_i.T)
-        # Create a tensor for the padded transformation matrices.
-        padded_G = torch.zeros(n_cells, 2, max_neigh)
-        for i, (neigh, G) in enumerate(zip(cell_to_neigh_idx, A_inv_di_T)):
-            L = len(neigh)
-            # Convert neighbor list to tensor (if not already a tensor)
-            neigh_idx_pad[i, :L] = neigh
-            mask[i, :L] = True
 
-            # M should have shape [2, L]; pad into shape [2, max_neigh]
-            padded_G[i, :, :L] = G
+        G_mats = []
+        for i in range(2):
+            G_mat = build_sparse_gradient_matrix(cell_to_neigh_idx, A_inv_di_T, i)
+            G_mats.append(G_mat)
 
-        return neigh_idx_pad, padded_G, mask, edge_dist, edge_dist_bc
+        return edge_dist, edge_dist_bc, G_mats
 
 
     def _compute_edge_props(self, vertices, triangles, edges):
@@ -212,7 +248,7 @@ class FVMMesh:
                 continue
             edge_to_tri_bc.append(self.edge_to_tri[e_idx])
             normals_bc.append(normals[e_idx])
-        self.edge_to_tri_bc = torch.stack(edge_to_tri_bc)
+        self.edge_to_tri_bc = torch.stack(edge_to_tri_bc).squeeze()
         self.normals_bc = torch.stack(normals_bc)
 
     def _tri_area(self, vertices):

@@ -76,8 +76,6 @@ class T_Point:
     init_val: float|list[float]
     derivatives: list[Deriv] = None
 
-import torch
-
 
 class DerivGraph:
     """
@@ -177,8 +175,6 @@ class DerivGraph:
             shape=new_shape,
             device=D1.device
         )
-
-
 
 
 def main():

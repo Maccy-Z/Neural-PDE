@@ -199,17 +199,43 @@ def plot_interp_graph(points, values, resolution=1000, title='Nearest Neighbor I
     plt.show()
 
 
-def plot_points(Xs, value, lims=None, title=""):
-    Xs = Xs.cpu()
-    value = value.cpu()
+# def plot_points(Xs, value, lims=None, title=""):
+#     Xs = Xs.cpu()
+#     value = value.cpu()
+#
+#     plt.title(title)
+#     if lims is None:
+#         plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis')
+#     else:
+#         plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis', vmin=lims[0], vmax=lims[1])
+#     plt.colorbar()
+#     plt.gca().set_aspect('equal', adjustable='box')
+#     plt.tight_layout()
+#     plt.show()
 
-    plt.title(title)
-    if lims is None:
-        plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis')
+def plot_points(Xs, values, lims=None, title=""):
+    Xs = Xs.cpu()
+    values = values.cpu()
+
+    if len(values.shape) == 1:
+        values = values.unsqueeze(0)
+        fig, axes = plt.subplots(1, 1, figsize=(8, 6))
+        axes = [axes]
     else:
-        plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis', vmin=lims[0], vmax=lims[1])
-    plt.colorbar()
-    plt.gca().set_aspect('equal', adjustable='box')
+        n_plots = values.shape[0]
+        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots*4))
+
+    # Loop over each batch (assuming 3 batches)
+    for i, ax in enumerate(axes):
+        ax.set_title(f"{title} - Batch {i}")
+        if lims is None:
+            sc = ax.scatter(Xs[:, 0], Xs[:, 1], c=values[i], cmap='viridis')
+        else:
+            sc = ax.scatter(Xs[:, 0], Xs[:, 1], c=values[i], cmap='viridis',
+                            vmin=lims[0], vmax=lims[1])
+        fig.colorbar(sc, ax=ax)
+        ax.set_aspect('equal', adjustable='box')
+
     plt.tight_layout()
     plt.show()
 

@@ -1,8 +1,7 @@
 import numpy as np
 from cprint import c_print
 import meshpy.triangle as tri
-from copy import deepcopy
-import time
+import threading
 
 from pde.mesh_generation.mesh_gen_utils import (MeshProps, min_dist_to_boundary,
                             plot_mesh, extract_mesh_data)
@@ -29,6 +28,18 @@ def refine_fn(vertices, area, props: MeshProps, points, segments):
         print(e)
         raise e
     return area > threshold
+
+
+def _create_mesh_thread(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, return_val):
+    mesh_info = tri.MeshInfo()
+    mesh_info.set_holes(holes)
+    mesh_info.set_points(points, point_markers=p_marks)
+    mesh_info.set_facets(segments, facet_markers=seg_marks)
+
+    # Create the mesh
+    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg))
+
+    return_val.append(mesh)
 
 
 def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
@@ -61,15 +72,19 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
 
         marker_names[mark_id] = facets.name
 
-    # Create the mesh info object
-    mesh_info = tri.MeshInfo()
-    mesh_info.set_holes(deepcopy(holes))
-    mesh_info.set_points(deepcopy(points), point_markers=deepcopy(p_marks))
-    mesh_info.set_facets(deepcopy(segments), facet_markers=deepcopy(seg_marks))
-    time.sleep(1.)
-
-    # Create the mesh
-    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg))
+    # # Create the mesh info object
+    # mesh_info = tri.MeshInfo()
+    # mesh_info.set_holes(deepcopy(holes))
+    # mesh_info.set_points(deepcopy(points), point_markers=deepcopy(p_marks))
+    # mesh_info.set_facets(deepcopy(segments), facet_markers=deepcopy(seg_marks))
+    #
+    # # Create the mesh
+    # mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg))
+    ret_list = []
+    thread = threading.Thread(target=_create_mesh_thread, args=(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, ret_list))
+    thread.start()
+    thread.join()
+    mesh = ret_list[0]
     return mesh, marker_names
 
 
