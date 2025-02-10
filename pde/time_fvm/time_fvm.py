@@ -42,8 +42,10 @@ class FVMCells:
         # Vectorised version
         tri_fluxes = fluxes[self.tri_to_edge]  # shape: [n_tri, 3, n_component]
 
-        divergence = torch.sum(self.tri_edge_sign * tri_fluxes, dim=1).squeeze() / self.areas.unsqueeze(-1)     # shape = [n_cells, N_component]
-        self.values -= dt * divergence
+        divergence = dt * torch.sum(self.tri_edge_sign * tri_fluxes, dim=1).squeeze() / self.areas.unsqueeze(-1)     # shape = [n_cells, N_component]
+        self.values -=  divergence
+
+        return divergence
 
 
 class FVMEdgeInfo:
@@ -230,12 +232,15 @@ class ConvectScalar(FVMEdgeFunc):
         The convection dimension is dim.
     """
     E_props: FVMEdgeInfo
-    dim: int
-    def __init__(self, E_props: FVMEdgeInfo, dim, device="cpu"):
+    rho_dim: int
+    V_dim: list[int]
+
+    def __init__(self, E_props: FVMEdgeInfo, rho_dim, V_dim, device="cpu"):
         self.device = device
         self.E_props = E_props
 
-        self.dim = dim
+        self.rho_dim = rho_dim
+        self.V_dim = V_dim
 
     def _beta(self, r):
         # van Albada scheme
@@ -252,12 +257,11 @@ class ConvectScalar(FVMEdgeFunc):
         """ Compute flux for each edge.
             us.shape = (n_cells, n_component)
         """
-        us = Us[:, self.dim]
+        us = Us[:, self.rho_dim]
 
         fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
-        fluxes[~self.E_props.bc_edge_mask, self.dim] = self._main_fluxes(us, V_dir)
-        fluxes[self.E_props.bc_edge_mask, self.dim] = self._bc_fluxes_(us, V_dir)
-
+        fluxes[~self.E_props.bc_edge_mask, self.rho_dim] = self._main_fluxes(us, V_dir)
+        fluxes[self.E_props.bc_edge_mask, self.rho_dim] = self._bc_fluxes_(us, V_dir)
         return fluxes
 
     def _main_fluxes(self, us, V_dir):
@@ -289,9 +293,9 @@ class ConvectScalar(FVMEdgeFunc):
         edge_idx = torch.arange(E_props.n_edges_m)
         upwind_idx = E_props.edge_to_tri_main[edge_idx, upwind]  # [n_edges]
         # 2. Gather the upwind cell gradients.
-        upwind_grad = E_props.cell_grads[upwind_idx, :, self.dim]  # [n_edges, 2]
+        upwind_grad = E_props.cell_grads[upwind_idx, :, self.rho_dim]  # [n_edges, 2]
         # 3. Compute the directional derivative at the face (du/dn_face)
-        dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask, self.dim]
+        dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask, self.rho_dim]
         # 4. Compute the limiter. r = max( 2 * (grad_cell . d) / (|d| * du/dn_face) - 1 , 0)
         dot_disp_grad = (E_props.edge_disps * upwind_grad).sum(dim=1)  # [n_edges]
         denom = E_props.cell_dist * dudn_face.squeeze(-1) + 1e-7  # [n_edges]
@@ -299,7 +303,7 @@ class ConvectScalar(FVMEdgeFunc):
         beta = self._beta(r)
         # 5. Corrected face value: u_face = (1 - beta) * u_upwind + beta * u_face_lin
         u_centroid = us[E_props.edge_to_tri_main]  # [n_edges_, 2]
-        u_face_lin = E_props.U_face[~E_props.bc_edge_mask, self.dim]    # shape = [n_edges]
+        u_face_lin = E_props.U_face[~E_props.bc_edge_mask, self.rho_dim]    # shape = [n_edges]
         u_face_cor = (1 - beta) * u_centroid[edge_idx, upwind] + beta * u_face_lin  # [n_edges]
         # 6. Compute div(uV) = phi * u_face_cor
         flux_uV = phi * u_face_cor       # [n_edges]
@@ -308,32 +312,38 @@ class ConvectScalar(FVMEdgeFunc):
         return flux_uV
 
     def _bc_fluxes_(self, us, V_dir):
-        """ Flux = U_face * phi
-            phi = n_face dot V_f. V_f extrapolated from nearest cell value.
+        """ Flux = rho_face * phi
+            phi = n_face dot V_f.
         """
         E_props = self.E_props
 
         # Flux = U_face * phi
         # phi = normal dot Vf on face. Vf is the nearest cell value.
-        U_face = E_props.U_face[E_props.bc_edge_mask, self.dim]      # shape = [n_bc_edges]
-        V_face = V_dir[E_props.edge_to_tri_bc]                          # shape = [n_bc_edges, 2]
+        rho_face = E_props.U_face[E_props.bc_edge_mask, self.rho_dim]      # shape = [n_bc_edges]
+        V_face = E_props.U_face[E_props.bc_edge_mask][:, self.V_dim]                          # shape = [n_bc_edges, 2]
+        # print(V_face)
+
+        # V_face = V_dir[E_props.edge_to_tri_bc]
         phi = (E_props.normals_bc * V_face).sum(-1)
-        bc_fluxes = U_face * phi
+        bc_fluxes = rho_face * phi
 
         return bc_fluxes
 
 
 class AdvectVector(FVMEdgeFunc):
-    """ div(U prod V) for advected vector U, fixed vector V.
+    """ div(p U prod V) for advected vector U, fixed vector V.
         dims: Which dimensions of Us are advected.
     """
     E_props: FVMEdgeInfo
-    dims: list[int]
-    def __init__(self, E_props: FVMEdgeInfo, dims: list[int], device="cpu"):
+    V_dims: list[int]
+    rho_dims: int
+
+    def __init__(self, E_props: FVMEdgeInfo, V_dims: list[int], rho_dims:int, device="cpu"):
         self.device = device
         self.E_props = E_props
 
-        self.dims = dims
+        self.V_dims = V_dims
+        self.rho_dims = rho_dims
 
     def _beta(self, r):
         # van Albada scheme
@@ -347,21 +357,24 @@ class AdvectVector(FVMEdgeFunc):
         return beta
 
     def edge_fluxes(self, Us, V_dir):
-        Us = Us[:, self.dims]
+        Vs = Us[:, self.V_dims]
+        rho = Us[:, self.rho_dims].unsqueeze(-1)  # shape = (n_cells, 1)
+
+        mom = rho * Vs  # shape = (n_cells, 2)
 
         fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
-        f = torch.empty(self.E_props.n_edges, len(self.dims), device=self.device)
-        f[~self.E_props.bc_edge_mask] = self._main_fluxes(Us, V_dir)
-        f[self.E_props.bc_edge_mask] = self._bc_fluxes_(Us, V_dir)
+        f = torch.empty(self.E_props.n_edges, len(self.V_dims), device=self.device)
+        f[~self.E_props.bc_edge_mask] = self._main_fluxes(mom)
+        f[self.E_props.bc_edge_mask] = self._bc_fluxes_()
 
-        fluxes[:, self.dims] = f
+        fluxes[:, self.V_dims] = f
 
         return fluxes
 
-    def _main_fluxes(self, Us, V_dir):
+    def _main_fluxes(self, rho_Us):
         """ Compute u_face for each edge.
-            div(u V) = sum_i( V_f . dS_f * u_f)
+            div(u V) = sum_i( (V_f . dS_f) * u_f)
                 Linear flux interpolation
                 Upwinding
 
@@ -373,9 +386,7 @@ class AdvectVector(FVMEdgeFunc):
         E_props = self.E_props
 
         # Linear interpolation of convection vector
-        V_dir_cells = V_dir[E_props.edge_to_tri_main]     # [n_edges, 2, 2]
-        w = E_props.edge_to_tri_w.unsqueeze(1)  # shape: [n_edges, 1, 2]
-        V_face = torch.bmm(w, V_dir_cells).squeeze(1)  # shape: [n_edges, 2]
+        V_face = E_props.U_face[~E_props.bc_edge_mask][:, self.V_dims]  # shape = [n_edges, n_component]
         # Face scalar: phi = dS_face * V_face
         phi = (E_props.normals_main * V_face).sum(-1).unsqueeze(-1)
 
@@ -386,9 +397,9 @@ class AdvectVector(FVMEdgeFunc):
         edge_idx = torch.arange(E_props.n_edges_m)
         upwind_idx = E_props.edge_to_tri_main[edge_idx, upwind]  # [n_edges]
         # 2. Gather the upwind cell gradients.
-        upwind_grad = E_props.cell_grads[upwind_idx][:, :, self.dims]  # [n_edges, 2, n_component]
+        upwind_grad = E_props.cell_grads[upwind_idx][:, :, self.V_dims]  # [n_edges, 2, n_component]
         # 3. Gather the directional derivative at the face (du/dn_face)
-        dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask][:, self.dims]      # shape = [n_edges, n_component]
+        dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask][:, self.V_dims]      # shape = [n_edges, n_component]
         # 4. Compute the limiter. r = max( 2 * (grad_cell . d) / (|d| * du/dn_face) - 1 , 0)
         d_dot_gradU = (E_props.edge_disps.unsqueeze(-1) * upwind_grad).sum(dim=1)  # [n_edges, n_component]
         numerator = torch.sum(dudn_face * d_dot_gradU, dim=1)  # [n_edges]
@@ -397,26 +408,33 @@ class AdvectVector(FVMEdgeFunc):
         beta = self._beta(r).unsqueeze(-1)  # # [n_edges, 1]
 
         # 5. Corrected face value: u_face = (1 - beta) * u_upwind + beta * u_face_lin
-        U_centroid = Us[E_props.edge_to_tri_main]  # [n_edges_, 2, n_component]
-        U_face_lin = E_props.U_face[~E_props.bc_edge_mask][:, self.dims]    # shape = [n_edges, n_component]
+        U_centroid = rho_Us[E_props.edge_to_tri_main]  # [n_edges_, 2, n_component]
+        U_face_lin = E_props.U_face[~E_props.bc_edge_mask][:, self.V_dims]    # shape = [n_edges, n_component]
         U_face_cor = (1 - beta) * U_centroid[edge_idx, upwind] + beta * U_face_lin  # [n_edges, n_component]
 
         # 6. Compute div(uV) = phi * u_face_cor
         flux_UV = phi * U_face_cor       # [n_edges]
         return flux_UV
 
-    def _bc_fluxes_(self, Us, V_dir):
-        """ Flux = U_face * phi
-            phi = n_face dot V_f. V_f extrapolated from nearest cell value.
+    def _bc_fluxes_(self):
+        """ Flux = rho_face * V_face * phi
+            phi = n_face dot V_face
+
+            Use cached values.
         """
         E_props = self.E_props
 
         # Flux = U_face * phi
         # phi = normal dot Vf on face. Vf is the nearest cell value.
-        U_face = E_props.U_face[E_props.bc_edge_mask][:, self.dims]      # shape = [n_bc_edges, n_component]
-        V_face = V_dir[E_props.edge_to_tri_bc]                          # shape = [n_bc_edges, 2]
+        #V_face = V_dir[E_props.edge_to_tri_bc]                          # shape = [n_bc_edges, 2]#
+
+        V_face = E_props.U_face[E_props.bc_edge_mask][:, self.V_dims]  # shape = [n_bc_edges, n_component]
         phi = (E_props.normals_bc * V_face).sum(-1).unsqueeze(-1)
-        bc_fluxes = U_face * phi
+
+        Us_face = E_props.U_face[E_props.bc_edge_mask]      # shape = [n_bc_edges, 3]
+        V_face = Us_face[:, self.V_dims]      # shape = [n_bc_edges, n_component]
+        rho_face = Us_face[:, 2].unsqueeze(-1)  # shape = [n_bc_edges, 1]
+        bc_fluxes = rho_face * V_face * phi
 
         return bc_fluxes
 
@@ -451,7 +469,8 @@ class Viscosity(FVMEdgeFunc):
 
         return fluxes
 
-class Pressure(FVMEdgeFunc):
+
+class Density(FVMEdgeFunc):
     """ Special case. N
         grad(p) = div(p I) """
     E_props: FVMEdgeInfo
@@ -468,14 +487,13 @@ class Pressure(FVMEdgeFunc):
     def edge_fluxes(self):
         fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
-
         E_props = self.E_props
         u_face = E_props.U_face[:, self.p_dim]  # shape = [n_edges]
         normals = E_props.normals                       # shape = [n_edges, 2]
 
         fluxes[:, self.V_dims] = normals * u_face.unsqueeze(-1)     # shape = [n_edges, n_component]
-
         return fluxes
+
 
 class FVMSolver:
     mesh: FVMMesh
@@ -489,21 +507,18 @@ class FVMSolver:
         self.E_props = FVMEdgeInfo(mesh, n_comp, bc_tag, device=device)
         self.cells = FVMCells(mesh, n_comp, us_init, device=device)
 
-        self.P_advect = ConvectScalar(self.E_props, dim=2, device=device)
-        self.P_force = Pressure(self.E_props, p_dim=2, V_dims=[0, 1], device=device)
-        self.U_advect = AdvectVector(self.E_props, dims=[0, 1], device=device)
-        self.U_visc = Viscosity(self.E_props, mu=0.0, dims=[0, 1], device=device)
+        self.P_advect = ConvectScalar(self.E_props, rho_dim=2, V_dim=[0, 1], device=device)
+        self.P_force = Density(self.E_props, p_dim=2, V_dims=[0, 1], device=device)
+        self.U_advect = AdvectVector(self.E_props, V_dims=[0, 1], rho_dims=2, device=device)
+        self.U_visc = Viscosity(self.E_props, mu=0.005, dims=[0, 1], device=device)
 
-        #self.plot_flux(torch.zeros(mesh.n_edges, n_comp))
-        #self.plot_cells(self.cells.values[:, 0], title="Inital Cell Values")
 
         dt = 0.01
-        for i in range(6 ):
+        for i in range(1001):
 
             st = time.time()
 
             # cells: [momentum_x, momentum_y, density]
-            self.cells.values[:, 2].clamp_(min=0.1)
             momentum_x, momentum_y, density = self.cells.values[:, 0], self.cells.values[:, 1], self.cells.values[:, 2]
             u_x, u_y = momentum_x / density, momentum_y / density
             primatives = torch.stack([u_x, u_y, density], dim=1)
@@ -512,33 +527,49 @@ class FVMSolver:
 
             fluxes += self.P_advect.edge_fluxes(primatives, primatives[:, :2])
             fluxes += self.U_advect.edge_fluxes(primatives,  primatives[:, :2])
-            #fluxes += self.U_advect.edge_fluxes(density.unsqueeze(-1) * primatives,  primatives[:, :2])
+            fluxes += self.U_visc.edge_fluxes()
+            fluxes += self.P_force.edge_fluxes()
 
-            #fluxes += self.U_visc.edge_fluxes()
-            #fluxes += self.P_force.edge_fluxes()
-
-            self.cells.update_cells(fluxes, dt)
-            self.cells.values[:, 2].clamp_(min=0.1)
+            dUdt = self.cells.update_cells(fluxes, dt)
 
             torch.cuda.synchronize()
             print(f'{i = }, {time.time() - st = :.3g}')
 
-            if i % 1 == 0:
-                #self.plot_flux(fluxes[:, 0], title=f"Fluxes at t={i * dt :.2g}")
-                self.plot_cells(self.cells.values, title=f"Values at t={i * dt :.2g}")
-                # self.plot_cells2(self.P_advect.beta, title=f"Values at t={i * dt :.2g}")
+            if i%10 == 0:
+                # cells: [momentum_x, momentum_y, density]
+                self.E_props.precompute_shared(primatives)
+                # fluxes = torch.zeros(self.mesh.n_edges, n_comp, device=device)
 
-            exit(7)
+                # fluxes += self.P_advect.edge_fluxes(primatives, primatives[:, :2])
+                # fluxes += self.U_advect.edge_fluxes(primatives, primatives[:, :2])
+                # fluxes += self.U_visc.edge_fluxes()
+                # fluxes += self.P_force.edge_fluxes()
+
+                # dUdt = self.cells.update_cells(fluxes, dt)
+
+
+                edge_ln = self.E_props.edge_len
+                # self.plot_flux(fluxes / edge_ln.unsqueeze(-1), title=f"Fluxes at t={i * dt :.2g}")
+                # print(f'{fluxes.shape = }')
+                # print(f'{self.E_props.U_face = }')
+                #
+                # self.plot_flux(self.E_props.U_face, title=f"Value at t={i * dt :.2g}")
+                #
+                self.plot_cells(self.cells.values, title=f"Values at t={i * dt :.2g}")
+                # self.plot_cells(-dUdt, title=f"dUdt at t={i * dt :.2g}", convert=False)
+
+                # exit(4)
 
     def plot_flux(self, fluxes, title="Fluxes"):
         plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes.abs())
 
 
-    def plot_cells(self, values, title="Cell Values"):
-        momentum_x, momentum_y, density = values[:, 0], values[:, 1], values[:, 2]
-        u_x, u_y = momentum_x / density, momentum_y / density
-        density = density
-        values = torch.stack([u_x, u_y, density], dim=1)
+    def plot_cells(self, values, title="Cell Values", convert=True):
+        if convert:
+            momentum_x, momentum_y, density = values[:, 0], values[:, 1], values[:, 2]
+            u_x, u_y = momentum_x / density, momentum_y / density
+            density = density
+            values = torch.stack([u_x, u_y, density], dim=1)
         plot_points(self.mesh.centroids.cpu(), values.T, title=title)
 
 
@@ -567,9 +598,9 @@ def mesh_graph(cfg):
         if e_tag == "Wall":
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0, 0, None], [None, None, 0])   #(E.WALL, 0)
         elif e_tag == "Left":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Dirich], [0.10, 0, 2], [None, None, None]) #(E.INLET, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.1, 0, None], [None, None, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 2], [0, 0, None])  #(E.EXIT, 0)
+            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 
@@ -580,9 +611,9 @@ def mesh_graph(cfg):
     #us_init = torch.exp(-((cent_x - 1.5) ** 2) / 1)
     us_init = (cent_x-3) ** 2
     us_init = us_init.repeat(1, 3)
-    us_init[:, 0] = us_init[:, 0] * 0 + 0.2
+    us_init[:, 0] = us_init[:, 0] * 0.0 + 0.1
     us_init[:, 1] *= 0.0
-    us_init[:, 2] = us_init[:, 2] * 0.0 + 2
+    us_init[:, 2] = us_init[:, 2] * 0.0 + 1
 
     solver = FVMSolver(mesh, N_comp, bc_tags, us_init=us_init)
 

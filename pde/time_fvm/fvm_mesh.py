@@ -138,7 +138,6 @@ class FVMMesh:
                 disp = n_hat * torch.dot(f - p, n_hat)
                 dist = torch.norm(disp)
                 edge_dist_bc.append(dist)
-                continue
             else:
                 # Main cell / edge: Distance between centroids
                 d = centroids[cells[1]] - centroids[cells[0]]
@@ -166,11 +165,10 @@ class FVMMesh:
         edge_vertex = vertices[edges]
         edge_vectors = edge_vertex[:, 1] - edge_vertex[:, 0]        # Ordering is used as edge index from here.
         normals = torch.stack([edge_vectors[:, 1], -edge_vectors[:, 0]], dim=1)
-        self.normals = normals                          # shape = [n_edges, 2]
         midpoints = torch.mean(edge_vertex, dim=1)      # shape = [n_edges, 2]
-
-        self.midpoints = midpoints                      # shape = [n_edges, 2]
         self.edge_vertex = edge_vertex                  # shape = [n_edges, 2, 2]
+        self.normals = normals                          # shape = [n_edges, 2]
+        self.midpoints = midpoints                      # shape = [n_edges, 2]
 
         # Triangle area and centroid
         tri_points = vertices[triangles]
@@ -187,25 +185,8 @@ class FVMMesh:
             edge_to_tri[edge.item()] = pos[:, 0]
             tri_edge_idxs[edge.item()] = pos[:, 1]
 
-        # Sort triangle in order of edge signed direction
-        self.tri_edge_signs = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals)
-        # ORDER: [-, +], so edge normal parallel to center comes last.
-        edge_to_tri_ordered = {}
-        p_m, m_p = torch.tensor([1, -1]), torch.tensor([-1, 1])
-        for edge in sorted(edge_to_tri.keys()):
-            tri_idx = edge_to_tri[edge]
-            tri_edge = tri_edge_idxs[edge]
-
-            order = self.tri_edge_signs[tri_idx, tri_edge]
-
-            # Boundary edges only have 1 triangle
-            if order.shape[0] == 1:
-                assert self.bc_edge_mask[edge] == True, "Inconsistent boundary bug"
-            else:
-                if torch.all(order == p_m):
-                    tri_idx = torch.flip(tri_idx, dims=[0])
-            edge_to_tri_ordered[edge] = tri_idx
-
+        # Sort triangle in order of edge signed direction. ORDER: [-, +], so cell on right comes first.
+        self.tri_edge_signs, edge_to_tri_ordered = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals, edge_to_tri, tri_edge_idxs)
         self.edge_to_tri = edge_to_tri_ordered
 
         # Compute distance from triangle centroid to edge midpoint
@@ -269,7 +250,10 @@ class FVMMesh:
 
         return area
 
-    def _tri_edge_sign(self, centroids, edge_vectors, midpoints, tri_to_edge, normals):
+    def _tri_edge_sign(self, centroids, edge_vectors, midpoints, tri_to_edge, normals, edge_to_tri, tri_edge_idxs):
+        """ Compute which triangle is on the left and right of each edge.
+            For ordering, triangle on right comes first, then left.
+        """
         signs = []
 
         for edge, center in zip(tri_to_edge, centroids):
@@ -293,7 +277,25 @@ class FVMMesh:
             signs.append(sign_dot)
 
         signs = torch.stack(signs).long()
-        return signs
+
+
+        edge_to_tri_ordered = {}
+        p_m, m_p = torch.tensor([1, -1]), torch.tensor([-1, 1])
+        for edge in sorted(edge_to_tri.keys()):
+            tri_idx = edge_to_tri[edge]
+            tri_edge = tri_edge_idxs[edge]
+
+            order = signs[tri_idx, tri_edge]
+
+            # Boundary edges only have 1 triangle
+            if order.shape[0] == 1:
+                assert self.bc_edge_mask[edge] == True, "Inconsistent boundary bug"
+            else:
+                if torch.all(order == p_m):
+                    tri_idx = torch.flip(tri_idx, dims=[0])
+            edge_to_tri_ordered[edge] = tri_idx
+
+        return signs, edge_to_tri_ordered
 
     def _get_tri_edges(self, triangles, edges):
         """

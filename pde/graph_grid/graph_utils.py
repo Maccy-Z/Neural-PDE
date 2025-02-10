@@ -225,7 +225,7 @@ def plot_points(Xs, values, lims=None, title=""):
         n_plots = values.shape[0]
         fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots*4))
 
-    # Loop over each batch (assuming 3 batches)
+    # Loop over each batch
     for i, ax in enumerate(axes):
         ax.set_title(f"{title} - Batch {i}")
         if lims is None:
@@ -249,26 +249,64 @@ def plot_edges(coords, edge_idx, color=None, title=""):
     edge_idx = edge_idx.cpu().detach().numpy()
 
     if color is not None:
-        colormap = plt.get_cmap("viridis")
-        edge_scalar = color.cpu().detach().numpy()
-        # Normalize scalar values to the range [0, 1].
-        if edge_scalar.max() != edge_scalar.min():
-            norm_scalar = (edge_scalar - edge_scalar.min()) / (edge_scalar.max() - edge_scalar.min())
+        if len(color.shape) == 1:
+            color = color.unsqueeze(-1)
+            fig, axes = plt.subplots(1, 1, figsize=(8, 6))
+            axes = [axes]
         else:
-            norm_scalar = np.zeros_like(edge_scalar)
-        edge_colors = colormap(norm_scalar)
+            n_plots = color.shape[1]
+            fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots*4))
+
+        colormap = plt.get_cmap("viridis")
+        edge_scalar = color.cpu().detach().numpy().T
+
+        # Normalize scalar values to the range [0, 1].
+        min_c, max_c = edge_scalar.min(axis=1, keepdims=True), edge_scalar.max(axis=1, keepdims=True)
+        norm_scalar = (edge_scalar - min_c) / (max_c - min_c + 1e-9)
+        edge_colors = []
+        for i in range(norm_scalar.shape[0]):
+            edge_colors.append(colormap(norm_scalar[i]))
     else:
-        edge_colors = np.array(['k'] * len(edge_idx))
+        edge_colors = [np.array(['k'] * len(edge_idx))]
+        fig, axes = plt.subplots(1, 1, figsize=(8, 6))
+        axes = [axes]
 
-    points = coords[edge_idx]   # shape = (m, 2, 2)
-    for edge, c in zip(points, edge_colors):
-        plt.plot(edge[:, 0], edge[:, 1], color=c)
+    # Loop over each batch
+    points = coords[edge_idx]  # shape = (m, 2, 2)
+    for i, ax in enumerate(axes):
+        ax.set_title(f"{title} - Batch {i}, [min={min_c[i].item():.2g}, max={max_c[i].item():.2g}]")
+        ax.set_aspect('equal', adjustable='box')
 
-    plt.gca().set_aspect('equal', adjustable='box')
+        for edge, c in zip(points, edge_colors[i], strict=True):
+            ax.plot(edge[:, 0], edge[:, 1], color=c)
+
     plt.tight_layout()
-    plt.title(title)
     plt.show()
-
+#
+#     """ Plot the edges of the mesh.
+#         coords.shape = (n, 2)
+#         edge_idx.shape = (m, 2)
+#     """
+#     coords = coords.cpu().detach().numpy()
+#     edge_idx = edge_idx.cpu().detach().numpy()
+#
+#     if color is not None:
+#         colormap = plt.get_cmap("viridis")
+#         edge_scalar = color.cpu().detach().numpy()
+#         # Normalize scalar values to the range [0, 1].
+#         norm_scalar = (edge_scalar - edge_scalar.min()) / (edge_scalar.max() - edge_scalar.min())
+#         edge_colors = colormap(norm_scalar)
+#     else:
+#         edge_colors = np.array(['k'] * len(edge_idx))
+#
+#     points = coords[edge_idx]   # shape = (m, 2, 2)
+#     for edge, c in zip(points, edge_colors):
+#         plt.plot(edge[:, 0], edge[:, 1], color=c)
+#
+#     plt.gca().set_aspect('equal', adjustable='box')
+#     plt.tight_layout()
+#     plt.title(title)
+#     plt.show()
 
 if __name__ == "__main__":
     # Sample data: list of (x, y) coordinates and their scalar values
