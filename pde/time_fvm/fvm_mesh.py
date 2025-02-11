@@ -44,6 +44,12 @@ def build_sparse_gradient_matrix(cell_to_neigh_idx, G_mat, dim):
     indices = torch.tensor([rows, cols], dtype=torch.long)
     values = torch.tensor(vals, dtype=G_mat[0].dtype)
     A = torch.sparse_coo_tensor(indices, values, (n_cells, n_cells))
+
+    A = A.to_sparse_csr()
+    # crow, col, val = A.crow_indices(), A.col_indices(), A.values()
+    # crow, col = crow.to(torch.int32), col.to(torch.int32)
+    # A = torch.sparse_csr_tensor(crow, col, val, size=(n_cells, n_cells))
+
     return A
 
 class FVMMesh:

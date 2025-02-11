@@ -3,6 +3,7 @@ from cprint import c_print
 import pickle
 import time
 from abc import ABC, abstractmethod
+from codetiming import Timer
 
 from pde.config import Config
 from pde.mesh_generation.generate_mesh import gen_mesh_fvm
@@ -11,7 +12,7 @@ from pde.time_dependent.time_cfg import ConfigTime
 from pde.graph_grid.fvm_store import EdgeBCTypes as E
 from pde.graph_grid.fvm_store import Edge
 from pde.time_fvm.fvm_mesh import FVMMesh
-
+from pde.time_fvm.edge_process import FVMEdgeInfo
 
 class FVMCells:
     values: torch.Tensor  # shape = (n_cells, N_component)
@@ -47,167 +48,11 @@ class FVMCells:
 
         return divergence
 
-
-class FVMEdgeInfo:
-    device: str
-    n_edges: int
-    n_cells: int
-    n_component: int
-
-    # Shared
-    edge_len: torch.Tensor  # shape = (n_edges)
-    normals: torch.Tensor  # shape = (n_edges, 2)
-    # Main mesh
-    n_edges_m: int
-    tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
-    edge_to_tri_main: torch.Tensor  # shape = [n_edges_m, 2], ordered so triangle parallel to edge normal comes last, antiparallel first.
-    edge_to_tri_w: torch.Tensor  # shape = [n_edges_m, 2]
-
-    # Boundary condition
-    n_edges_bc: int             # Number of boundary edges
-    bc_edge_mask: torch.Tensor  # shape = (n_edges)
-    normals_bc: torch.Tensor  # shape = (n_edges_bc, 2)
-    edge_to_tri_bc: torch.Tensor  # shape = (n_edges_bc)
-    dirich_mask: torch.Tensor # shape = (n_edges_bc, n_component)
-    neumann_mask: torch.Tensor # shape = (n_edges_bc, n_component)
-    dirich_val: torch.Tensor # shape: Us[dirich_mask] = dirich_val
-    neumann_val: torch.Tensor # shape: Us[neumann_mask] = neumann_val
-
-    # Gradients
-    G_mats: list[torch.Tensor]  # shape = [2](n_cells, n_cells)  Gradient matrix for every cell
-    edge_disps: torch.Tensor  # shape = (n_edges_m, 2)     Displacement vector between cell centroids, for every edge_main
-    edge_dists_bc: torch.Tensor  # shape = (n_bc_edges)     Distance between cell centroids, for every edge_bc
-
-    # Temporary Variables
-    cell_grads: torch.Tensor  # shape = (n_cells, 2, N_component)  Gradient of cell values
-    grad_faces_n: torch.Tensor  # shape = (n_edges, N_component)  n . grad(u) on faces
-    U_face: torch.Tensor  # shape = (n_edges, N_component)  Face values
-
-    def __init__(self, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
-        self.device = device
-        self.n_edges = mesh.n_edges
-        self.n_cells = mesh.n_cells
-        self.n_component = n_comp
-
-        self.normals_main = mesh.normals_main.to(device)
-        self.edge_to_tri_main = mesh.edge_to_tri_main.to(device)
-        self.edge_to_tri_w = mesh.edge_to_tri_w_main.to(device)
-
-        self.edge_to_tri_bc = mesh.edge_to_tri_bc.to(device)
-        self.bc_edge_mask = mesh.bc_edge_mask.to(device)
-        self.normals_bc = mesh.normals_bc.to(device)
-
-        (edge_disps, edge_dists_bc, G_mats) = mesh.cell_grad_stuff
-        self.edge_disps = edge_disps.to(device)
-        self.edge_dists_bc = edge_dists_bc.to(device).unsqueeze(-1).expand(-1, self.n_component)
-        self.G_mats = []
-        for G in G_mats:
-            self.G_mats.append(G.to(device))
-
-        self.cell_dist = torch.norm(self.edge_disps, dim=1).to(device)
-        self.normals = mesh.normals.to(device)
-        self.edge_len = torch.norm(self.normals, dim=1).to(device)
-
-        self.bc_tags = bc_tags # {edge_num: bc_tag}
-        self._init_bc(bc_tags)
-
-    def _init_bc(self, bc_tags: dict[int, Edge]):
-        self.n_edges_m = self.n_edges - self.bc_edge_mask.sum().item()
-        self.n_edges_bc = self.bc_edge_mask.sum().item()
-
-        dirich_mask, neumann_mask = [], []
-        dirich_val, neumann_val = [], []
-        for bc_idx, e_type in bc_tags.items():
-            # print(f'{e_type = }')
-            # print(e_type.dirichlet())
-
-            dirich_mask.append(e_type.dirichlet())
-            neumann_mask.append(e_type.neumann())
-            dirich_val.append(e_type.U)
-            neumann_val.append(e_type.dUdn)
-
-        self.dirich_mask, self.neumann_mask = torch.tensor(dirich_mask, device=self.device), torch.tensor(neumann_mask, device=self.device)
-        dirich_val, neumann_val = torch.tensor(dirich_val, dtype=torch.float32, device=self.device), torch.tensor(neumann_val, dtype=torch.float32, device=self.device)
-        self.dirich_val = dirich_val[dirich_mask]
-        self.neumann_val = neumann_val[neumann_mask]
-
-        assert self.dirich_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
-        assert self.neumann_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
-
-        # bc_indices = torch.nonzero(self.bc_edge_mask, as_tuple=False).squeeze()
-        self.dirich_all = torch.zeros(self.n_edges, self.n_component, dtype=torch.bool, device=self.device)
-        self.dirich_all[self.bc_edge_mask] = self.dirich_mask
-        self.neum_all = torch.zeros(self.n_edges, self.n_component, dtype=torch.bool, device=self.device)
-        self.neum_all[self.bc_edge_mask] = self.neumann_mask
-
-        # self.neumann_idx = bc_indices[self.neumann_mask]
-
-    def precompute_shared(self, Us):
-        """ Precompute shared values that are used multiple times later """
-        self.cell_grads = self._cell_grads(Us)
-        self.grad_faces_n = self._face_grads(Us)
-        self.U_face = self._face_vals(Us)
-
-
-    def _cell_grads(self, Us):
-        """ Vectorised gradient computation
-            Gradient = G @ (u_neigh - u_cell)
-            Us.shape = (n_cells, N_component)
-            Returns: Gradient matrix of shape (n_cells, 2, N_component)
-        """
-        grad_x = torch.sparse.mm(self.G_mats[0], Us)  # Shape: [n_cells, N_component]
-        grad_y = torch.sparse.mm(self.G_mats[1], Us)  # Shape: [n_cells, N_component]
-        cell_grads = torch.stack([grad_x, grad_y], dim=1)  # Shape: [n_cells, 2, N_component]
-        return cell_grads
-
-    def _face_grads(self, Us):
-        """ n . grad(U) on faces.
-            Us.shape = (n_cells, N_component)
-            Returns: shape = [n_edges, N_component]
-        """
-        dUdn_face = torch.empty((self.n_edges, self.n_component), device=self.device)
-
-        # On faces
-        U_centroid = Us[self.edge_to_tri_main]      # shape = [n_edges, 2, N_component]
-        dU = U_centroid[:, 1] - U_centroid[:, 0]
-        dUdn_face[~self.bc_edge_mask] = dU / self.cell_dist.unsqueeze(-1)       # shape = [n_edges, N_component]
-
-        # On boundary. Either u or du/dn is given
-        u_centroid_bc = Us[self.edge_to_tri_bc]  # shape = [n_bc_edges, N_component]
-        # Dirichlet: n.grad(u) = 1/d * (u_bc - u)
-        U_cent_bc_dir = u_centroid_bc[self.dirich_mask]     # shape = [n_dirich_edges]
-        edge_dists = self.edge_dists_bc[self.dirich_mask]    # shape = [n_dirich_edges]
-        dudn_face_bc_dir = (self.dirich_val - U_cent_bc_dir) / edge_dists
-        dUdn_face[self.dirich_all] = dudn_face_bc_dir
-        # Neumann: n.grad(u) = du/dn
-        dUdn_face[self.neum_all] = self.neumann_val
-
-        return dUdn_face
-
-    def _face_vals(self, Us):
-        """ U_face, with linear interpolation """
-        # Us = Us.repeat(1, 2)
-        # Us[:, 1] = 2 * Us[:, 1]
-
-        U_face = torch.empty((self.n_edges, self.n_component), device=self.device)
-        # Main edges
-        # Weighted linear interpolation of two cell values
-        U_centroid = Us[self.edge_to_tri_main]  # [n_edges_m, 2, n_component]
-        w = self.edge_to_tri_w.unsqueeze(-1)  # shape: [n_edges, 2, 1]
-        U_lin_main = (w * U_centroid).sum(dim=1)  # shape: [n_edges, n_component]
-        U_face[~self.bc_edge_mask] = U_lin_main
-
-        # Boundary edges
-        u_centroid_bc = Us[self.edge_to_tri_bc] # shape = [n_bc_edges, N_component]
-        # Dirichlet
-        U_face[self.dirich_all] = self.dirich_val
-        # Neumann
-        U_cent_bc_neum = u_centroid_bc[self.neumann_mask]        # shape = [n_neum_edges]
-        U_face_neum = U_cent_bc_neum + self.neumann_val / self.edge_dists_bc[self.neumann_mask]
-        U_face[self.neum_all] = U_face_neum
-
-        return U_face
-
+    def get_primatives(self):
+        momentum_x, momentum_y, density = self.values[:, 0], self.values[:, 1], self.values[:, 2]
+        u_x, u_y = momentum_x / density, momentum_y / density
+        primatives = torch.stack([u_x, u_y, density], dim=1)
+        return primatives
 
 class FVMEdgeFunc(ABC):
     device: str
@@ -227,20 +72,9 @@ class FVMEdgeFunc(ABC):
     #     pass
 
 
-class ConvectScalar(FVMEdgeFunc):
-    """ div(u V) for scalar u, fixed vector V.
-        The convection dimension is dim.
-    """
-    E_props: FVMEdgeInfo
-    rho_dim: int
-    V_dim: list[int]
-
-    def __init__(self, E_props: FVMEdgeInfo, rho_dim, V_dim, device="cpu"):
-        self.device = device
-        self.E_props = E_props
-
-        self.rho_dim = rho_dim
-        self.V_dim = V_dim
+class Advect(FVMEdgeFunc, ABC):
+    def __init__(self, E_props: FVMEdgeInfo, device="cpu"):
+        self.edge_idx = torch.arange(E_props.n_edges_m, device=device)
 
     def _beta(self, r):
         # van Albada scheme
@@ -253,18 +87,64 @@ class ConvectScalar(FVMEdgeFunc):
         #beta = torch.clamp(2 * r, max=1)
         return beta
 
-    def edge_fluxes(self, Us, V_dir):
+
+class AdvectScalar(Advect):
+    """ div(q V) for scalar u, fixed vector V.
+        The convection dimension is dim.
+    """
+    E_props: FVMEdgeInfo
+    rho_dim: int
+    V_dims: list[int]
+
+    def __init__(self, E_props: FVMEdgeInfo, V_dims, rho_dim, device="cpu"):
+        super().__init__(E_props, device)
+        self.device = device
+        self.E_props = E_props
+
+        self.rho_dim = rho_dim
+        self.V_dims = V_dims
+
+        # Mask for selecting q main edges
+        row_mask = ~E_props.bc_edge_mask  # True for rows we want
+        col_mask = torch.zeros(self.E_props.n_component, dtype=torch.bool, device=self.device)
+        col_mask[list([rho_dim])] = True  # mark the desired columns
+        self.q_main_mask = row_mask.unsqueeze(1) & col_mask.unsqueeze(0)
+        # Mask for selecting q bc edges
+        row_mask = E_props.bc_edge_mask  # True for rows we want
+        self.q_bc_mask = row_mask.unsqueeze(1) & col_mask.unsqueeze(0)
+
+
+    def edge_fluxes(self, Us):
         """ Compute flux for each edge.
             us.shape = (n_cells, n_component)
         """
         us = Us[:, self.rho_dim]
 
         fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
-        fluxes[~self.E_props.bc_edge_mask, self.rho_dim] = self._main_fluxes(us, V_dir)
-        fluxes[self.E_props.bc_edge_mask, self.rho_dim] = self._bc_fluxes_(us, V_dir)
+        fluxes[self.q_main_mask] = self._main_fluxes(us)
+        fluxes[self.q_bc_mask] = self._bc_fluxes_()
         return fluxes
 
-    def _main_fluxes(self, us, V_dir):
+    def _upwind_coef(self, V_face):
+        E_props = self.E_props
+
+        # 1. Compute the upwind indicator.
+        dot_vn = (E_props.normals_main * V_face).sum(dim=1)  # [n_edges]
+        upwind = torch.sign(dot_vn).long() # [n_edges], values 0 or 1
+        upwind_idx = E_props.edge_to_tri_main[self.edge_idx, upwind]  # [n_edges]
+        # 2. Gather the upwind cell gradients.
+        upwind_grad = E_props.cell_grads[upwind_idx, :, self.rho_dim]  # [n_edges, 2]
+        # 3. Compute the directional derivative at the face (du/dn_face)
+        dudn_face = E_props.grad_faces_n[self.q_main_mask]
+        # 4. Compute the limiter. r = max( 2 * (grad_cell . d) / (|d| * du/dn_face) - 1 , 0)
+        dot_disp_grad = (E_props.edge_disps * upwind_grad).sum(dim=1)  # [n_edges]
+        denom = E_props.cell_dist * dudn_face + 1e-7  # [n_edges]
+        r = torch.clamp(2 * dot_disp_grad / denom - 1, min=0)  # enforce r >= 0, [n_edges]
+        beta = self._beta(r)
+
+        return beta, upwind
+
+    def _main_fluxes(self, us):
         """ Compute u_face for each edge.
             div(u V) = sum_i( V_f . dS_f * u_f)
                 Linear flux interpolation
@@ -275,43 +155,27 @@ class ConvectScalar(FVMEdgeFunc):
 
             Return.shape = (n_edges_main)
         """
-
         E_props = self.E_props
 
-        V_dir_cells = V_dir[E_props.edge_to_tri_main]     # [n_edges, 2, 2]
+        Us_face = E_props.U_face[~E_props.bc_edge_mask]  # shape = [n_edges, 2]
+        V_face_lin = Us_face[:, self.V_dims]  # shape = [n_edges, 2]
+        rho_face_lin = Us_face[:, self.rho_dim]    # shape = [n_edges]
 
-        # Linear interpolation of convection vector
-        w = E_props.edge_to_tri_w.unsqueeze(1)  # shape: [n_edges, 1, 2]
-        V_face = torch.bmm(w, V_dir_cells).squeeze(1)  # shape: [n_edges, 2]
         # phi = dS_face * V_face
-        phi = (E_props.normals_main * V_face).sum(-1)
+        phi = (E_props.normals_main * V_face_lin).sum(-1)
 
         # Upwinding
-        # 1. Compute the upwind indicator.
-        dot_vn = (E_props.normals_main * V_face).sum(dim=1)  # [n_edges]
-        upwind = (dot_vn > 0).long()  # [n_edges], values 0 or 1
-        edge_idx = torch.arange(E_props.n_edges_m)
-        upwind_idx = E_props.edge_to_tri_main[edge_idx, upwind]  # [n_edges]
-        # 2. Gather the upwind cell gradients.
-        upwind_grad = E_props.cell_grads[upwind_idx, :, self.rho_dim]  # [n_edges, 2]
-        # 3. Compute the directional derivative at the face (du/dn_face)
-        dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask, self.rho_dim]
-        # 4. Compute the limiter. r = max( 2 * (grad_cell . d) / (|d| * du/dn_face) - 1 , 0)
-        dot_disp_grad = (E_props.edge_disps * upwind_grad).sum(dim=1)  # [n_edges]
-        denom = E_props.cell_dist * dudn_face.squeeze(-1) + 1e-7  # [n_edges]
-        r = torch.clamp(2 * dot_disp_grad / denom - 1, min=0)  # enforce r >= 0, [n_edges]
-        beta = self._beta(r)
-        # 5. Corrected face value: u_face = (1 - beta) * u_upwind + beta * u_face_lin
-        u_centroid = us[E_props.edge_to_tri_main]  # [n_edges_, 2]
-        u_face_lin = E_props.U_face[~E_props.bc_edge_mask, self.rho_dim]    # shape = [n_edges]
-        u_face_cor = (1 - beta) * u_centroid[edge_idx, upwind] + beta * u_face_lin  # [n_edges]
-        # 6. Compute div(uV) = phi * u_face_cor
-        flux_uV = phi * u_face_cor       # [n_edges]
+        beta, upwind = self._upwind_coef(V_face_lin)
 
-        #self.beta = dot_disp_grad / denom
+        # 5. Corrected face value: u_face = (1 - beta) * u_upwind + beta * u_face_lin
+        rho_centroid = us[E_props.edge_to_tri_main]  # [n_edges_, 2]
+        rho_face_cor = (1 - beta) * rho_centroid[self.edge_idx, upwind] + beta * rho_face_lin  # [n_edges]
+        # 6. Compute div(uV) = phi * u_face_cor
+        flux_uV = phi * rho_face_cor       # [n_edges]
+
         return flux_uV
 
-    def _bc_fluxes_(self, us, V_dir):
+    def _bc_fluxes_(self):
         """ Flux = rho_face * phi
             phi = n_face dot V_f.
         """
@@ -319,9 +183,9 @@ class ConvectScalar(FVMEdgeFunc):
 
         # Flux = U_face * phi
         # phi = normal dot Vf on face. Vf is the nearest cell value.
-        rho_face = E_props.U_face[E_props.bc_edge_mask, self.rho_dim]      # shape = [n_bc_edges]
-        V_face = E_props.U_face[E_props.bc_edge_mask][:, self.V_dim]                          # shape = [n_bc_edges, 2]
-        # print(V_face)
+        U_face = E_props.U_face[E_props.bc_edge_mask]      # shape = [n_bc_edges, 3]
+        rho_face = U_face[:, self.rho_dim]      # shape = [n_bc_edges]
+        V_face = U_face[:, self.V_dims]                          # shape = [n_bc_edges, 2]
 
         # V_face = V_dir[E_props.edge_to_tri_bc]
         phi = (E_props.normals_bc * V_face).sum(-1)
@@ -330,47 +194,62 @@ class ConvectScalar(FVMEdgeFunc):
         return bc_fluxes
 
 
-class AdvectVector(FVMEdgeFunc):
+class AdvectVector(Advect):
     """ div(p U prod V) for advected vector U, fixed vector V.
         dims: Which dimensions of Us are advected.
     """
     E_props: FVMEdgeInfo
     V_dims: list[int]
-    rho_dims: int
+    rho_dim: int
 
-    def __init__(self, E_props: FVMEdgeInfo, V_dims: list[int], rho_dims:int, device="cpu"):
+    def __init__(self, E_props: FVMEdgeInfo, V_dims: list[int], rho_dim:int, device="cpu"):
+        super().__init__(E_props, device)
         self.device = device
         self.E_props = E_props
 
         self.V_dims = V_dims
-        self.rho_dims = rho_dims
+        self.rho_dim = rho_dim
 
-    def _beta(self, r):
-        # van Albada scheme
-        #beta = (r**2 + r) / (1 + r**2)
-        # van Leer scheme
-        beta = (r + abs(r)) / (1 + abs(r))
-        # minmod scheme
-        #beta = torch.clamp(r, max=1)
-        # limited linear
-        #beta = torch.clamp(2 * r, max=1)
-        return beta
+        # Mask for selecting V main edges
+        row_mask = ~E_props.bc_edge_mask  # True for rows we want
+        col_mask = torch.zeros(self.E_props.n_component, dtype=torch.bool, device=self.device)
+        col_mask[list(self.V_dims)] = True  # mark the desired columns
+        self.V_main_mask = row_mask.unsqueeze(1) & col_mask.unsqueeze(0)
+        # Mask for selecting V bc edges
+        row_mask = E_props.bc_edge_mask  # True for rows we want
+        self.V_bc_mask = row_mask.unsqueeze(1) & col_mask.unsqueeze(0)
 
-    def edge_fluxes(self, Us, V_dir):
-        Vs = Us[:, self.V_dims]
-        rho = Us[:, self.rho_dims].unsqueeze(-1)  # shape = (n_cells, 1)
+    def edge_fluxes(self, mom):
+        """mom = rho * Vs  # shape = (n_cells, 2)"""
+        E_props = self.E_props
 
-        mom = rho * Vs  # shape = (n_cells, 2)
-
-        fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
-
-        f = torch.empty(self.E_props.n_edges, len(self.V_dims), device=self.device)
-        f[~self.E_props.bc_edge_mask] = self._main_fluxes(mom)
-        f[self.E_props.bc_edge_mask] = self._bc_fluxes_()
-
-        fluxes[:, self.V_dims] = f
+        fluxes = torch.zeros(E_props.n_edges, E_props.n_component, device=self.device)
+        fluxes[self.V_main_mask] = self._main_fluxes(mom).flatten()
+        fluxes[self.V_bc_mask] = self._bc_fluxes_().flatten()
 
         return fluxes
+
+    def _upwind_coef(self, V_face):
+        """ V_face.shape = [n_edges_m, 2]"""
+        E_props = self.E_props
+
+        # 1. Find upwind cell
+        dot_vn = (E_props.normals_main * V_face).sum(dim=1)  # [n_edges]
+        upwind = torch.sign(dot_vn).long()  # [n_edges], values 0 or 1
+        upwind_idx = E_props.edge_to_tri_main[self.edge_idx, upwind]  # [n_edges]
+        # 2. Gather the upwind cell gradients.
+        upwind_grad = E_props.cell_grads[upwind_idx][:, :, self.V_dims]  # [n_edges, 2, 2]
+        # 3. Gather the directional derivative at the face (du/dn_face)
+        dudn_face = E_props.grad_faces_n[self.V_main_mask].view(E_props.n_edges_m, 2) # [n_edges, 2]
+        #dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask][:, self.V_dims]      # shape = [n_edges, 2]
+        # 4. Compute the limiter. r = max( 2 * du/dn_face . (grad_cell . d) / (|d| * |du/dn_face|**2) - 1 , 0)
+        d_dot_gradU = (E_props.edge_disps.unsqueeze(-1) * upwind_grad).sum(dim=1)  # [n_edges, 2]
+        numerator = torch.sum(dudn_face * d_dot_gradU, dim=1)  # [n_edges]
+        denom = E_props.cell_dist * torch.sum(dudn_face**2, dim=1) + 1e-7   # [n_edges]
+        r = torch.clamp(2 * numerator / denom - 1, min=0)  # enforce r >= 0, [n_edges]
+        beta = self._beta(r).unsqueeze(-1)  # [n_edges, 1]
+
+        return beta, upwind
 
     def _main_fluxes(self, rho_Us):
         """ Compute u_face for each edge.
@@ -384,33 +263,21 @@ class AdvectVector(FVMEdgeFunc):
             Return.shape = (n_edges_main)
         """
         E_props = self.E_props
+        Us_face = E_props.U_face[~E_props.bc_edge_mask]      # shape = [n_bc_edges, 3]
+        V_face_lin = Us_face[:, self.V_dims]  # shape = [n_bc_edges, n_component]
+        rho_face = Us_face[:, self.rho_dim].unsqueeze(-1)  # shape = [n_bc_edges, 1]
 
         # Linear interpolation of convection vector
-        V_face = E_props.U_face[~E_props.bc_edge_mask][:, self.V_dims]  # shape = [n_edges, n_component]
         # Face scalar: phi = dS_face * V_face
-        phi = (E_props.normals_main * V_face).sum(-1).unsqueeze(-1)
+        phi = (E_props.normals_main * V_face_lin).sum(-1).unsqueeze(-1)
 
-        # Upwinding
-        # 1. Compute the upwind indicator.
-        dot_vn = (E_props.normals_main * V_face).sum(dim=1)  # [n_edges]
-        upwind = (dot_vn > 0).long()  # [n_edges], values 0 or 1
-        edge_idx = torch.arange(E_props.n_edges_m)
-        upwind_idx = E_props.edge_to_tri_main[edge_idx, upwind]  # [n_edges]
-        # 2. Gather the upwind cell gradients.
-        upwind_grad = E_props.cell_grads[upwind_idx][:, :, self.V_dims]  # [n_edges, 2, n_component]
-        # 3. Gather the directional derivative at the face (du/dn_face)
-        dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask][:, self.V_dims]      # shape = [n_edges, n_component]
-        # 4. Compute the limiter. r = max( 2 * (grad_cell . d) / (|d| * du/dn_face) - 1 , 0)
-        d_dot_gradU = (E_props.edge_disps.unsqueeze(-1) * upwind_grad).sum(dim=1)  # [n_edges, n_component]
-        numerator = torch.sum(dudn_face * d_dot_gradU, dim=1)  # [n_edges]
-        denom = E_props.cell_dist * torch.sum(dudn_face**2, dim=1) + 1e-7   # [n_edges]
-        r = torch.clamp(2 * numerator / denom - 1, min=0)  # enforce r >= 0, [n_edges]
-        beta = self._beta(r).unsqueeze(-1)  # # [n_edges, 1]
+        # Upwinding: u_face = (1 - beta) * u_upwind + beta * u_face_lin
+        # Compute upwind coefficient and upwind cell mask
+        beta, upwind = self._upwind_coef(V_face_lin)
 
-        # 5. Corrected face value: u_face = (1 - beta) * u_upwind + beta * u_face_lin
+        # Corrected face value: u_face = (1 - beta) * u_upwind + beta * u_face_lin
         U_centroid = rho_Us[E_props.edge_to_tri_main]  # [n_edges_, 2, n_component]
-        U_face_lin = E_props.U_face[~E_props.bc_edge_mask][:, self.V_dims]    # shape = [n_edges, n_component]
-        U_face_cor = (1 - beta) * U_centroid[edge_idx, upwind] + beta * U_face_lin  # [n_edges, n_component]
+        U_face_cor = (1 - beta) * U_centroid[self.edge_idx, upwind] + beta * V_face_lin * rho_face  # [n_edges, n_component]
 
         # 6. Compute div(uV) = phi * u_face_cor
         flux_UV = phi * U_face_cor       # [n_edges]
@@ -424,18 +291,13 @@ class AdvectVector(FVMEdgeFunc):
         """
         E_props = self.E_props
 
-        # Flux = U_face * phi
-        # phi = normal dot Vf on face. Vf is the nearest cell value.
-        #V_face = V_dir[E_props.edge_to_tri_bc]                          # shape = [n_bc_edges, 2]#
-
-        V_face = E_props.U_face[E_props.bc_edge_mask][:, self.V_dims]  # shape = [n_bc_edges, n_component]
-        phi = (E_props.normals_bc * V_face).sum(-1).unsqueeze(-1)
-
+        # Flux = rho U_face * phi
         Us_face = E_props.U_face[E_props.bc_edge_mask]      # shape = [n_bc_edges, 3]
-        V_face = Us_face[:, self.V_dims]      # shape = [n_bc_edges, n_component]
-        rho_face = Us_face[:, 2].unsqueeze(-1)  # shape = [n_bc_edges, 1]
-        bc_fluxes = rho_face * V_face * phi
+        V_face = Us_face[:, self.V_dims]  # shape = [n_bc_edges, n_component]
+        rho_face = Us_face[:, self.rho_dim].unsqueeze(-1)  # shape = [n_bc_edges, 1]
 
+        phi = (E_props.normals_bc * V_face).sum(-1).unsqueeze(-1)       # shape = [n_bc_edges, 1]
+        bc_fluxes = rho_face * V_face * phi         # shape = [n_bc_edges, n_component]
         return bc_fluxes
 
 
@@ -507,48 +369,47 @@ class FVMSolver:
         self.E_props = FVMEdgeInfo(mesh, n_comp, bc_tag, device=device)
         self.cells = FVMCells(mesh, n_comp, us_init, device=device)
 
-        self.P_advect = ConvectScalar(self.E_props, rho_dim=2, V_dim=[0, 1], device=device)
+        self.P_advect = AdvectScalar(self.E_props, V_dims=[0, 1], rho_dim=2, device=device)
         self.P_force = Density(self.E_props, p_dim=2, V_dims=[0, 1], device=device)
-        self.U_advect = AdvectVector(self.E_props, V_dims=[0, 1], rho_dims=2, device=device)
+        self.U_advect = AdvectVector(self.E_props, V_dims=[0, 1], rho_dim=2, device=device)
         self.U_visc = Viscosity(self.E_props, mu=0.005, dims=[0, 1], device=device)
 
 
         dt = 0.01
-        for i in range(1001):
-
+        for i in range(300):
             st = time.time()
 
             # cells: [momentum_x, momentum_y, density]
-            momentum_x, momentum_y, density = self.cells.values[:, 0], self.cells.values[:, 1], self.cells.values[:, 2]
-            u_x, u_y = momentum_x / density, momentum_y / density
-            primatives = torch.stack([u_x, u_y, density], dim=1)
-            self.E_props.precompute_shared(primatives)
+            primatives = self.cells.get_primatives()
             fluxes = torch.zeros(self.mesh.n_edges, n_comp, device=device)
 
-            fluxes += self.P_advect.edge_fluxes(primatives, primatives[:, :2])
-            fluxes += self.U_advect.edge_fluxes(primatives,  primatives[:, :2])
+            self.E_props.precompute_shared(primatives)
+            # with Timer(name="Advect P", text="U_advect: {:.3g}"):
+            #     self.E_props.precompute_shared(primatives)
+            #     torch.cuda.synchronize()
+            # with Timer(name="Advect P", text="U_visc: {:.3g}"):
+            #     fluxes += self.U_visc.edge_fluxes()
+            #     torch.cuda.synchronize()
+            # with Timer(name="Advect P", text="P_force: {:.3g}"):
+            #     fluxes += self.P_force.edge_fluxes()
+            #     torch.cuda.synchronize()
+            #
+            # with Timer(name="Advect P", text="Final: {:.3g}"):
+            #     self.cells.update_cells(fluxes, dt)
+            #     torch.cuda.synchronize()
+
+            fluxes += self.P_advect.edge_fluxes(primatives)
+            fluxes += self.U_advect.edge_fluxes(self.cells.values[:, :2])
             fluxes += self.U_visc.edge_fluxes()
             fluxes += self.P_force.edge_fluxes()
-
-            dUdt = self.cells.update_cells(fluxes, dt)
+            self.cells.update_cells(fluxes, dt)
 
             torch.cuda.synchronize()
             print(f'{i = }, {time.time() - st = :.3g}')
+            #
+            if i > 250 and i % 5 == 0:
 
-            if i%10 == 0:
-                # cells: [momentum_x, momentum_y, density]
-                self.E_props.precompute_shared(primatives)
-                # fluxes = torch.zeros(self.mesh.n_edges, n_comp, device=device)
-
-                # fluxes += self.P_advect.edge_fluxes(primatives, primatives[:, :2])
-                # fluxes += self.U_advect.edge_fluxes(primatives, primatives[:, :2])
-                # fluxes += self.U_visc.edge_fluxes()
-                # fluxes += self.P_force.edge_fluxes()
-
-                # dUdt = self.cells.update_cells(fluxes, dt)
-
-
-                edge_ln = self.E_props.edge_len
+                # edge_ln = self.E_props.edge_len
                 # self.plot_flux(fluxes / edge_ln.unsqueeze(-1), title=f"Fluxes at t={i * dt :.2g}")
                 # print(f'{fluxes.shape = }')
                 # print(f'{self.E_props.U_face = }')

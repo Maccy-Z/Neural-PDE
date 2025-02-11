@@ -1,5 +1,6 @@
 import torch
-print(torch.cuda.is_available())
-x = torch.tensor(4, device="cuda")
 
-print(x)
+
+x = torch.arange(9).view(3, 3)
+
+print(x[:, []])
