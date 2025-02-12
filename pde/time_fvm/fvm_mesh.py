@@ -89,11 +89,6 @@ class FVMMesh:
 
         self._compute_edge_props(vertices, triangles, edges)
 
-        self._compute_bc_props(bc_edge_mask)
-
-
-    def _compute_bc_props(self, bc_edge_mask):
-        """ Boundary indices are specified w.r.t. boundary mask, not main edge index. """
 
     def _grad_weighting(self, tri_to_edge, edge_to_tri_ord, centroids, midpoints, normals):
         """ Use least squares formula to compute gradient weighting.
@@ -134,7 +129,7 @@ class FVMMesh:
             cell_d_i.append(d_i)
 
         # Get displacement between cells with edge indexing. In direction of normal
-        edge_dist, edge_dist_bc = [], []
+        cell_disps, edge_dist_bc = [], []
         for e, cells in edge_to_tri_ord.items():
             if cells.shape[0] == 1:
                 # BC cell / edge: Distance from centroid to edge.
@@ -147,11 +142,10 @@ class FVMMesh:
             else:
                 # Main cell / edge: Distance between centroids
                 d = centroids[cells[1]] - centroids[cells[0]]
-                edge_dist.append(d)
+                cell_disps.append(d)
 
-        edge_dist = torch.stack(edge_dist)
+        cell_disps = torch.stack(cell_disps)
         edge_dist_bc = torch.stack(edge_dist_bc)
-
 
         # Premultiply A_inv with d_i.T
         A_inv_di_T = []
@@ -163,7 +157,7 @@ class FVMMesh:
             G_mat = build_sparse_gradient_matrix(cell_to_neigh_idx, A_inv_di_T, i)
             G_mats.append(G_mat)
 
-        return edge_dist, edge_dist_bc, G_mats
+        return cell_disps, edge_dist_bc, G_mats
 
 
     def _compute_edge_props(self, vertices, triangles, edges):

@@ -157,9 +157,10 @@ class FVMEdgeInfo:
     normals: torch.Tensor  # shape = (n_edges, 2)
     # Main mesh
     n_edges_m: int
-    tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
+    #tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
     edge_to_tri_main: torch.Tensor  # shape = [n_edges_m, 2], ordered so triangle parallel to edge normal comes last, antiparallel first.
     edge_to_tri_w: torch.Tensor  # shape = [n_edges_m, 2]
+    cell_dist: torch.Tensor  # shape = (n_edges_m)
 
     # Boundary condition
     n_edges_bc: int             # Number of boundary edges
@@ -173,7 +174,7 @@ class FVMEdgeInfo:
 
     # Gradients
     G_mats: list[torch.Tensor]  # shape = [2](n_cells, n_cells)  Gradient matrix for every cell
-    edge_disps: torch.Tensor  # shape = (n_edges_m, 2)     Displacement vector between cell centroids, for every edge_main
+    cell_disps: torch.Tensor  # shape = (n_edges_m, 2)     Displacement vector between cell centroids, for every edge_main
     edge_dists_bc: torch.Tensor  # shape = (n_bc_edges, 3)     Distance between cell centroids, for every edge_bc
 
     # Temporary Variables
@@ -190,22 +191,25 @@ class FVMEdgeInfo:
         self.normals_main = mesh.normals_main.to(device)
         self.edge_to_tri_main = mesh.edge_to_tri_main.to(device)
         self.edge_to_tri_w = mesh.edge_to_tri_w_main.to(device)
+        #self.tri_to_edge = mesh.tri_to_edge.to(device)
 
         self.edge_to_tri_bc = mesh.edge_to_tri_bc.to(device)
         self.bc_edge_mask = mesh.bc_edge_mask.to(device)
         self.normals_bc = mesh.normals_bc.to(device)
 
-        (edge_disps, edge_dists_bc, G_mats) = mesh.cell_grad_stuff
-        self.edge_disps = edge_disps.to(device)
+        (cell_disps, edge_dists_bc, G_mats) = mesh.cell_grad_stuff
+        self.cell_disps = cell_disps.to(device)
         self.edge_dists_bc = edge_dists_bc.to(device).unsqueeze(-1).expand(-1, self.n_component)
         self.G_mats = []
         for G in G_mats:
             self.G_mats.append(G.to(device))
 
-        self.cell_dist = torch.norm(self.edge_disps, dim=1).to(device)
+        self.cell_dist = torch.norm(self.cell_disps, dim=1).to(device)
         self.normals = mesh.normals.to(device)
         self.edge_len = torch.norm(self.normals, dim=1).to(device)
-
+        # print(self.cell_dist.shape)
+        # print(self.cell_dist.min())
+        # exit(9)
         self.bc_tags = bc_tags # {edge_num: bc_tag}
         self._init_bc(bc_tags)
 
@@ -346,6 +350,7 @@ class FVMEdgeInfo:
 
         self.A_face_val, self.b_face_val = combine_edge_operators(A_main, A_bc, b, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_component, self.device)
 
+
     def _init_bc(self, bc_tags: dict[int, Edge]):
         self.n_edges_m = self.n_edges - self.bc_edge_mask.sum().item()
         self.n_edges_bc = self.bc_edge_mask.sum().item()
@@ -369,6 +374,14 @@ class FVMEdgeInfo:
         assert self.dirich_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
         assert self.neumann_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
 
+        # bc_indices = torch.nonzero(self.bc_edge_mask, as_tuple=False).squeeze()
+        self.dirich_all = torch.zeros(self.n_edges, self.n_component, dtype=torch.bool, device=self.device)
+        self.dirich_all[self.bc_edge_mask] = self.dirich_mask
+        self.neum_all = torch.zeros(self.n_edges, self.n_component, dtype=torch.bool, device=self.device)
+        self.neum_all[self.bc_edge_mask] = self.neumann_mask
+
+        # self.neumann_idx = bc_indices[self.neumann_mask]
+
 
     def precompute_shared(self, Us):
         """ Precompute shared values that are used multiple times later """
@@ -385,41 +398,69 @@ class FVMEdgeInfo:
         grad_x = torch.sparse.mm(self.G_mats[0], Us)  # Shape: [n_cells, N_component]
         grad_y = torch.sparse.mm(self.G_mats[1], Us)  # Shape: [n_cells, N_component]
         cell_grads = torch.stack([grad_x, grad_y], dim=1)  # Shape: [n_cells, 2, N_component]
+
+        self.done_cell=True
         return cell_grads
 
     def _face_grads(self, Us):
         """ n . grad(U) on faces.
             Us.shape = (n_cells, N_component)
             Returns: shape = [n_edges, N_component]
+
+            Non-orthogonal correction: n . grad(U)_f = C du + (n - C d) . grad(U)_f
+            NOTE: Must be called after _cell_grads() to ensure up to date cell_grads
         """
-        # dUdn_face = torch.empty((self.n_edges, self.n_component), device=self.device)
-        #
-        # # On faces
+        dUdn_face = torch.empty((self.n_edges, self.n_component), device=self.device)
+
+        # # # On faces
         # U_centroid = Us[self.edge_to_tri_main]      # shape = [n_edges, 2, N_component]
         # dU = U_centroid[:, 1] - U_centroid[:, 0]
-        # dUdn_face[~self.bc_edge_mask] = dU / self.cell_dist.unsqueeze(-1)       # shape = [n_edges, N_component]
         #
-        # # On boundary. Either u or du/dn is given
-        # u_centroid_bc = Us[self.edge_to_tri_bc]  # shape = [n_bc_edges, N_component]
-        # # Dirichlet: n.grad(u) = 1/d * (u_bc - u)
-        # U_cent_bc_dir = u_centroid_bc[self.dirich_mask]     # shape = [n_dirich_edges]
-        # edge_dists = self.edge_dists_bc[self.dirich_mask]    # shape = [n_dirich_edges]
-        # dudn_face_bc_dir = (self.dirich_val - U_cent_bc_dir) / edge_dists
-        # dUdn_face[self.dirich_all] = dudn_face_bc_dir
-        # # Neumann: n.grad(u) = du/dn
-        # dUdn_face[self.neum_all] = self.neumann_val
+        # # normals_hat = self.normals_main / torch.norm(self.normals_main, dim=1).unsqueeze(-1)
+        # # C = 1 / (normals_hat * self.cell_disps).sum(dim=1, keepdim=True)
+        # #
+        # # grad_impl = C * dU
+        # # """ NEw - cell corrected """
+        # # # Interpolate cell gradients to face
+        # # grad_U_main = self.cell_grads[self.edge_to_tri_main]  # shape = [n_edges, 2, d_dims=2, N_component]
+        # # w = self.edge_to_tri_w.unsqueeze(-1).unsqueeze(-1)  # shape: [n_edges, 2, 1, 1]
+        # # grad_U_face = (w * grad_U_main).sum(dim=1)  # shape: [n_edges, 2, n_component]
+        # #
+        # # corr_expl = (normals_hat - C * self.cell_disps)#.unsqueeze(1) * grad_U_face
+        # # grad_expl = (corr_expl.unsqueeze(-1) * grad_U_face).sum(dim=1)       # shape = [n_edges, N_component]
+        # #
+        # # dUdn_face_m_new = grad_impl + grad_expl
+        # # dUdn_face[~self.bc_edge_mask] = dUdn_face_m_new
+        #
+        # """ OLD """
+        # dUdn_face_m = dU / self.cell_dist.unsqueeze(-1)       # shape = [n_edges, N_component]
+        # dUdn_face[~self.bc_edge_mask] = dUdn_face_m
+        #
+        # On boundary. Either u or du/dn is given
+        u_centroid_bc = Us[self.edge_to_tri_bc]  # shape = [n_bc_edges, N_component]
+        # Dirichlet: n.grad(u) = 1/d * (u_bc - u)
+        U_cent_bc_dir = u_centroid_bc[self.dirich_mask]     # shape = [n_dirich_edges]
+        edge_dists = self.edge_dists_bc[self.dirich_mask]    # shape = [n_dirich_edges]
+        dudn_face_bc_dir = (self.dirich_val - U_cent_bc_dir) / edge_dists
+        dUdn_face[self.dirich_all] = dudn_face_bc_dir
+        # Neumann: n.grad(u) = du/dn
+        dUdn_face[self.neum_all] = self.neumann_val
 
 
-        """ SPARSE"""
-        Us_flat = Us.flatten()
-        dUdn_face_flat = torch.mv(self.A_face_grad, Us_flat) + self.b_face_grad
-        dUdn_face = dUdn_face_flat.reshape(self.n_edges, self.n_component)
+        assert self.done_cell, f'Cell grads not computed'
 
+        # """ SPARSE"""
+        # Us_flat = Us.flatten()
+        # dUdn_face_flat = torch.mv(self.A_face_grad, Us_flat) + self.b_face_grad
+        # dUdn_face = dUdn_face_flat.reshape(self.n_edges, self.n_component)
+        #
+        # self.done_cell = None # Reset
         return dUdn_face
 
     def _face_vals(self, Us):
         """ U_face, with linear interpolation """
         # # Main edges
+        # U_face = torch.empty((self.n_edges, self.n_component), device=self.device)
         # #Weighted linear interpolation of two cell values
         # U_centroid = Us[self.edge_to_tri_main]  # [n_edges_m, 2, n_component]
         # w = self.edge_to_tri_w.unsqueeze(-1)  # shape: [n_edges, 2, 1]
@@ -435,10 +476,13 @@ class FVMEdgeInfo:
         # U_face_neum = U_cent_bc_neum + self.neumann_val / self.edge_dists_bc[self.neumann_mask]
         # U_face[self.neum_all] = U_face_neum
 
-
+        # Vx = Us[:, 0]
+        # v_min = Vx.min()
+        # print(torch.where(Vx == v_min))
+        # print(torch.where(U_face == v_min))
         # Main edges
+
         Us_flat = Us.flatten()
         U_face_flat = torch.mv(self.A_face_val, Us_flat) + self.b_face_val
         U_face = U_face_flat.reshape(self.n_edges, self.n_component)
-
         return U_face

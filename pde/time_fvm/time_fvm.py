@@ -34,7 +34,7 @@ class FVMCells:
             assert init_val.shape == (n_cells, n_component), f'Incorrect us init shape {init_val.shape = }'
             self.values = init_val.clone().to(device)
 
-    def update_cells(self, fluxes, dt):
+    def update_cells(self, fluxes, dt, real=True):
         """ Update cell values using fluxes.
             fluxes.shape = (n_edges, N_component)
 
@@ -44,7 +44,10 @@ class FVMCells:
         tri_fluxes = fluxes[self.tri_to_edge]  # shape: [n_tri, 3, n_component]
 
         divergence = dt * torch.sum(self.tri_edge_sign * tri_fluxes, dim=1).squeeze() / self.areas.unsqueeze(-1)     # shape = [n_cells, N_component]
-        self.values -=  divergence
+
+        if real:
+            self.values -=  divergence
+
 
         return divergence
 
@@ -85,7 +88,8 @@ class Advect(FVMEdgeFunc, ABC):
         #beta = torch.clamp(r, max=1)
         # limited linear
         #beta = torch.clamp(2 * r, max=1)
-        return beta
+        # print(f'{beta.abs().max() = }')
+        return beta * 0 + 1
 
 
 class AdvectScalar(Advect):
@@ -137,7 +141,7 @@ class AdvectScalar(Advect):
         # 3. Compute the directional derivative at the face (du/dn_face)
         dudn_face = E_props.grad_faces_n[self.q_main_mask]
         # 4. Compute the limiter. r = max( 2 * (grad_cell . d) / (|d| * du/dn_face) - 1 , 0)
-        dot_disp_grad = (E_props.edge_disps * upwind_grad).sum(dim=1)  # [n_edges]
+        dot_disp_grad = (E_props.cell_disps * upwind_grad).sum(dim=1)  # [n_edges]
         denom = E_props.cell_dist * dudn_face + 1e-7  # [n_edges]
         r = torch.clamp(2 * dot_disp_grad / denom - 1, min=0)  # enforce r >= 0, [n_edges]
         beta = self._beta(r)
@@ -169,7 +173,9 @@ class AdvectScalar(Advect):
 
         # 5. Corrected face value: u_face = (1 - beta) * u_upwind + beta * u_face_lin
         rho_centroid = us[E_props.edge_to_tri_main]  # [n_edges_, 2]
-        rho_face_cor = (1 - beta) * rho_centroid[self.edge_idx, upwind] + beta * rho_face_lin  # [n_edges]
+        # TODO: TEMP TEST
+        #rho_face_cor = (1 - beta) * rho_centroid[self.edge_idx, upwind] + beta * rho_face_lin  # [n_edges]
+        rho_face_cor = (1 - beta) * (rho_centroid[self.edge_idx, upwind]* 0 + 1) + beta * (rho_face_lin* 0 + 1)  # [n_edges]
         # 6. Compute div(uV) = phi * u_face_cor
         flux_uV = phi * rho_face_cor       # [n_edges]
 
@@ -243,7 +249,7 @@ class AdvectVector(Advect):
         dudn_face = E_props.grad_faces_n[self.V_main_mask].view(E_props.n_edges_m, 2) # [n_edges, 2]
         #dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask][:, self.V_dims]      # shape = [n_edges, 2]
         # 4. Compute the limiter. r = max( 2 * du/dn_face . (grad_cell . d) / (|d| * |du/dn_face|**2) - 1 , 0)
-        d_dot_gradU = (E_props.edge_disps.unsqueeze(-1) * upwind_grad).sum(dim=1)  # [n_edges, 2]
+        d_dot_gradU = (E_props.cell_disps.unsqueeze(-1) * upwind_grad).sum(dim=1)  # [n_edges, 2]
         numerator = torch.sum(dudn_face * d_dot_gradU, dim=1)  # [n_edges]
         denom = E_props.cell_dist * torch.sum(dudn_face**2, dim=1) + 1e-7   # [n_edges]
         r = torch.clamp(2 * numerator / denom - 1, min=0)  # enforce r >= 0, [n_edges]
@@ -372,66 +378,78 @@ class FVMSolver:
         self.P_advect = AdvectScalar(self.E_props, V_dims=[0, 1], rho_dim=2, device=device)
         self.P_force = Density(self.E_props, p_dim=2, V_dims=[0, 1], device=device)
         self.U_advect = AdvectVector(self.E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.U_visc = Viscosity(self.E_props, mu=0.005, dims=[0, 1], device=device)
+        self.U_visc = Viscosity(self.E_props, mu=0.0, dims=[0, 1], device=device)
 
 
-        dt = 0.01
-        for i in range(300):
+        # print(self.mesh.tri_to_edge[481])   # [878, 721, 686]
+        # print(self.mesh.edge_to_tri[686])   # [878, 721, 686]
+        # print(mesh.centroids[476])
+        # # print(mesh.centroids[482, 481, 476])
+        # exit(9)
+        dt = 0.005
+        for i in range(3000):
+            print()
+            if i * dt > 5.35:
+                exit("DONE")
             st = time.time()
 
+            # Test init condition
+            if torch.allclose(torch.tensor(i * dt), torch.tensor(5.225)):
+                self.cells.values[:, :2] = torch.zeros_like(self.cells.values[:, :2])
             # cells: [momentum_x, momentum_y, density]
             primatives = self.cells.get_primatives()
             fluxes = torch.zeros(self.mesh.n_edges, n_comp, device=device)
 
             self.E_props.precompute_shared(primatives)
-            # with Timer(name="Advect P", text="U_advect: {:.3g}"):
-            #     self.E_props.precompute_shared(primatives)
-            #     torch.cuda.synchronize()
-            # with Timer(name="Advect P", text="U_visc: {:.3g}"):
-            #     fluxes += self.U_visc.edge_fluxes()
-            #     torch.cuda.synchronize()
-            # with Timer(name="Advect P", text="P_force: {:.3g}"):
-            #     fluxes += self.P_force.edge_fluxes()
-            #     torch.cuda.synchronize()
-            #
-            # with Timer(name="Advect P", text="Final: {:.3g}"):
-            #     self.cells.update_cells(fluxes, dt)
-            #     torch.cuda.synchronize()
-
             fluxes += self.P_advect.edge_fluxes(primatives)
-            fluxes += self.U_advect.edge_fluxes(self.cells.values[:, :2])
-            fluxes += self.U_visc.edge_fluxes()
+            # fluxes += self.U_advect.edge_fluxes(self.cells.values[:, :2])
+            # fluxes += self.U_visc.edge_fluxes()
             fluxes += self.P_force.edge_fluxes()
-            self.cells.update_cells(fluxes, dt)
 
-            torch.cuda.synchronize()
-            print(f'{i = }, {time.time() - st = :.3g}')
+            # torch.cuda.synchronize()
             #
-            if i > 250 and i % 5 == 0:
+            if i * dt > 5.225 and i % 1 == 0:
+                # fluxes2 = torch.zeros(self.mesh.n_edges, n_comp, device=device)
+                # self.E_props.precompute_shared(primatives)
+                # fluxes2 += self.P_advect.edge_fluxes(primatives)
+                #fluxes2 += self.U_advect.edge_fluxes(self.cells.values[:, :2])
+                # fluxes 2+= self.U_visc.edge_fluxes()
+                # fluxes2 += self.P_force.edge_fluxes()
+                # dUdt = self.cells.update_cells(fluxes2, dt, real=False)
+
 
                 # edge_ln = self.E_props.edge_len
-                # self.plot_flux(fluxes / edge_ln.unsqueeze(-1), title=f"Fluxes at t={i * dt :.2g}")
-                # print(f'{fluxes.shape = }')
-                # print(f'{self.E_props.U_face = }')
-                #
-                # self.plot_flux(self.E_props.U_face, title=f"Value at t={i * dt :.2g}")
-                #
-                self.plot_cells(self.cells.values, title=f"Values at t={i * dt :.2g}")
-                # self.plot_cells(-dUdt, title=f"dUdt at t={i * dt :.2g}", convert=False)
+                # self.plot_flux(fluxes2 / edge_ln.unsqueeze(-1), title=f"Fluxes at t={i * dt :.2g}")
+                #self.plot_flux(self.E_props.U_face[:, [0, 2]], title=f"Value at t={i * dt :.2g}")
+                self.plot_cells(primatives, title=f"Values at t={i * dt :.4g}")
+                #self.plot_cells(-dUdt[:, [0, 2]], title=f"dUdt at t={i * dt :.4g}", convert=False)
 
+                # vx, vy, rho = primatives[:, 0], primatives[:, 1], primatives[:, 2]
+                # E = 0.5* (vx ** 2 + vy ** 2 + (rho-1) ** 2)
+                #
+                # print(E[481] + E[482] + E[476])
+                #print(E.sum())
+
+                print(self.E_props.cell_grads[481, 0])
+                print(self.E_props.grad_faces_n[878])
                 # exit(4)
+            else:
+                print(f'{i = }, {time.time() - st = :.3g}')
 
+            dUdt = self.cells.update_cells(fluxes, dt)
+            #print(self.cells.values[481, 0])
+        # cell 481, edge 878
     def plot_flux(self, fluxes, title="Fluxes"):
-        plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes.abs())
+        plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes)
 
 
     def plot_cells(self, values, title="Cell Values", convert=True):
         if convert:
             momentum_x, momentum_y, density = values[:, 0], values[:, 1], values[:, 2]
             u_x, u_y = momentum_x / density, momentum_y / density
-            density = density
-            values = torch.stack([u_x, u_y, density], dim=1)
-        plot_points(self.mesh.centroids.cpu(), values.T, title=title)
+            density = (density - 1)
+            values = torch.stack([u_x, density], dim=1)
+        plot_points(self.mesh.centroids.cpu(), values.T, title=title)#, lims=[-0.01, 0.01])
 
 
 def mesh_graph(cfg):
@@ -459,24 +477,24 @@ def mesh_graph(cfg):
         if e_tag == "Wall":
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0, 0, None], [None, None, 0])   #(E.WALL, 0)
         elif e_tag == "Left":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.1, 0, None], [None, None, 0]) #(E.INLET, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.0, 0, None], [None, None, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 
 
-    mesh = FVMMesh(Xs, tri_idx, all_edgs, bc_edge_mask)
+    mesh = FVMMesh(Xs, tri_idx, all_edgs, bc_edge_mask, device="cuda")
 
     cent_x = mesh.centroids[:, 0].unsqueeze(-1).clone()
     #us_init = torch.exp(-((cent_x - 1.5) ** 2) / 1)
     us_init = (cent_x-3) ** 2
     us_init = us_init.repeat(1, 3)
-    us_init[:, 0] = us_init[:, 0] * 0.0 + 0.1
+    us_init[:, 0] = torch.randn_like(us_init[:, 0]) * 1e-7 #us_init[:, 0] * 1e-6 + 0.0
     us_init[:, 1] *= 0.0
     us_init[:, 2] = us_init[:, 2] * 0.0 + 1
 
-    solver = FVMSolver(mesh, N_comp, bc_tags, us_init=us_init)
+    solver = FVMSolver(mesh, N_comp, bc_tags, us_init=us_init, device="cuda")
 
     exit(4)
     c_print(f'Number of mesh points: {len(Xs)}', "green")
@@ -485,7 +503,7 @@ def mesh_graph(cfg):
 
 def main():
     # from pde.utils import setup_logging
-
+    torch.manual_seed(0)
     # setup_logging(debug=False)
 
     cfg = Config()

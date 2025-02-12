@@ -236,6 +236,9 @@ def plot_points(Xs, values, lims=None, title=""):
         fig.colorbar(sc, ax=ax)
         ax.set_aspect('equal', adjustable='box')
 
+        ax.set_xlim([2.5, 3])
+        ax.set_ylim([0.2, 0.8])
+
     plt.tight_layout()
     plt.show()
 
