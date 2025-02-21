@@ -1,68 +1,42 @@
 import numpy as np
-import matplotlib.pyplot as plt
 
-# -----------------------
-# Parameters and domain
-# -----------------------
-L = 1.0  # domain length
-N = 101  # number of grid points
-dx = L / (N - 1)
-x = np.linspace(0, L, N)
-print(f'{dx = }')
-T_max = 0.5  # final time
-CFL = 0.1  # CFL number for stability (wave speed is 1)
-dt = CFL * dx  # time step size
-nsteps = int(T_max / dt)
 
-# -----------------------------------
-# Initial conditions
-# -----------------------------------
-# Here we choose a nontrivial initial condition.
-# We set u = 0 everywhere, and p is chosen to be a step function:
-# p = 0 for x < 0.5 and p = 1 for x > 0.5.
-u = np.zeros(N)
-p = np.zeros(N)
-p = np.random.randn(N) * 0.01 + 1
+d1 = 5
+d2 = 1
+dt = 0.001
+u0 = np.array([1., 2])
+p0 = np.array([1., 2])
 
-# Enforce boundary conditions on the initial data:
-u[0] = 0.0  # left: u = 0
-p[0] = p[1]  # left: p_x = 0  (approximate by p[0] = p[1])
-p[-1] = 1.0  # right: p = 1
-u[-1] = u[-2]  # right: u_x = 0  (approximate by u[-1] = u[-2])
+u_face_forward = d2/(d1 + d2) * u0[0] + d1/(d1+d2) * u0[1]
+p_face_forward = d2/(d1 + d2) * p0[0] + d1/(d1+d2) * p0[1]
+# print(f'{u_face_forward = }, {p_face_forward = }')
+u_face_reverse = d1/(d1 + d2) * u0[1] + d2/(d1+d2) * u0[0]
+p_face_reverse = d1/(d1 + d2) * p0[1] + d2/(d1+d2) * p0[0]
 
-# -----------------------------------
-# Time stepping loop (Euler explicit)
-# -----------------------------------
-plt.figure()
-for n in range(nsteps):
-    # Make copies to update simultaneously
-    u_new = u.copy()
-    p_new = p.copy()
+u1, p1 = np.zeros_like(u0), np.zeros_like(p0)
 
-    # Update interior points using central differences
-    u_new[1:-1] = u[1:-1] - dt / (2 * dx) * (p[2:] - p[:-2])
-    p_new[1:-1] = p[1:-1] - dt / (2 * dx) * (u[2:] - u[:-2])
+u1[0] = u0[0] - dt * (p_face_forward) / (2 * d1)
+u1[1] = u0[1] - dt * (- p_face_reverse)   / (2 * d2)
 
-    # Apply boundary conditions:
-    # Left boundary (x=0):
-    u_new[0] = 0.0  # u = 0
-    p_new[0] = p_new[1]  # p_x = 0 --> p[0] = p[1]
+p1[0] = p0[0] - dt * u_face_forward     / (2 * d1)
+p1[1] = p0[1] - dt * (0 - u_face_reverse)   / (2 * d2)
 
-    # Right boundary (x=L):
-    p_new[-1] = 1.0  # p = 1
-    u_new[-1] = u_new[-2]  # u_x = 0 --> u[-1] = u[-2]
+E0 = 0.5 * (2 * d1 * u0[0] ** 2 + 2 * d2 * u0[1] ** 2) + 0.5 * (2 * d1 * p0[0] ** 2 + 2 * d2 * p0[1] ** 2)
+E1 = 0.5 * (2 * d1 * u1[0] ** 2 + 2 * d2 * u1[1] ** 2) + 0.5 * (2 * d1 * p1[0] ** 2 + 2 * d2 * p1[1] ** 2)
 
-    # Update the solution arrays
-    u, p = u_new, p_new
+E0, E1 = float(E0), float(E1)
+print(f'face: {np.stack([u_face_forward, p_face_forward])}')
+print(f'{u1 = }, {p1 = }')
+print(f'{E0 = }, {E1 = }')
+dEdt = (E1 - E0) / dt
+print(f'{dEdt = }')
 
-    # Optionally, plot the solution every few time steps:
-    if n % 10 == 0:
-        plt.clf()
-        plt.plot(x, u, label='u')
-        plt.plot(x, p, label='p')
-        plt.xlabel('x')
-        plt.title(f't = {n * dt:.3f}')
-        plt.legend()
-        plt.pause(0.01)
+a = d2 / (d1 + d2)
+dEdt_pred = - 2 * a * u0[0] * p0[0] + 2 * (1 - a) * p0[1] * u0[1] + (2 * a - 1) * (p0[0] * u0[1] + p0[1] * u0[0])
+dEdt_pred = dEdt_pred.item()
+print(f'{dEdt_pred = }')
 
-plt.show()
+
+# Total mass:
+#print(f'{(d1 * u1[0] ** 2 + d2 * u1[1] ** 2)}, {(p1[0] ** 2 + p1[1] ** 2)}')
+

@@ -5,6 +5,110 @@ from pde.graph_grid.fvm_store import Edge
 import torch
 
 
+def invert_selection_matrix(num_blocks, block_size, selected_indices, device=None, dtype=torch.float32):
+    """
+    Create a matrix that "inverts" the selection performed by create_selection_matrix().
+
+    Given a flattened vector of shape (num_blocks * len(selected_indices)),
+    this function creates a sparse matrix that maps it to a flattened vector of shape
+    (num_blocks * block_size) by inserting each block’s values into the positions given by selected_indices.
+
+    In other words, if S = create_selection_matrix(num_blocks, block_size, selected_indices) extracts
+    the values, then this function returns a matrix S_inv such that:
+
+        S_inv @ (S @ x) = x_extended
+
+    where x_extended is the larger vector with the selected entries inserted into positions specified by selected_indices.
+
+    Args:
+        num_blocks (int): Number of blocks.
+        block_size (int): Size of the full block.
+        selected_indices (list or iterable): Indices within each block that were selected.
+        device (torch.device, optional): Device to create the matrix on.
+        dtype (torch.dtype, optional): Data type for the matrix.
+
+    Returns:
+        torch.Tensor: A sparse matrix of shape
+          (num_blocks * block_size, num_blocks * len(selected_indices))
+    """
+    selected_indices = list(selected_indices)
+    num_selected = len(selected_indices)
+    total_rows = num_blocks * block_size
+    total_cols = num_blocks * num_selected
+
+    row_indices = []
+    col_indices = []
+    values = []
+
+    for block in range(num_blocks):
+        for j, idx in enumerate(selected_indices):
+            row = block * block_size + idx
+            col = block * num_selected + j
+            row_indices.append(row)
+            col_indices.append(col)
+            values.append(1.0)
+
+    indices = torch.tensor([row_indices, col_indices], dtype=torch.long, device=device)
+    values = torch.tensor(values, dtype=dtype, device=device)
+    S_inv = torch.sparse_coo_tensor(indices, values, (total_rows, total_cols)).to_dense()
+    return S_inv
+
+
+
+def create_selection_matrix(num_blocks, block_size, selected_indices, device=None, dtype=torch.float32):
+    """
+    Create a selection matrix that extracts specified indices from each block of a flattened tensor.
+
+    Given a flattened tensor composed of num_blocks blocks (each of length block_size),
+    this function builds a selection matrix E such that:
+
+        E @ flattened_tensor == concatenation of flattened_tensor[block_i][selected_indices] for each block.
+
+    The resulting matrix E has shape (num_blocks * len(selected_indices), num_blocks * block_size).
+
+    Args:
+        num_blocks (int): The number of blocks in the flattened tensor.
+        block_size (int): The size of each block.
+        selected_indices (list or 1D tensor): Indices to select from each block.
+            Each value must satisfy 0 <= index < block_size.
+        device (torch.device, optional): The device on which to create the tensor.
+        dtype (torch.dtype, optional): The data type of the resulting tensor.
+
+    Returns:
+        torch.Tensor: The selection matrix of shape (num_blocks * len(selected_indices), num_blocks * block_size).
+    """
+    selected_indices = list(selected_indices)  # ensure it's a list
+    num_selected = len(selected_indices)
+    total_rows = num_blocks * num_selected
+    total_cols = num_blocks * block_size
+    E = torch.zeros(total_rows, total_cols, device=device, dtype=dtype)
+
+    for block in range(num_blocks):
+        for j, sel in enumerate(selected_indices):
+            row = block * num_selected + j
+            col = block * block_size + sel
+            E[row, col] = 1.0
+    return E
+
+
+def create_block_diagonal(normals):
+    """
+    Create a block diagonal matrix D that has, for each block i,
+    a block of shape (2, 1) equal to normals[i, :].
+
+    Args:
+        normals (torch.Tensor): Tensor of shape (n_edges, 2).
+
+    Returns:
+        torch.Tensor: A block diagonal matrix of shape (n_edges*2, n_edges).
+    """
+    n_edges = normals.shape[0]
+    D = torch.zeros(n_edges * 2, n_edges, dtype=normals.dtype, device=normals.device)
+    for i in range(n_edges):
+        # Place normals[i, :] as a column in the i-th block.
+        D[2 * i:2 * i + 2, i] = normals[i, :]
+    return D
+
 def combine_edge_operators(A_main, A_bc, b_bc, bc_edge_mask, n_edges, n_cells, n_comp, device):
     """
     Combines a main-edge operator and a boundary-edge operator into a single global operator.
@@ -102,6 +206,7 @@ def combine_edge_operators(A_main, A_bc, b_bc, bc_edge_mask, n_edges, n_cells, n
 
     return A_all.to_sparse_csr(), b_all
 
+
 def lift_sparse_matrix(A_old, n_comp):
     """
     Lift a sparse matrix so that it acts on a flattened multi-component vector.
@@ -157,25 +262,26 @@ class FVMEdgeInfo:
     normals: torch.Tensor  # shape = (n_edges, 2)
     # Main mesh
     n_edges_m: int
-    #tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
     edge_to_tri_main: torch.Tensor  # shape = [n_edges_m, 2], ordered so triangle parallel to edge normal comes last, antiparallel first.
     edge_to_tri_w: torch.Tensor  # shape = [n_edges_m, 2]
     cell_dist: torch.Tensor  # shape = (n_edges_m)
+    edge_c_to_e_disp_m: torch.Tensor # shape = (n_edges_m, edges=2, dim=2)
+    tri_edge_signs: torch.Tensor  # shape = (3 * n_cells)
+    tri_to_edge: torch.Tensor  # shape = (3 * n_cells)
+    cent_to_edge_disp: torch.Tensor  # shape = (n_cells, 3, 2)  # Displacement vector between cell centroids, for every edge
 
     # Boundary condition
     n_edges_bc: int             # Number of boundary edges
     bc_edge_mask: torch.Tensor  # shape = (n_edges)
     normals_bc: torch.Tensor  # shape = (n_edges_bc, 2)
     edge_to_tri_bc: torch.Tensor  # shape = (n_edges_bc)
-    # dirich_mask: torch.Tensor # shape = (n_edges_bc, n_component)
-    # neumann_mask: torch.Tensor # shape = (n_edges_bc, n_component)
-    # dirich_val: torch.Tensor # shape: Us[dirich_mask] = dirich_val
-    # neumann_val: torch.Tensor # shape: Us[neumann_mask] = neumann_val
 
     # Gradients
     G_mats: list[torch.Tensor]  # shape = [2](n_cells, n_cells)  Gradient matrix for every cell
     cell_disps: torch.Tensor  # shape = (n_edges_m, 2)     Displacement vector between cell centroids, for every edge_main
     edge_dists_bc: torch.Tensor  # shape = (n_bc_edges, 3)     Distance between cell centroids, for every edge_bc
+    neigh_combine: torch.Tensor # shape = (n_cell, 2). Used for masking neighbors of cell incl boundary edges.
+    disps_combine: torch.Tensor # shape = [n_cells, n_neigh=3, 2]. Used for masking neighbors of cell incl boundary edges.
 
     # Temporary Variables
     cell_grads: torch.Tensor  # shape = (n_cells, 2, N_component)  Gradient of cell values
@@ -184,6 +290,7 @@ class FVMEdgeInfo:
 
     def __init__(self, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
         self.device = device
+        self.mesh = mesh
         self.n_edges = mesh.n_edges
         self.n_cells = mesh.n_cells
         self.n_component = n_comp
@@ -191,25 +298,28 @@ class FVMEdgeInfo:
         self.normals_main = mesh.normals_main.to(device)
         self.edge_to_tri_main = mesh.edge_to_tri_main.to(device)
         self.edge_to_tri_w = mesh.edge_to_tri_w_main.to(device)
-        #self.tri_to_edge = mesh.tri_to_edge.to(device)
+        self.cent_to_edge_disp = mesh.cent_to_edge_disp.to(device).unsqueeze(-1)
+        self.tri_edge_signs = (self.mesh.tri_edge_signs + 1 / 2).int().view(3*self.n_cells).to(device)
+        self.tri_to_edge = mesh.tri_to_edge.view(3*self.n_cells).to(device)
 
         self.edge_to_tri_bc = mesh.edge_to_tri_bc.to(device)
         self.bc_edge_mask = mesh.bc_edge_mask.to(device)
         self.normals_bc = mesh.normals_bc.to(device)
 
-        (cell_disps, edge_dists_bc, G_mats) = mesh.cell_grad_stuff
+        (cell_disps, edge_dists_bc, G_mats, neigh_combine, disps_combine) = mesh.cell_grad_stuff
         self.cell_disps = cell_disps.to(device)
         self.edge_dists_bc = edge_dists_bc.to(device).unsqueeze(-1).expand(-1, self.n_component)
         self.G_mats = []
         for G in G_mats:
             self.G_mats.append(G.to(device))
+        self.neigh_combine = neigh_combine.to(device)
+        self.disps_combine = disps_combine.to(device)
+
 
         self.cell_dist = torch.norm(self.cell_disps, dim=1).to(device)
         self.normals = mesh.normals.to(device)
         self.edge_len = torch.norm(self.normals, dim=1).to(device)
-        # print(self.cell_dist.shape)
-        # print(self.cell_dist.min())
-        # exit(9)
+
         self.bc_tags = bc_tags # {edge_num: bc_tag}
         self._init_bc(bc_tags)
 
@@ -299,56 +409,96 @@ class FVMEdgeInfo:
 
     def _build_spm_face_vals(self):
         """ Compute edge values using sparse matrix multiplication, including BC. """
-        n_comp = self.n_component
+        # """ Sparse matrix for main values """
+        # # For each main edge, we have 2 contributions.
+        # # Build the row indices: each edge i appears twice (once for each cell).
+        # rows = torch.arange(self.n_edges_m, device=self.device).repeat_interleave(2)
+        # # Flatten the cell indices and weights.
+        # cols = self.edge_to_tri_main.reshape(-1)
+        # vals = self.edge_to_tri_w.reshape(-1)
+        # # Create the sparse matrix. Its shape is (n_edges_main, n_cells)
+        # A_main = torch.sparse_coo_tensor(torch.stack([rows, cols]), vals, size=(self.n_edges_m, self.n_cells))
+        # A_main = lift_sparse_matrix(A_main, n_comp)
+        #
+        # """ Sparse matrix for boundary conditions"""
+        # n_bc = self.n_edges_bc  # number of boundary edges
+        # # --- Build indices for the flattened boundary condition rows ---
+        # # Each boundary edge i gives rise to n_comp rows.
+        # bc_rows = torch.arange(n_bc, device=self.device).unsqueeze(1).expand(n_bc, n_comp).reshape(-1)
+        # # For each row we also need the corresponding component index.
+        # comp_idx = torch.arange(n_comp, device=self.device).unsqueeze(0).expand(n_bc, n_comp).reshape(-1)
+        # # Flatten the BC-type masks: each is now a vector of length (n_bc * n_comp)
+        # dirich_mask = self.dirich_mask.reshape(-1)
+        # neum_mask = self.neumann_mask.reshape(-1)
+        #
+        # # --- Build the sparse matrix A_bc ---
+        # # For a Neumann entry (i,c), we want to pick the cell value from (Dirichlet rows remain zero):
+        # #   column = self.edge_to_tri_bc[i] * n_comp + c
+        # neum_rows = torch.nonzero(neum_mask, as_tuple=False).squeeze(1)
+        # # For each such row, recover the corresponding boundary edge index:
+        # edge_idx_for_neum = bc_rows[neum_rows]
+        # # And the flattened column index is:
+        # cols = self.edge_to_tri_bc[edge_idx_for_neum] * n_comp + comp_idx[neum_rows]
+        # rows = neum_rows  # These are the row indices in the flattened BC vector.
+        # vals = torch.ones_like(rows, dtype=torch.float32, device=self.device)
+        # # The sparse matrix has shape (n_bc * n_comp, n_cells * n_comp)
+        # size_A = (n_bc * n_comp, self.n_cells * n_comp)
+        # indices = torch.stack([rows, cols], dim=0)
+        # A_bc = torch.sparse_coo_tensor(indices, vals, size=size_A)
+        #
+        # # --- Build the offset vector b ---
+        # # b will have one entry for each flattened boundary condition.
+        # b = torch.zeros(n_bc * n_comp, dtype=torch.float32, device=self.device)
+        # # For Dirichlet entries, b should be the prescribed value.
+        # dirich_rows = torch.nonzero(dirich_mask, as_tuple=False).squeeze(1)
+        # b[dirich_rows] = self.dirich_val
+        # # For Neumann entries, b is the offset computed from the edge distance.
+        # neum_comp = comp_idx[neum_rows]
+        # b[neum_rows] = self.neumann_val[neum_comp] / self.edge_dists_bc[self.neumann_mask]
+        #
+        # A_main = torch.tensor([[0., 0], [0, 0]], device=self.device).to_sparse_coo()
+        # self.A_face_val, self.b_face_val = combine_edge_operators(A_main, A_bc, b, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_component, self.device)
+        # print(f'{self.A_face_val.shape = }')
+        # print(f'{A_bc.shape = }')
+        # exit(9)
 
-        """ Sparse matrix for main values """
-        # For each main edge, we have 2 contributions.
-        # Build the row indices: each edge i appears twice (once for each cell).
-        rows = torch.arange(self.n_edges_m, device=self.device).repeat_interleave(2)
-        # Flatten the cell indices and weights.
-        cols = self.edge_to_tri_main.reshape(-1)
-        vals = self.edge_to_tri_w.reshape(-1)
-        # Create the sparse matrix. Its shape is (n_edges_main, n_cells)
-        A_main = torch.sparse_coo_tensor(torch.stack([rows, cols]), vals, size=(self.n_edges_m, self.n_cells))
-        A_main = lift_sparse_matrix(A_main, n_comp)
-
-        """ Sparse matrix for boundary conditions"""
+        device = self.device
         n_bc = self.n_edges_bc  # number of boundary edges
-        # --- Build indices for the flattened boundary condition rows ---
-        # Each boundary edge i gives rise to n_comp rows.
-        bc_rows = torch.arange(n_bc, device=self.device).unsqueeze(1).expand(n_bc, n_comp).reshape(-1)
-        # For each row we also need the corresponding component index.
-        comp_idx = torch.arange(n_comp, device=self.device).unsqueeze(0).expand(n_bc, n_comp).reshape(-1)
-        # Flatten the BC-type masks: each is now a vector of length (n_bc * n_comp)
-        dirich_mask = self.dirich_mask.reshape(-1)
-        neum_mask = self.neumann_mask.reshape(-1)
+        n_comp = self.n_component
+        n_cells = self.n_cells
 
-        # --- Build the sparse matrix A_bc ---
-        # For a Neumann entry (i,c), we want to pick the cell value from (Dirichlet rows remain zero):
-        #   column = self.edge_to_tri_bc[i] * n_comp + c
-        neum_rows = torch.nonzero(neum_mask, as_tuple=False).squeeze(1)
-        # For each such row, recover the corresponding boundary edge index:
-        edge_idx_for_neum = bc_rows[neum_rows]
-        # And the flattened column index is:
-        cols = self.edge_to_tri_bc[edge_idx_for_neum] * n_comp + comp_idx[neum_rows]
-        rows = neum_rows  # These are the row indices in the flattened BC vector.
-        vals = torch.ones_like(rows, dtype=torch.float32, device=self.device)
-        # The sparse matrix has shape (n_bc * n_comp, n_cells * n_comp)
-        size_A = (n_bc * n_comp, self.n_cells * n_comp)
-        indices = torch.stack([rows, cols], dim=0)
-        A_bc = torch.sparse_coo_tensor(indices, vals, size=size_A)
+        # Total number of flattened BC rows.
+        N = n_bc * n_comp
 
-        # --- Build the offset vector b ---
-        # b will have one entry for each flattened boundary condition.
-        b = torch.zeros(n_bc * n_comp, dtype=torch.float32, device=self.device)
-        # For Dirichlet entries, b should be the prescribed value.
-        dirich_rows = torch.nonzero(dirich_mask, as_tuple=False).squeeze(1)
-        b[dirich_rows] = self.dirich_val
-        # For Neumann entries, b is the offset computed from the edge distance.
-        neum_comp = comp_idx[neum_rows]
-        b[neum_rows] = self.neumann_val[neum_comp] / self.edge_dists_bc[self.neumann_mask]
+        # Create flattened indices for the boundary rows and the corresponding component.
+        # Each boundary edge gives rise to n_comp rows.
+        bc_rows = torch.arange(n_bc, device=device).unsqueeze(1).expand(n_bc, n_comp).reshape(-1)
+        comp_idx = torch.arange(n_comp, device=device).unsqueeze(0).expand(n_bc, n_comp).reshape(-1)
 
-        self.A_face_val, self.b_face_val = combine_edge_operators(A_main, A_bc, b, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_component, self.device)
+        # Reshape the condition masks to a flat vector of length N.
+        dirich_mask = self.dirich_mask.reshape(-1)  # For Dirichlet conditions.
+        neum_mask = self.neumann_mask.reshape(-1)  # For Neumann conditions.
+
+        # --- Build sparse matrix A ---
+        # For Neumann entries, we want to extract the cell value from Us.
+        # For each Neumann row, the corresponding column in Us (flattened) is given by:
+        #   col = self.edge_to_tri_bc[ edge_index ] * n_comp + component
+        neum_indices = torch.nonzero(neum_mask, as_tuple=False).squeeze(1)  # indices where Neumann is True.
+        A_rows = neum_indices
+        # bc_rows[neum_indices] gives the corresponding boundary edge for each flattened row.
+        A_cols = self.edge_to_tri_bc[bc_rows[neum_indices]] * n_comp + comp_idx[neum_indices]
+        A_vals = torch.ones_like(A_rows, dtype=torch.float32, device=device)
+
+        size_A = (N, n_cells * n_comp)
+        self.A_bc = torch.sparse_coo_tensor(torch.stack([A_rows, A_cols], dim=0), A_vals, size=size_A).coalesce().to_sparse_csr()
+
+        # Build the offset vector b.
+        self.b_bc = torch.empty(N, device=device, dtype=torch.float32)
+        # For Dirichlet entries, the prescribed value should override any extracted value.
+        self.b_bc[dirich_mask] = self.dirich_val
+        # For Neumann entries, add the offset computed from the edge distance.
+        # Here, we select the proper component value from self.neumann_val using comp_idx.
+        self.b_bc[neum_mask] = self.neumann_val[comp_idx[neum_mask]] / self.edge_dists_bc.flatten()[neum_mask]
 
 
     def _init_bc(self, bc_tags: dict[int, Edge]):
@@ -368,8 +518,8 @@ class FVMEdgeInfo:
 
         self.dirich_mask, self.neumann_mask = torch.tensor(dirich_mask, device=self.device), torch.tensor(neumann_mask, device=self.device)
         dirich_val, neumann_val = torch.tensor(dirich_val, dtype=torch.float32, device=self.device), torch.tensor(neumann_val, dtype=torch.float32, device=self.device)
-        self.dirich_val = dirich_val[dirich_mask]
-        self.neumann_val = neumann_val[neumann_mask]
+        self.dirich_val = dirich_val[self.dirich_mask]
+        self.neumann_val = neumann_val[self.neumann_mask]
 
         assert self.dirich_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
         assert self.neumann_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
@@ -381,26 +531,126 @@ class FVMEdgeInfo:
         self.neum_all[self.bc_edge_mask] = self.neumann_mask
 
         # self.neumann_idx = bc_indices[self.neumann_mask]
+        # # Matrix for nomal dot V
+        # I = torch.eye(self.n_edges, device="cuda")  # Shape (m, m)
+        # normals_mat =  (I.unsqueeze(-1) * self.normals.unsqueeze(1)).reshape(self.n_edges, self.n_edges * 2)
+        # self.E = create_selection_matrix(self.n_edges, 3, [0, 1], device=self.device)
+        # self.normal_dot_V = normals_mat @ self.E
+        # # Matrix for normal * rho
+        # D = create_block_diagonal(self.normals)
+        # self.E_div = create_selection_matrix(self.n_edges, 3, [2], device=self.device)
+        # self.normal_rho = D @ self.E_div
 
 
     def precompute_shared(self, Us):
-        """ Precompute shared values that are used multiple times later """
-        self.cell_grads = self._cell_grads(Us)
-        self.grad_faces_n = self._face_grads(Us)
-        self.U_face = self._face_vals(Us)
+        """ Precompute shared values that are used multiple times later.
+            Us.shape = [n_cells, n_component] """
+        self.U_face = torch.empty((self.n_edges, 2, self.n_component), device=self.device)
 
-    def _cell_grads(self, Us):
+        U_face_bc = self._bc_face_vals(Us)
+        self.cell_grads = self._cell_grads(Us, U_face_bc) # shape = [n_cells, 2, n_component]
+        # self.grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_component]
+
+        """ Gradient schemes """
+        """ Limited B-J scheme """
+        U_cent = Us.unsqueeze(1)        # shape = [n_cells, 1, n_component]
+
+        Us_cell_face = torch.cat([Us, U_face_bc])
+        Us_neigh = Us_cell_face[self.neigh_combine]  # shape = [n_cells, neigh=3, n_component]
+        # Uncorrected update
+        grads = self.cell_grads.unsqueeze(1)     # shape = [n_cells, 1, dims=2, n_component]
+        dU = (grads * self.cent_to_edge_disp).sum(dim=2)  # shape = [n_cells, neigh=3, n_component]
+
+        # Select limitingg neighbor values and compute gradient limiter
+        diff = Us_neigh - U_cent
+        U_upper = torch.clamp(diff, min=0)  # positive differences (or 0 if diff is negative)
+        U_lower = torch.clamp(diff, max=0)  # negative differences (or 0 if diff is positive)
+        # U_upper = torch.maximum(U_cent, Us_neigh) - U_cent      # shape = [n_cells, neigh=3, n_component]
+        # U_lower = torch.minimum(U_cent, Us_neigh) - U_cent
+        numerator = torch.where(dU > 0, U_upper, U_lower)
+        denom = dU + 1e-8
+        r = numerator / denom
+        phi = self._phi(r)
+        #phi = torch.clamp(r, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
+        #phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
+        #phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, 1, n_component]
+        Us_cell = U_cent + phi * dU      # shape = [n_cells, neigh=3, n_component]
+
+
+        self.U_face[self.tri_to_edge, self.tri_edge_signs] = Us_cell.view(3*self.n_cells, 3)
+        self.U_face[self.bc_edge_mask] = U_face_bc.unsqueeze(1)
+
+
+        """ Naieve interpolation """
+        # grads = self.cell_grads[self.edge_to_tri_main]
+        # U_cent = Us[self.edge_to_tri_main]  # shape = [n_edges_m, 2, n_component]
+        # r = self.mesh.e_c_to_e_disp_m.unsqueeze(-1).cuda() # shape = [n_edges_m, cells=2, dims=2, 1]
+        # dU = (grads * r).sum(dim=2)  # shape = [n_edges_m, cells=2, n_component]
+        # U_test = U_cent + dU
+
+        # self.U_face[~self.bc_edge_mask] = U_test # torch.stack([U_r, U_l], dim=1)
+
+
+
+
+    def _bc_face_vals(self, Us):
+        """ U_face, with linear interpolation.
+            return.shape: [n_edges_bc, n_component]
+
+         """
+        # # Main edges
+        # # #Weighted linear interpolation of two cell values
+        # # U_centroid = Us[self.edge_to_tri_main]  # [n_edges_m, 2, n_component]
+        # # w = self.edge_to_tri_w.unsqueeze(-1)  # shape: [n_edges, 2, 1]
+        # # U_lin_main = (w * U_centroid).sum(dim=1)  # shape: [n_edges, n_component]
+        # # U_face[~self.bc_edge_mask] = U_lin_main
+        # #
+        # U_face = torch.empty((self.n_edges_bc, self.n_component), device=self.device)
+        # # Boundary edges
+        # u_centroid_bc = Us[self.edge_to_tri_bc] # shape = [n_bc_edges, N_component]
+        # # Dirichlet
+        # U_face[self.dirich_mask] = self.dirich_val
+        # # Neumann
+        # U_cent_bc_neum = u_centroid_bc[self.neumann_mask]        # shape = [n_neum_edges]
+        # U_face_neum = U_cent_bc_neum + self.neumann_val / self.edge_dists_bc[self.neumann_mask]
+        # U_face[self.neumann_mask] = U_face_neum
+
+
+        Us_flat = Us.reshape(-1)
+        # Final U_face in flattened form.
+        U_face_flat = torch.mv(self.A_bc, Us_flat) + self.b_bc      # shape = [n_edges_bc * n_component]
+        # Reshape back to (n_edges_bc, n_component)
+        U_face = U_face_flat.view(self.n_edges_bc, self.n_component)
+
+        return  U_face
+
+    def _phi(self, r):
+        eps = 50*10e-3
+        _r = r**2 + r + eps
+        phi = (_r + r) / (_r + 2)
+        return phi
+
+    def _cell_grads(self, Us, U_face_bc):
         """ Vectorised gradient computation
             Gradient = G @ (u_neigh - u_cell)
             Us.shape = (n_cells, N_component)
             Returns: Gradient matrix of shape (n_cells, 2, N_component)
         """
-        grad_x = torch.sparse.mm(self.G_mats[0], Us)  # Shape: [n_cells, N_component]
-        grad_y = torch.sparse.mm(self.G_mats[1], Us)  # Shape: [n_cells, N_component]
-        cell_grads = torch.stack([grad_x, grad_y], dim=1)  # Shape: [n_cells, 2, N_component]
+        Us_cell_face = torch.cat([Us, U_face_bc])
 
-        self.done_cell=True
+        grad_x = torch.sparse.mm(self.G_mats[0], Us_cell_face)  # Shape: [n_cells, N_component]
+        grad_y = torch.sparse.mm(self.G_mats[1], Us_cell_face)  # Shape: [n_cells, N_component]
+        cell_grads = torch.stack([grad_x, grad_y], dim=1)  # Shape: [n_cells, 2, N_component]
+        # print(grad_x)
+        # exit(7)
+        #
+
+        # cell_grads = cell_grads * phi_cand
+        # max_grad = cell_grads[:, 0, 2].abs().max()
+        # print(f'{max_grad = }')
+        # print(torch.where(cell_grads.abs()==max_grad))
         return cell_grads
+
 
     def _face_grads(self, Us):
         """ n . grad(U) on faces.
@@ -410,79 +660,55 @@ class FVMEdgeInfo:
             Non-orthogonal correction: n . grad(U)_f = C du + (n - C d) . grad(U)_f
             NOTE: Must be called after _cell_grads() to ensure up to date cell_grads
         """
-        dUdn_face = torch.empty((self.n_edges, self.n_component), device=self.device)
-
+        # #
         # # # On faces
         # U_centroid = Us[self.edge_to_tri_main]      # shape = [n_edges, 2, N_component]
         # dU = U_centroid[:, 1] - U_centroid[:, 0]
+        # # #
+        # """ NEW """
+        # normals_hat = self.normals_main / torch.norm(self.normals_main, dim=1).unsqueeze(-1)
+        # C = 1 / (normals_hat * self.cell_disps).sum(dim=1, keepdim=True)
         #
-        # # normals_hat = self.normals_main / torch.norm(self.normals_main, dim=1).unsqueeze(-1)
-        # # C = 1 / (normals_hat * self.cell_disps).sum(dim=1, keepdim=True)
-        # #
-        # # grad_impl = C * dU
-        # # """ NEw - cell corrected """
-        # # # Interpolate cell gradients to face
-        # # grad_U_main = self.cell_grads[self.edge_to_tri_main]  # shape = [n_edges, 2, d_dims=2, N_component]
-        # # w = self.edge_to_tri_w.unsqueeze(-1).unsqueeze(-1)  # shape: [n_edges, 2, 1, 1]
-        # # grad_U_face = (w * grad_U_main).sum(dim=1)  # shape: [n_edges, 2, n_component]
-        # #
-        # # corr_expl = (normals_hat - C * self.cell_disps)#.unsqueeze(1) * grad_U_face
-        # # grad_expl = (corr_expl.unsqueeze(-1) * grad_U_face).sum(dim=1)       # shape = [n_edges, N_component]
-        # #
-        # # dUdn_face_m_new = grad_impl + grad_expl
-        # # dUdn_face[~self.bc_edge_mask] = dUdn_face_m_new
+        # grad_impl = C * dU
+        # """ NEw - cell corrected """
+        # # Interpolate cell gradients to face
+        # grad_U_main = self.cell_grads[self.edge_to_tri_main]  # shape = [n_edges, 2, d_dims=2, N_component]
+        # w = self.edge_to_tri_w.unsqueeze(-1).unsqueeze(-1)  # shape: [n_edges, 2, 1, 1]
+        # grad_U_face = (w * grad_U_main).sum(dim=1)  # shape: [n_edges, 2, n_component]
         #
-        # """ OLD """
+        # corr_expl = (normals_hat - C * self.cell_disps)#.unsqueeze(1) * grad_U_face
+        # grad_expl = (corr_expl.unsqueeze(-1) * grad_U_face).sum(dim=1)       # shape = [n_edges, N_component]
+        #
+        # dUdn_face_m_new = grad_impl + grad_expl
+        # dUdn_face[~self.bc_edge_mask] = dUdn_face_m_new
+        # # # #9
+        # # # """ OLD """
         # dUdn_face_m = dU / self.cell_dist.unsqueeze(-1)       # shape = [n_edges, N_component]
         # dUdn_face[~self.bc_edge_mask] = dUdn_face_m
-        #
+        # #
         # On boundary. Either u or du/dn is given
+
+        dUdn_face = torch.empty((self.n_edges_bc, 2, self.n_component), device=self.device)
+        # Neumann: n.grad(u) = du/dn
+        n = self.normals_bc
+        print(n)
+        exit(7)
+        dUdn_face[self.neum_all] = self.neumann_val
+
         u_centroid_bc = Us[self.edge_to_tri_bc]  # shape = [n_bc_edges, N_component]
         # Dirichlet: n.grad(u) = 1/d * (u_bc - u)
         U_cent_bc_dir = u_centroid_bc[self.dirich_mask]     # shape = [n_dirich_edges]
         edge_dists = self.edge_dists_bc[self.dirich_mask]    # shape = [n_dirich_edges]
         dudn_face_bc_dir = (self.dirich_val - U_cent_bc_dir) / edge_dists
         dUdn_face[self.dirich_all] = dudn_face_bc_dir
-        # Neumann: n.grad(u) = du/dn
-        dUdn_face[self.neum_all] = self.neumann_val
 
 
-        assert self.done_cell, f'Cell grads not computed'
+
 
         # """ SPARSE"""
         # Us_flat = Us.flatten()
         # dUdn_face_flat = torch.mv(self.A_face_grad, Us_flat) + self.b_face_grad
         # dUdn_face = dUdn_face_flat.reshape(self.n_edges, self.n_component)
-        #
-        # self.done_cell = None # Reset
+
         return dUdn_face
 
-    def _face_vals(self, Us):
-        """ U_face, with linear interpolation """
-        # # Main edges
-        # U_face = torch.empty((self.n_edges, self.n_component), device=self.device)
-        # #Weighted linear interpolation of two cell values
-        # U_centroid = Us[self.edge_to_tri_main]  # [n_edges_m, 2, n_component]
-        # w = self.edge_to_tri_w.unsqueeze(-1)  # shape: [n_edges, 2, 1]
-        # U_lin_main = (w * U_centroid).sum(dim=1)  # shape: [n_edges, n_component]
-        # U_face[~self.bc_edge_mask] = U_lin_main
-        #
-        # # Boundary edges
-        # u_centroid_bc = Us[self.edge_to_tri_bc] # shape = [n_bc_edges, N_component]
-        # # Dirichlet
-        # U_face[self.dirich_all] = self.dirich_val
-        # # Neumann
-        # U_cent_bc_neum = u_centroid_bc[self.neumann_mask]        # shape = [n_neum_edges]
-        # U_face_neum = U_cent_bc_neum + self.neumann_val / self.edge_dists_bc[self.neumann_mask]
-        # U_face[self.neum_all] = U_face_neum
-
-        # Vx = Us[:, 0]
-        # v_min = Vx.min()
-        # print(torch.where(Vx == v_min))
-        # print(torch.where(U_face == v_min))
-        # Main edges
-
-        Us_flat = Us.flatten()
-        U_face_flat = torch.mv(self.A_face_val, Us_flat) + self.b_face_val
-        U_face = U_face_flat.reshape(self.n_edges, self.n_component)
-        return U_face

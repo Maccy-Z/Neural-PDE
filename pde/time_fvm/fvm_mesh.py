@@ -1,68 +1,170 @@
 import torch
 
 
-def build_sparse_gradient_matrix(cell_to_neigh_idx, G_mat, dim):
+# def build_sparse_gradient_matrix(cell_to_neigh_idx, G_mat, dim):
+#     """
+#     Build a sparse gradient matrix for one spatial dimension.
+#
+#     Args:
+#         cell_to_neigh_idx (list[Tensor]): List of 1D tensors, where cell_to_neigh_idx[i]
+#                                           holds the neighbor indices for cell i.
+#         G_mat (list[Tensor]): List of 2D tensors. For each cell i, G_mat[i] has shape
+#                               [n_dims, num_neighbors_i]. The row corresponding to `dim`
+#                               gives the weights for that cell in that spatial dimension.
+#         dim (int): The spatial dimension for which to build the matrix (e.g., 0 for x, 1 for y).
+#
+#     Returns:
+#         A (torch.sparse.FloatTensor): A sparse matrix of shape [n_cells, n_cells] that
+#                                       computes the contribution along the given dimension.
+#     """
+#     n_cells = len(cell_to_neigh_idx)
+#     rows, cols = [], []
+#     vals = []
+#
+#     for i in range(n_cells):
+#         diag_val = 0.0  # To accumulate the weight for the diagonal (self) contribution.
+#         # Get the neighbors for cell i.
+#         neighs = cell_to_neigh_idx[i]
+#         num_neigh = neighs.shape[0]
+#
+#         for k in range(num_neigh):
+#             j = int(neighs[k].item())
+#             # Extract the gradient weight for cell i, neighbor k in the given dimension.
+#             g_val = G_mat[i][dim, k]
+#             # Off-diagonal: add contribution from neighbor j.
+#             rows.append(i), cols.append(j)
+#             vals.append(g_val)
+#             diag_val += g_val
+#
+#         # Diagonal: subtract the sum of the weights.
+#         rows.append(i), cols.append(i)
+#         vals.append(-diag_val)
+#
+#     # Build the sparse matrix.
+#     indices = torch.tensor([rows, cols], dtype=torch.long)
+#     values = torch.tensor(vals, dtype=G_mat[0].dtype)
+#     A = torch.sparse_coo_tensor(indices, values, (n_cells, n_cells))
+#
+#     A = A.to_sparse_csr()
+#     # crow, col, val = A.crow_indices(), A.col_indices(), A.values()
+#     # crow, col = crow.to(torch.int32), col.to(torch.int32)
+#     # A = torch.sparse_csr_tensor(crow, col, val, size=(n_cells, n_cells))
+#
+#     return A
+# def build_sparse_gradient_matrix(cell_to_neigh_cell, cell_to_neigh_edge, G_mat, dim, n_cells, n_boundaries):
+#     """
+#     Build a sparse gradient matrix for one spatial dimension that uses both cell neighbors and boundary edges.
+#
+#     Args:
+#         cell_to_neigh_cell (list[Tensor]): List of 1D tensors, where cell_to_neigh_cell[i]
+#                                            holds the neighbor cell indices for cell i.
+#         cell_to_neigh_edge (list[Tensor]): List of 1D tensors, where cell_to_neigh_edge[i]
+#                                            holds the boundary edge indices for cell i.
+#         G_mat (list[Tensor]): List of 2D tensors. For each cell i, G_mat[i] has shape
+#                               [n_dims, num_total_neighbors_i]. The row corresponding to `dim`
+#                               gives the weights for cell i, with the first part corresponding
+#                               to cell neighbors and the second part to boundary edges.
+#         dim (int): The spatial dimension (e.g., 0 for x, 1 for y) for which to build the matrix.
+#         n_cells (int): Total number of cells.
+#         n_boundaries (int): Total number of boundary edges.
+#
+#     Returns:
+#         A (torch.sparse.FloatTensor): A sparse matrix of shape [n_cells, n_cells+n_boundaries] that,
+#                                       when multiplied with the vector
+#                                       torch.cat([U_cell, U_boundary_edge]),
+#                                       computes the gradient along the given dimension.
+#     """
+#     rows, cols, vals = [], [], []
+#
+#     for i in range(n_cells):
+#         diag_val = 0.0
+#
+#         # Process cell neighbors.
+#         cell_neigh = cell_to_neigh_cell[i]
+#         num_neigh_cells = cell_neigh.shape[0]
+#         for k in range(num_neigh_cells):
+#             j = int(cell_neigh[k].item())
+#             g_val = G_mat[i][dim, k]
+#             rows.append(i)
+#             cols.append(j)
+#             vals.append(g_val)
+#             diag_val += g_val
+#
+#         # Process boundary edge neighbors.
+#         edge_neigh = cell_to_neigh_edge[i]
+#         num_neigh_edges = edge_neigh.shape[0]
+#         for k in range(num_neigh_edges):
+#             edge_idx = int(edge_neigh[k].item())
+#             g_val = G_mat[i][dim, num_neigh_cells + k]
+#             # Note: boundary edge columns start after cell columns.
+#             rows.append(i)
+#             cols.append(n_cells + edge_idx)
+#             vals.append(g_val)
+#             diag_val += g_val
+#
+#         # Diagonal entry for cell i (self contribution is minus the sum of off-diagonals).
+#         rows.append(i)
+#         cols.append(i)
+#         vals.append(-diag_val)
+#
+#     # Create the sparse matrix.
+#     indices = torch.tensor([rows, cols], dtype=torch.long)
+#     values = torch.tensor(vals, dtype=G_mat[0].dtype)
+#     A = torch.sparse_coo_tensor(indices, values, (n_cells, n_cells + n_boundaries)).coalesce()
+#
+#     return A
+def build_sparse_gradient_matrix(combined_neigh, G_mat, dim, n_cells, n_boundaries):
     """
-    Build a sparse gradient matrix for one spatial dimension.
+    Build a sparse gradient matrix for one spatial dimension using both cell neighbors and boundary edges.
 
     Args:
-        cell_to_neigh_idx (list[Tensor]): List of 1D tensors, where cell_to_neigh_idx[i]
-                                          holds the neighbor indices for cell i.
-        G_mat (list[Tensor]): List of 2D tensors. For each cell i, G_mat[i] has shape
-                              [n_dims, num_neighbors_i]. The row corresponding to `dim`
-                              gives the weights for that cell in that spatial dimension.
-        dim (int): The spatial dimension for which to build the matrix (e.g., 0 for x, 1 for y).
+        combined_neigh Tensor: For each cell i, a 1D tensor of neighbor cell indices.
+        G_mat (list[Tensor]): For each cell i, a 2D tensor of shape [n_dims, num_total_neighbors_i].
+                              The first columns correspond to cell neighbors and the remaining columns to edges.
+        dim (int): The spatial dimension (0 for x, 1 for y) to build the gradient matrix.
+        n_cells (int): Total number of cells.
+        n_boundaries (int): Total number of boundary edges.
 
     Returns:
-        A (torch.sparse.FloatTensor): A sparse matrix of shape [n_cells, n_cells] that
-                                      computes the contribution along the given dimension.
+        A (torch.sparse.FloatTensor): A sparse matrix of shape [n_cells, n_cells+n_boundaries] that computes
+                                      the gradient along the given dimension.
     """
-    n_cells = len(cell_to_neigh_idx)
-    rows, cols = [], []
-    vals = []
-
+    rows, cols, vals = [], [], []
     for i in range(n_cells):
-        diag_val = 0.0  # To accumulate the weight for the diagonal (self) contribution.
-        # Get the neighbors for cell i.
-        neighs = cell_to_neigh_idx[i]
-        num_neigh = neighs.shape[0]
-
-        for k in range(num_neigh):
-            j = int(neighs[k].item())
-            # Extract the gradient weight for cell i, neighbor k in the given dimension.
+        diag_val = 0.0
+        # Loop over the combined neighbors.
+        for k in range(combined_neigh[i].shape[0]):
+            neighbor_idx = int(combined_neigh[i, k].item())
+            # Use the appropriate weight from G_mat[i] (first cell_neigh.shape[0] entries correspond to cells)
             g_val = G_mat[i][dim, k]
-            # Off-diagonal: add contribution from neighbor j.
-            rows.append(i), cols.append(j)
+            rows.append(i)
+            cols.append(neighbor_idx)
             vals.append(g_val)
             diag_val += g_val
 
-        # Diagonal: subtract the sum of the weights.
-        rows.append(i), cols.append(i)
+        # Diagonal entry: subtract the sum of all off-diagonals.
+        rows.append(i)
+        cols.append(i)
         vals.append(-diag_val)
 
-    # Build the sparse matrix.
     indices = torch.tensor([rows, cols], dtype=torch.long)
     values = torch.tensor(vals, dtype=G_mat[0].dtype)
-    A = torch.sparse_coo_tensor(indices, values, (n_cells, n_cells))
+    A = torch.sparse_coo_tensor(indices, values, (n_cells, n_cells + n_boundaries))
+    return A.to_sparse_csr()
 
-    A = A.to_sparse_csr()
-    # crow, col, val = A.crow_indices(), A.col_indices(), A.values()
-    # crow, col = crow.to(torch.int32), col.to(torch.int32)
-    # A = torch.sparse_csr_tensor(crow, col, val, size=(n_cells, n_cells))
-
-    return A
 
 class FVMMesh:
     n_cells: int
     n_edges: int
     n_bc_edge: int
 
+    bc_edge_mask: torch.Tensor  # shape = (n_edges)
     areas: torch.Tensor  # shape = (n_cells)
     normals: torch.Tensor  # shape = (n_edges, 2)
     lengths: torch.Tensor  # shape = (n_edges)
     centroids: torch.Tensor  # shape = (n_cells, 2)
     tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
-    tri_edge_sign: torch.Tensor  # shape = (n_cells, 3)
+    tri_edge_signs: torch.Tensor  # shape = (n_cells, 3)
     edge_to_tri: dict[int, torch.Tensor]  # shape = {n_edges}[2]        # Mapping edge to triangle indices. Ordered [antiparallel, parallel] to edge normal.
 
     # Only for interior edges
@@ -89,7 +191,6 @@ class FVMMesh:
 
         self._compute_edge_props(vertices, triangles, edges)
 
-
     def _grad_weighting(self, tri_to_edge, edge_to_tri_ord, centroids, midpoints, normals):
         """ Use least squares formula to compute gradient weighting.
             grad(u) = A^-1 * b
@@ -97,38 +198,61 @@ class FVMMesh:
             b = sum_i d_i (u_i - u_c)
 
          """
-        cell_to_neigh_idx = []
-        cell_A_inv = []
-        cell_d_i = []
+        bound_edge_idxs = torch.nonzero(self.bc_edge_mask, as_tuple=False).flatten()
+        global_to_local = {int(global_idx): local_idx for local_idx, global_idx in enumerate(bound_edge_idxs)}
 
+        #cell_to_neigh_cell, cell_to_neigh_edge = [], []
+        combined_neigh = []
+        A_inv_di_T = []
         # Weighting matrix for gradient using least squares
         for cell_id, edges in enumerate(tri_to_edge):
             # Get neighboring cells
-            neighbors = []
+            neighbors, neigh_cell_cent = [], []
+            neigh_edge, neigh_edge_mid = [], []
             for e in edges:
-                neighbors.append(edge_to_tri_ord[e.item()])
-            neighbors = torch.unique(torch.cat(neighbors))
-            mask = neighbors != cell_id
-            neighbors = neighbors[mask]
+                e = e.item()
+                if len(edge_to_tri_ord[e]) == 2:
+                    """ Interior Edge"""
+                    tris = edge_to_tri_ord[e]
+                    neigh_cell = tris[tris != cell_id]
+                    neigh_cell_cent.append(centroids[neigh_cell])  # [1, 2]
+                    neighbors.append(neigh_cell.item())
+                else:
+                    """ Boundary edge """
+                    midpoint = midpoints[e]
+                    neigh_edge_mid.append(midpoint)
+                    glob_edge_idx = global_to_local[e]
+                    neigh_edge.append(glob_edge_idx)
 
-            # Compute gradient matrix and distance vectors
+            neigh_cell, neigh_edge = torch.tensor(neighbors), torch.tensor(neigh_edge)
+            # Compute distance vectors
+            neigh_cell_cent = torch.cat(neigh_cell_cent)# # [N, 2]
+            neigh_edge_mid = torch.stack(neigh_edge_mid, dim=0) if neigh_edge_mid else torch.empty((0, 2))  # [3-N, 2]
+            neighbors_cent = torch.cat([neigh_cell_cent, neigh_edge_mid], dim=0)    # [3, 2]
             center = centroids[cell_id]      # [2]
-            neighbors_cent = centroids[neighbors]  # [3, 2]
 
-            d_i = neighbors_cent - center
+            # Gradient matrix
+            d_i = neighbors_cent - center       # [3, 2]
+            w_i = 1 / torch.norm(d_i, dim=1)**1.5 # [3]
+            W = torch.diag(w_i)
+            W_T_W = W.T @ W                     # [3, 3]
+            A = d_i.T @ W_T_W @ d_i             # [2, 2]
 
-            A = d_i.T @ d_i
             # If a cell only has 1 neighbor, assume gradient is in direction of cell.
-            if len(neighbors) == 1:
-                A_inv = torch.pinverse(A)
-            else:
-                A_inv = torch.inverse(A)
+            A_inv = torch.inverse(A)
+            # Premultiply A_inv with d_i.T
+            A_inv_di_T.append(A_inv @ d_i.T @ W_T_W)
 
-            cell_to_neigh_idx.append(neighbors)
-            cell_A_inv.append(A_inv)
-            cell_d_i.append(d_i)
+            combined = torch.cat([neigh_cell, neigh_edge + self.n_cells], dim=0)
+            combined_neigh.append(combined)
+            #cell_to_neigh_cell.append(neigh_cell), cell_to_neigh_edge.append(neigh_edge)
+        combined_neigh = torch.stack(combined_neigh).int()
+        G_mats = []
+        for i in range(2):
+            G_mat = build_sparse_gradient_matrix(combined_neigh, A_inv_di_T, i, self.n_cells, self.n_bc_edge)
+            G_mats.append(G_mat)
 
-        # Get displacement between cells with edge indexing. In direction of normal
+        # Get displacement between cells with edge indexing. In direction of right to left
         cell_disps, edge_dist_bc = [], []
         for e, cells in edge_to_tri_ord.items():
             if cells.shape[0] == 1:
@@ -147,17 +271,12 @@ class FVMMesh:
         cell_disps = torch.stack(cell_disps)
         edge_dist_bc = torch.stack(edge_dist_bc)
 
-        # Premultiply A_inv with d_i.T
-        A_inv_di_T = []
-        for A_inv, d_i in zip(cell_A_inv, cell_d_i):
-            A_inv_di_T.append(A_inv @ d_i.T)
+        neigh_loc = torch.cat([centroids, midpoints[bound_edge_idxs]], dim=0)   # [n_cells + n_bc_edge, 2]
+        cell_neigh_disps = neigh_loc[combined_neigh]        # [n_cells, 3, 2]
+        disps_combine = cell_neigh_disps - centroids.unsqueeze(1)   # [n_cells, 3, 2]
+        # disps_combine = disps_combine.permute(0, 2, 1)             # [n_cells, 2, 3]
 
-        G_mats = []
-        for i in range(2):
-            G_mat = build_sparse_gradient_matrix(cell_to_neigh_idx, A_inv_di_T, i)
-            G_mats.append(G_mat)
-
-        return cell_disps, edge_dist_bc, G_mats
+        return cell_disps, edge_dist_bc, G_mats, combined_neigh, disps_combine
 
 
     def _compute_edge_props(self, vertices, triangles, edges):
@@ -186,13 +305,13 @@ class FVMMesh:
             tri_edge_idxs[edge.item()] = pos[:, 1]
 
         # Sort triangle in order of edge signed direction. ORDER: [-, +], so cell on right comes first.
-        self.tri_edge_signs, edge_to_tri_ordered = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals, edge_to_tri, tri_edge_idxs)
-        self.edge_to_tri = edge_to_tri_ordered
+        self.tri_edge_signs, edge_to_tri, cent_to_edge_disp, e_c_to_e_disp = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals, edge_to_tri, tri_edge_idxs)
+        self.edge_to_tri_ = edge_to_tri
 
         # Compute distance from triangle centroid to edge midpoint
         # weight = [d_far / (d_far + d_near)]
         edge_to_tri_w = {}
-        for edge, tri in edge_to_tri_ordered.items():
+        for edge, tri in edge_to_tri.items():
             if tri.shape[0] == 1:
                 edge_to_tri_w[edge] = None
                 continue
@@ -202,49 +321,45 @@ class FVMMesh:
             n_hat = n / torch.norm(n, dim=-1, keepdim=True)
             d = torch.abs(torch.sum(v * n_hat, dim=-1))
 
-            w_anti = d[1] / (d[0] + d[1])
-            w_para = d[0] / (d[0] + d[1])
-            edge_to_tri_w[edge] = torch.stack([w_anti, w_para], dim=0)
+            w_right = d[1] / (d[0] + d[1])
+            w_left = d[0] / (d[0] + d[1])
+            edge_to_tri_w[edge] = torch.stack([w_right, w_left], dim=0)
 
-        # Compute grad weighting
-        self.cell_grad_stuff = self._grad_weighting(tri_to_edge, self.edge_to_tri, self.centroids, midpoints, normals)
 
-        # Precompute tensors for interior edges
-        normals_main, edge_to_tri_main, edge_to_tri_w_main = [], [], []
+        # Split tensors into edge and main
+        normals_main, edge_to_tri_main, edge_to_tri_w_main, edge_c_to_e_disp_m = [], [], [], []
+        edge_to_tri_bc, normals_bc = [], []
         for e_idx, e_bc in enumerate(self.bc_edge_mask):
             if e_bc:
-                continue
-            normals_main.append(normals[e_idx])
-            edge_to_tri_main.append(self.edge_to_tri[e_idx])
-            edge_to_tri_w_main.append(edge_to_tri_w[e_idx])
+                # Precompute tensors for boundary edges
+                edge_to_tri_bc.append(edge_to_tri[e_idx])
+                normals_bc.append(normals[e_idx])
+            else:
+                # Precompute tensors for interior edges
+                normals_main.append(normals[e_idx])
+                edge_to_tri_main.append(edge_to_tri[e_idx])
+                edge_to_tri_w_main.append(edge_to_tri_w[e_idx])
+                edge_c_to_e_disp_m.append(e_c_to_e_disp[e_idx])
 
         self.normals_main = torch.stack(normals_main)
         self.edge_to_tri_main = torch.stack(edge_to_tri_main)
-        self.edge_to_tri_w_main = torch.stack(edge_to_tri_w_main)
-
-        # Precompute tensors for boundary edges
-        edge_to_tri_bc, normals_bc = [], []
-        for e_idx, e_bc in enumerate(self.bc_edge_mask):
-            if not e_bc:
-                continue
-            edge_to_tri_bc.append(self.edge_to_tri[e_idx])
-            normals_bc.append(normals[e_idx])
+        self.edge_to_tri_w_main =  torch.stack(edge_to_tri_w_main) * 0 + 0.5
+        self.cent_to_edge_disp = cent_to_edge_disp
+        self.e_c_to_e_disp_m = torch.stack(edge_c_to_e_disp_m)
         self.edge_to_tri_bc = torch.stack(edge_to_tri_bc).squeeze()
         self.normals_bc = torch.stack(normals_bc)
 
+        # Compute grad weighting
+        self.cell_grad_stuff = self._grad_weighting(tri_to_edge, edge_to_tri, self.centroids, midpoints, normals)
+
     def _tri_area(self, vertices):
         """ vertices.shape = (n_cells, 3, 2) """
-        a = vertices[:, 0]
-        b = vertices[:, 1]
-        c = vertices[:, 2]
-
+        a, b, c = vertices[:, 0], vertices[:, 1], vertices[:, 2]
         # Compute the vectors for each triangle
         ab = b - a  # shape [n, 2]
         ac = c - a  # shape [n, 2]
-
         # Compute the 2D cross product (determinant) for each triangle
         cross = ab[:, 0] * ac[:, 1] - ab[:, 1] * ac[:, 0]  # shape [n]
-
         # Triangle area is half the absolute value of the cross product
         area = 0.5 * torch.abs(cross)
 
@@ -252,10 +367,11 @@ class FVMMesh:
 
     def _tri_edge_sign(self, centroids, edge_vectors, midpoints, tri_to_edge, normals, edge_to_tri, tri_edge_idxs):
         """ Compute which triangle is on the left and right of each edge.
-            For ordering, triangle on right comes first, then left.
+            For ordering, cell on Left comes first, then right
+            Signs: 1 if on left, -1 if on right.
         """
         signs = []
-
+        cent_to_edge_disp = []
         for edge, center in zip(tri_to_edge, centroids):
             edge_vect = edge_vectors[edge]      # shape = [3, 2]
             midpoint = midpoints[edge]      # shape = [3, 2]
@@ -266,36 +382,44 @@ class FVMMesh:
             edge_vect = edge_vect / torch.norm(edge_vect, dim=-1, keepdim=True)
 
             # (midpt-center) X edge_vect
-            cross = edge_vect[:, 0] * p_diff[:, 1] - edge_vect[:, 1] * p_diff[:, 0]
-            sign_X = -torch.sign(cross)
-            # Or normals dot (center - midpoint)
-            dot = torch.sum(normal * p_diff, dim=-1)
-            sign_dot = torch.sign(dot)
+            dist_cross = - edge_vect[:, 0] * p_diff[:, 1] + edge_vect[:, 1] * p_diff[:, 0]
+            sign_X = torch.sign(dist_cross)
+            # Or normals dot (midpt-center)
+            norm_hat = normal / torch.norm(normal, dim=-1, keepdim=True)
+            dist_dot = torch.sum(norm_hat * p_diff, dim=-1)
 
+            sign_dot = torch.sign(dist_dot)
             assert torch.all(sign_X == sign_dot), f'{sign_X = }, {sign_dot = }'
-
             signs.append(sign_dot)
 
-        signs = torch.stack(signs).long()
+            # Compute shortest vector from centroid to line.
+            r = p_diff#dist_dot.unsqueeze(-1) * norm_hat
 
+            cent_to_edge_disp.append(r)
+        signs = torch.stack(signs).long()       # shape = [n_cells, 3]
+        cent_to_edge_disp = torch.stack(cent_to_edge_disp)  # shape = [n_cells, 3, 2]
 
         edge_to_tri_ordered = {}
+        edge_to_cent_disp = {}
         p_m, m_p = torch.tensor([1, -1]), torch.tensor([-1, 1])
         for edge in sorted(edge_to_tri.keys()):
             tri_idx = edge_to_tri[edge]
             tri_edge = tri_edge_idxs[edge]
 
             order = signs[tri_idx, tri_edge]
+            rs = cent_to_edge_disp[tri_idx, tri_edge]
 
             # Boundary edges only have 1 triangle
             if order.shape[0] == 1:
                 assert self.bc_edge_mask[edge] == True, "Inconsistent boundary bug"
             else:
-                if torch.all(order == p_m):
+                if torch.all(order == m_p):
                     tri_idx = torch.flip(tri_idx, dims=[0])
+                    rs = torch.flip(rs, dims=[0])
             edge_to_tri_ordered[edge] = tri_idx
+            edge_to_cent_disp[edge] = rs
 
-        return signs, edge_to_tri_ordered
+        return signs, edge_to_tri_ordered, cent_to_edge_disp, edge_to_cent_disp
 
     def _get_tri_edges(self, triangles, edges):
         """
