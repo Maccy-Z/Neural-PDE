@@ -19,20 +19,14 @@ class FVMCells:
         self.state =  state_new
 
     def get_values(self):
-        momentum_x, momentum_y, density = self.state[:, 0], self.state[:, 1], self.state[:, 2]
-        # TODO: TEMPORARY
-        # u_x, u_y = momentum_x, momentum_y
-        #u_x, u_y = momentum_x / density, momentum_y / density
-        #primatives = torch.stack([u_x, u_y, density], dim=1)
-        return self.state, self.state[:, :2]
+        return self.convert_state_to_value(self.state)
 
     def convert_state_to_value(self, state):
-        momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
         # TODO: TEMPORARY
-        u_x, u_y = momentum_x, momentum_y
+        # momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
         # u_x, u_y = momentum_x / density, momentum_y / density
-        primatives = torch.stack([u_x, u_y, density], dim=1)
-        return primatives, state[:, :2]
+        # primatives = torch.stack([u_x, u_y, density], dim=1)
+        return state, state[:, :2]
 
 
 class TSolver(ABC):
@@ -58,9 +52,8 @@ class TSolver(ABC):
     def solve(self):
         E_props = self.eq.E_props
 
-        plot_i = int(1.499 / self.dt)
+        plot_i = int(0.999 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
-        dE_pred = []
         for i in range(self.n_steps):
             print()
             t = i * self.dt
@@ -69,27 +62,28 @@ class TSolver(ABC):
                 new_Us = self._step(i)
 
             primatives = self.cells.get_values()[0]
-            A = self.eq.mesh.areas.cuda()
-            Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
-            Ep = ((primatives[:, 2]-0) ** 2) * A
+
 
             # Track total variation
-            grads = self.eq.E_props.cell_grads  # shape = (n_cells, 2, 3)
+            grads = E_props.cell_grads  # shape = (n_cells, 2, 3)
             TV = grads.norm(dim=1).sum()
             TVs.append(TV.cpu())
 
+            # Track total energy
+            A = self.eq.mesh.areas.cuda()
+            Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
+            Ep = ((primatives[:, 2] - 0) ** 2) * A
             Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
 
             if i % plot_i == 0:
                 #self.eq.plot_cells(dEdt_pred[-1], title=f"Energy t={i * self.dt :.4g}", convert=False)
-
                 primatives = self.cells.get_values()[0]
-                # df = E_props.U_face[:, 0, 2] - E_props.U_face[:, 1, 2]
-                # self.eq.plot_flux(df, title=f"Value at t={i * self.dt :.2g}", show_index=False)
-                self.eq.plot_flux(E_props.U_face[:, :, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
+                dp = E_props.U_face[:, 0, 2] - E_props.U_face[:, 1, 2]
+                dv = E_props.U_face[:, 0, 0] - E_props.U_face[:, 1, 0]
 
+                self.eq.plot_flux(torch.stack([dv, dp], dim=1), title=f"Value at t={i * self.dt :.2g}", show_index=False)
+                # self.eq.plot_flux(E_props.U_face[:, :, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
                 self.eq.plot_cells(primatives[:, [0, 2]], convert=False, title=f"Values at t={i * self.dt :.4g}")
-                # self.plot_cells(-dUdt[:, [0, 2]], title=f"dUdt at t={i * dt :.4g}", convert=False)
 
             if t >= 4.5:
                 Eks, Eps = torch.tensor(Eks), torch.tensor(Eps)
@@ -112,8 +106,8 @@ class TSolver(ABC):
 
             self.cells.update_cells(new_Us)
 
-            if t > 10:
-                break
+            # if t > -1:
+            #     break
 
     @abstractmethod
     def _step(self, i: int):
@@ -148,7 +142,7 @@ class ExplMidpoint(TSolver):
 
         dUdt_star = self.eq.forward(primatives, None, i=i)
 
-        U_star = state + 0.5 * self.dt * dUdt_star        # U_i+0.5
+        U_star = state + 0.5 * self.dt * dUdt_star        # U_{i+0.5}
         primatives_star, _ = self.cells.convert_state_to_value(U_star)
 
         dUdt = self.eq.forward(primatives_star, None, i=i)

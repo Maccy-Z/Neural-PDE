@@ -128,27 +128,27 @@ class AdvectVector(Advect):
 
         return fluxes
 
-    def _upwind_coef(self, V_face):
-        """ V_face.shape = [n_edges_m, 2]"""
-        E_props = self.E_props
-
-        # 1. Find upwind cell
-        dot_vn = (E_props.normals_main * V_face).sum(dim=1)  # [n_edges]
-        upwind = torch.sign(dot_vn).long()  # [n_edges], values 0 or 1
-        upwind_idx = E_props.edge_to_tri_main[self.edge_idx, upwind]  # [n_edges]
-        # 2. Gather the upwind cell gradients.
-        upwind_grad = E_props.cell_grads[upwind_idx][:, :, self.V_dims]  # [n_edges, 2, 2]
-        # 3. Gather the directional derivative at the face (du/dn_face)
-        dudn_face = E_props.grad_faces_n[self.V_main_mask].view(E_props.n_edges_m, 2) # [n_edges, 2]
-        #dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask][:, self.V_dims]      # shape = [n_edges, 2]
-        # 4. Compute the limiter. r = max( 2 * du/dn_face . (grad_cell . d) / (|d| * |du/dn_face|**2) - 1 , 0)
-        d_dot_gradU = (E_props.cell_disps.unsqueeze(-1) * upwind_grad).sum(dim=1)  # [n_edges, 2]
-        numerator = torch.sum(dudn_face * d_dot_gradU, dim=1)  # [n_edges]
-        denom = E_props.cell_dist * torch.sum(dudn_face**2, dim=1) + 1e-7   # [n_edges]
-        r = torch.clamp(2 * numerator / denom - 1, min=0)  # enforce r >= 0, [n_edges]
-        beta = self._beta(r).unsqueeze(-1)  # [n_edges, 1]
-
-        return beta, upwind
+    # def _upwind_coef(self, V_face):
+    #     """ V_face.shape = [n_edges_m, 2]"""
+    #     E_props = self.E_props
+    #
+    #     # 1. Find upwind cell
+    #     dot_vn = (E_props.normals_main * V_face).sum(dim=1)  # [n_edges]
+    #     upwind = torch.sign(dot_vn).long()  # [n_edges], values 0 or 1
+    #     upwind_idx = E_props.edge_to_tri_main[self.edge_idx, upwind]  # [n_edges]
+    #     # 2. Gather the upwind cell gradients.
+    #     upwind_grad = E_props.cell_grads[upwind_idx][:, :, self.V_dims]  # [n_edges, 2, 2]
+    #     # 3. Gather the directional derivative at the face (du/dn_face)
+    #     dudn_face = E_props.grad_faces_n[self.V_main_mask].view(E_props.n_edges_m, 2) # [n_edges, 2]
+    #     #dudn_face = E_props.grad_faces_n[~E_props.bc_edge_mask][:, self.V_dims]      # shape = [n_edges, 2]
+    #     # 4. Compute the limiter. r = max( 2 * du/dn_face . (grad_cell . d) / (|d| * |du/dn_face|**2) - 1 , 0)
+    #     d_dot_gradU = (E_props.cell_disps.unsqueeze(-1) * upwind_grad).sum(dim=1)  # [n_edges, 2]
+    #     numerator = torch.sum(dudn_face * d_dot_gradU, dim=1)  # [n_edges]
+    #     denom = E_props.cell_dist * torch.sum(dudn_face**2, dim=1) + 1e-7   # [n_edges]
+    #     r = torch.clamp(2 * numerator / denom - 1, min=0)  # enforce r >= 0, [n_edges]
+    #     beta = self._beta(r).unsqueeze(-1)  # [n_edges, 1]
+    #
+    #     return beta, upwind
 
     def _main_fluxes(self, rho_Us):
         """ Compute u_face for each edge.
@@ -414,7 +414,7 @@ class FVMEquation:
         I_comp = torch.eye(n_comp, device=device)
         self.flux_mat = torch.kron(D, I_comp)
 
-        t_solver = ExplMidpoint(self.cells, 0.001, 9001, self)
+        t_solver = Euler(self.cells, 0.001, 9001, self)
         t_solver.solve()
 
     def build_triangle_edge_incidence(self, tri_to_edge, tri_edge_sign, n_edges, device=None, dtype=torch.float32):
@@ -442,6 +442,7 @@ class FVMEquation:
         # tri_fluxes = fluxes[self.tri_to_edge]  # shape: [n_cells, 3, n_component]
         # divergence = torch.sum(self.tri_edge_sign * tri_fluxes, dim=1).squeeze() / self.areas.unsqueeze(-1)     # shape = [n_cells, N_component]
 
+        # Matrix version
         fluxes_flat = fluxes    # shape: (n_edges * n_component,)
         divergence_flat = self.flux_mat @ fluxes_flat  # shape: (n_cells * n_component,)
         divergence = divergence_flat.view(-1, self.n_comp)  # shape: (n_cells, n_component)
@@ -463,20 +464,18 @@ class FVMEquation:
         fluxes += self.P_force.edge_fluxes()
 
         divergence = self._flux_to_div(fluxes)
-
-
         return divergence
 
-    def plot_flux(self, fluxes, title="Fluxes", convert=False, show_index=True):
+    def plot_flux(self, fluxes, title="Fluxes", convert=False, show_index=False):
         plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes, show_index=show_index)
 
-    def plot_cells(self, values, title="Cell Values", convert=False):
+    def plot_cells(self, values, title="Cell Values", convert=False, show_index=False):
         if convert:
             momentum_x, momentum_y, density = values[:, 0], values[:, 1], values[:, 2]
             u_x, u_y = momentum_x, momentum_y
             #u_x, u_y = momentum_x / density, momentum_y / density
             density = (density - 1)
             values = torch.stack([u_x, u_y, density], dim=1)
-        plot_points(self.mesh.centroids.cpu(), values.T, show_index=True, title=title)#, lims=[-0.01, 0.01])
+        plot_points(self.mesh.centroids.cpu(), values.T, show_index=show_index, title=title)#, lims=[-0.01, 0.01])
 
 

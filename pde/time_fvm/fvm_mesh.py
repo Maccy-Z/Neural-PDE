@@ -204,34 +204,60 @@ class FVMMesh:
         #cell_to_neigh_cell, cell_to_neigh_edge = [], []
         combined_neigh = []
         A_inv_di_T = []
-        # Weighting matrix for gradient using least squares
-        for cell_id, edges in enumerate(tri_to_edge):
+        # # Weighting matrix for gradient using least squares
+        # for cell_id, edges in enumerate(tri_to_edge):       # Must keep this order
+        #     # Get neighboring cells
+        #     neighbors, neigh_cell_cent = [], []
+        #     neigh_edge, neigh_edge_mid = [], []
+        #     for e in edges:
+        #         e = e.item()
+        #         if len(edge_to_tri_ord[e]) == 2:
+        #             """ Interior Edge"""
+        #             tris = edge_to_tri_ord[e]
+        #             neigh_cell = tris[tris != cell_id]
+        #             neigh_cell_cent.append(centroids[neigh_cell])  # [1, 2]
+        #             neighbors.append(neigh_cell.item())
+        #         else:
+        #             """ Boundary edge """
+        #             midpoint = midpoints[e]
+        #             neigh_edge_mid.append(midpoint)
+        #             glob_edge_idx = global_to_local[e]
+        #             neigh_edge.append(glob_edge_idx)
+        #
+        #     neigh_cell, neigh_edge = torch.tensor(neighbors), torch.tensor(neigh_edge)
+        #     combined = torch.cat([neigh_cell, neigh_edge + self.n_cells], dim=0)
+        #     combined_neigh.append(combined)
+        #
+        #     # Compute distance vectors
+        #     neigh_cell_cent = torch.cat(neigh_cell_cent)# # [N, 2]
+        #     neigh_edge_mid = torch.stack(neigh_edge_mid, dim=0) if neigh_edge_mid else torch.empty((0, 2))  # [3-N, 2]
+        #     neighbors_cent = torch.cat([neigh_cell_cent, neigh_edge_mid], dim=0)    # [3, 2]
+        #     center = centroids[cell_id]      # [2]
+        for cell_id, edges in enumerate(tri_to_edge):  # Must keep this order. Neighbor id: torch.cat([Us, Us_bc_edge])
             # Get neighboring cells
-            neighbors, neigh_cell_cent = [], []
-            neigh_edge, neigh_edge_mid = [], []
+            neighbors, centers = [], []
             for e in edges:
                 e = e.item()
                 if len(edge_to_tri_ord[e]) == 2:
                     """ Interior Edge"""
                     tris = edge_to_tri_ord[e]
                     neigh_cell = tris[tris != cell_id]
-                    neigh_cell_cent.append(centroids[neigh_cell])  # [1, 2]
+                    centers.append(centroids[neigh_cell])  # [1, 2]
                     neighbors.append(neigh_cell.item())
                 else:
                     """ Boundary edge """
-                    midpoint = midpoints[e]
-                    neigh_edge_mid.append(midpoint)
+                    midpoint = midpoints[e].unsqueeze(0)
+                    centers.append(midpoint)
                     glob_edge_idx = global_to_local[e]
-                    neigh_edge.append(glob_edge_idx)
+                    neighbors.append(glob_edge_idx + self.n_cells)
 
-            neigh_cell, neigh_edge = torch.tensor(neighbors), torch.tensor(neigh_edge)
+            combined = torch.tensor(neighbors)
+            combined_neigh.append(combined)
+
             # Compute distance vectors
-            neigh_cell_cent = torch.cat(neigh_cell_cent)# # [N, 2]
-            neigh_edge_mid = torch.stack(neigh_edge_mid, dim=0) if neigh_edge_mid else torch.empty((0, 2))  # [3-N, 2]
-            neighbors_cent = torch.cat([neigh_cell_cent, neigh_edge_mid], dim=0)    # [3, 2]
-            center = centroids[cell_id]      # [2]
-
+            neighbors_cent = torch.cat(centers)  # [3, 2]
             # Gradient matrix
+            center = centroids[cell_id]  # [2]
             d_i = neighbors_cent - center       # [3, 2]
             w_i = 1 / torch.norm(d_i, dim=1)**1.5 # [3]
             W = torch.diag(w_i)
@@ -243,10 +269,12 @@ class FVMMesh:
             # Premultiply A_inv with d_i.T
             A_inv_di_T.append(A_inv @ d_i.T @ W_T_W)
 
-            combined = torch.cat([neigh_cell, neigh_edge + self.n_cells], dim=0)
-            combined_neigh.append(combined)
-            #cell_to_neigh_cell.append(neigh_cell), cell_to_neigh_edge.append(neigh_edge)
+            # if cell_id == 402:
+            #     print(f'{combined = }')
+            #     print(f'{edges = }')
         combined_neigh = torch.stack(combined_neigh).int()
+        # print(combined_neigh[402])
+        # exit(4)
         G_mats = []
         for i in range(2):
             G_mat = build_sparse_gradient_matrix(combined_neigh, A_inv_di_T, i, self.n_cells, self.n_bc_edge)
@@ -458,11 +486,8 @@ class FVMMesh:
             e3 = tuple(sorted((v2, v0)))
 
             # Get the edge indices
-            edge_indices = [
-                edge_dict[e1],
-                edge_dict[e2],
-                edge_dict[e3]
-            ]
+            edge_indices = [edge_dict[e1], edge_dict[e2], edge_dict[e3]]
+            #edge_indices = sorted(edge_indices)
             tri_to_edge.append(edge_indices)
 
         tri_to_edge = torch.tensor(tri_to_edge)
