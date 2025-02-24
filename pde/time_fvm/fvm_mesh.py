@@ -201,38 +201,8 @@ class FVMMesh:
         bound_edge_idxs = torch.nonzero(self.bc_edge_mask, as_tuple=False).flatten()
         global_to_local = {int(global_idx): local_idx for local_idx, global_idx in enumerate(bound_edge_idxs)}
 
-        #cell_to_neigh_cell, cell_to_neigh_edge = [], []
         combined_neigh = []
         A_inv_di_T = []
-        # # Weighting matrix for gradient using least squares
-        # for cell_id, edges in enumerate(tri_to_edge):       # Must keep this order
-        #     # Get neighboring cells
-        #     neighbors, neigh_cell_cent = [], []
-        #     neigh_edge, neigh_edge_mid = [], []
-        #     for e in edges:
-        #         e = e.item()
-        #         if len(edge_to_tri_ord[e]) == 2:
-        #             """ Interior Edge"""
-        #             tris = edge_to_tri_ord[e]
-        #             neigh_cell = tris[tris != cell_id]
-        #             neigh_cell_cent.append(centroids[neigh_cell])  # [1, 2]
-        #             neighbors.append(neigh_cell.item())
-        #         else:
-        #             """ Boundary edge """
-        #             midpoint = midpoints[e]
-        #             neigh_edge_mid.append(midpoint)
-        #             glob_edge_idx = global_to_local[e]
-        #             neigh_edge.append(glob_edge_idx)
-        #
-        #     neigh_cell, neigh_edge = torch.tensor(neighbors), torch.tensor(neigh_edge)
-        #     combined = torch.cat([neigh_cell, neigh_edge + self.n_cells], dim=0)
-        #     combined_neigh.append(combined)
-        #
-        #     # Compute distance vectors
-        #     neigh_cell_cent = torch.cat(neigh_cell_cent)# # [N, 2]
-        #     neigh_edge_mid = torch.stack(neigh_edge_mid, dim=0) if neigh_edge_mid else torch.empty((0, 2))  # [3-N, 2]
-        #     neighbors_cent = torch.cat([neigh_cell_cent, neigh_edge_mid], dim=0)    # [3, 2]
-        #     center = centroids[cell_id]      # [2]
         for cell_id, edges in enumerate(tri_to_edge):  # Must keep this order. Neighbor id: torch.cat([Us, Us_bc_edge])
             # Get neighboring cells
             neighbors, centers = [], []
@@ -259,7 +229,7 @@ class FVMMesh:
             # Gradient matrix
             center = centroids[cell_id]  # [2]
             d_i = neighbors_cent - center       # [3, 2]
-            w_i = 1 / torch.norm(d_i, dim=1)**1.5 # [3]
+            w_i = 1 / torch.norm(d_i, dim=1)**0.5 # [3]
             W = torch.diag(w_i)
             W_T_W = W.T @ W                     # [3, 3]
             A = d_i.T @ W_T_W @ d_i             # [2, 2]
@@ -268,13 +238,8 @@ class FVMMesh:
             A_inv = torch.inverse(A)
             # Premultiply A_inv with d_i.T
             A_inv_di_T.append(A_inv @ d_i.T @ W_T_W)
-
-            # if cell_id == 402:
-            #     print(f'{combined = }')
-            #     print(f'{edges = }')
         combined_neigh = torch.stack(combined_neigh).int()
-        # print(combined_neigh[402])
-        # exit(4)
+
         G_mats = []
         for i in range(2):
             G_mat = build_sparse_gradient_matrix(combined_neigh, A_inv_di_T, i, self.n_cells, self.n_bc_edge)
@@ -289,13 +254,13 @@ class FVMMesh:
                 f = midpoints[e]
                 p = centroids[cells[0]]
                 disp = n_hat * torch.dot(f - p, n_hat)
-                dist = torch.norm(disp)
+                sign = torch.sign(torch.dot(f - p, n_hat))
+                dist = torch.norm(disp) * sign
                 edge_dist_bc.append(dist)
             else:
                 # Main cell / edge: Distance between centroids
                 d = centroids[cells[1]] - centroids[cells[0]]
                 cell_disps.append(d)
-
         cell_disps = torch.stack(cell_disps)
         edge_dist_bc = torch.stack(edge_dist_bc)
 
@@ -305,7 +270,6 @@ class FVMMesh:
         # disps_combine = disps_combine.permute(0, 2, 1)             # [n_cells, 2, 3]
 
         return cell_disps, edge_dist_bc, G_mats, combined_neigh, disps_combine
-
 
     def _compute_edge_props(self, vertices, triangles, edges):
         # Compute edge normals and lengths
@@ -334,7 +298,7 @@ class FVMMesh:
 
         # Sort triangle in order of edge signed direction. ORDER: [-, +], so cell on right comes first.
         self.tri_edge_signs, edge_to_tri, cent_to_edge_disp, e_c_to_e_disp = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals, edge_to_tri, tri_edge_idxs)
-        self.edge_to_tri_ = edge_to_tri
+        self.edge_to_tri = edge_to_tri
 
         # Compute distance from triangle centroid to edge midpoint
         # weight = [d_far / (d_far + d_near)]
@@ -400,7 +364,7 @@ class FVMMesh:
         """
         signs = []
         cent_to_edge_disp = []
-        for edge, center in zip(tri_to_edge, centroids):
+        for tri_idx, (edge, center) in enumerate(zip(tri_to_edge, centroids)):
             edge_vect = edge_vectors[edge]      # shape = [3, 2]
             midpoint = midpoints[edge]      # shape = [3, 2]
             normal = normals[edge]          # shape = [3, 2]
@@ -421,9 +385,9 @@ class FVMMesh:
             signs.append(sign_dot)
 
             # Compute shortest vector from centroid to line.
-            r = p_diff#dist_dot.unsqueeze(-1) * norm_hat
-
+            r = p_diff
             cent_to_edge_disp.append(r)
+
         signs = torch.stack(signs).long()       # shape = [n_cells, 3]
         cent_to_edge_disp = torch.stack(cent_to_edge_disp)  # shape = [n_cells, 3, 2]
 

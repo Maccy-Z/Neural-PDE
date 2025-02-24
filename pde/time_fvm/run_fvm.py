@@ -13,11 +13,11 @@ from pde.time_fvm.time_fvm import FVMMesh, FVMEquation
 def mesh_graph(cfg):
     N_comp = 3
 
-    new_graph = True
+    new_graph = False
     if new_graph:
         xmin, xmax = 0, 3
         ymin, ymax = 0.0, 1.5
-        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[5e-3, 10e-3])
+        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[3e-3, 5e-3])
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
     else:
@@ -33,7 +33,7 @@ def mesh_graph(cfg):
     bc_tags = {}
     for bc_idx, (e_tag, e_vert) in enumerate(zip(edge_tag, bound_edgs, strict=True)):
         if e_tag == "Wall":
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Neuman], [None, 0, None], [0, None, 0])   #(E.WALL, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.0, 0, None], [None, None, 0])   #(E.WALL, 0)
         elif e_tag == "Left":
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.0, 0, None], [None, None, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
@@ -53,9 +53,9 @@ def init_conds(centroids):
     us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 3)
     # us_init = (x-3) ** 2
     # # us_init = us_init.repeat(1, 3)
-    us_init[:, 0] =   torch.randn_like(us_init[:, 0]) * 0.00 #us_init[:, 0] * 1e-6 + 0.0
+    us_init[:, 0] =  ((x>1) * (x < 2)) * 0.01 # torch.randn_like(us_init[:, 0]) * 0.00 #us_init[:, 0] * 1e-6 + 0.0
     us_init[:, 1] = 0
-    us_init[:, 2] =  ((x>1) * (x < 2)) * 0.01
+    us_init[:, 2] = 0 # ((x>1) * (x < 2)) * 0.01
 
     # print(us_init)
     # exit(9)

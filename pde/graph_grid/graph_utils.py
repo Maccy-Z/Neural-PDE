@@ -199,27 +199,13 @@ def plot_interp_graph(points, values, resolution=1000, title='Nearest Neighbor I
     plt.show()
 
 
-# def plot_points(Xs, value, lims=None, title=""):
-#     Xs = Xs.cpu()
-#     value = value.cpu()
-#
-#     plt.title(title)
-#     if lims is None:
-#         plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis')
-#     else:
-#         plt.scatter(Xs[:, 0], Xs[:, 1], c=value, cmap='viridis', vmin=lims[0], vmax=lims[1])
-#     plt.colorbar()
-#     plt.gca().set_aspect('equal', adjustable='box')
-#     plt.tight_layout()
-#     plt.show()
-
 def plot_points(Xs, values, lims=None, title="", show_index=False):
     Xs = Xs.cpu()
     values = values.cpu()
 
     if len(values.shape) == 1:
         values = values.unsqueeze(0)
-        fig, axes = plt.subplots(1, 1, figsize=(16, 12))
+        fig, axes = plt.subplots(1, 1, figsize=(12, 9))
         axes = [axes]
     else:
         n_plots = values.shape[0]
@@ -241,8 +227,8 @@ def plot_points(Xs, values, lims=None, title="", show_index=False):
         fig.colorbar(sc, ax=ax)
         ax.set_aspect('equal', adjustable='box')
 
-        # ax.set_xlim([2.5, 3])
-        # ax.set_ylim([0.2, 0.8])
+        # ax.set_xlim([0.5, 1])
+        # ax.set_ylim([1.3, 1.55])
 
     plt.tight_layout()
     plt.show()
@@ -318,7 +304,8 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False):
                     arrowprops=dict(arrowstyle='->', lw=.5)
                 )
 
-                # ax.set_xlim([0.5, 1.5])
+                # ax.set_xlim([0.5, 1])
+                # ax.set_ylim([1.3, 1.55])
         # If colors are provided, create a ScalarMappable for the colorbar.
         if color is not None:
             # Use the original scalar range for this batch.

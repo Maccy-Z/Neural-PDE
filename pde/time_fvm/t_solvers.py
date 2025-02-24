@@ -52,10 +52,9 @@ class TSolver(ABC):
     def solve(self):
         E_props = self.eq.E_props
 
-        plot_i = int(0.999 / self.dt)
+        plot_i = int(1 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
         for i in range(self.n_steps):
-            print()
             t = i * self.dt
 
             with Timer(text=f"{i=} Time: {{:.4g}}"):
@@ -64,10 +63,10 @@ class TSolver(ABC):
             primatives = self.cells.get_values()[0]
 
 
-            # Track total variation
-            grads = E_props.cell_grads  # shape = (n_cells, 2, 3)
-            TV = grads.norm(dim=1).sum()
-            TVs.append(TV.cpu())
+            # # Track total variation
+            # grads = E_props.cell_grads  # shape = (n_cells, 2, 3)
+            # TV = grads.norm(dim=1).sum()
+            # TVs.append(TV.cpu())
 
             # Track total energy
             A = self.eq.mesh.areas.cuda()
@@ -75,17 +74,19 @@ class TSolver(ABC):
             Ep = ((primatives[:, 2] - 0) ** 2) * A
             Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
 
-            if i % plot_i == 0:
-                #self.eq.plot_cells(dEdt_pred[-1], title=f"Energy t={i * self.dt :.4g}", convert=False)
+            if i % plot_i == 0 and i != 0:
+                # exit("DONE PLOTTING")
+                dp = E_props.U_face[:, 1, 2] - E_props.U_face[:, 0, 2]
                 primatives = self.cells.get_values()[0]
-                dp = E_props.U_face[:, 0, 2] - E_props.U_face[:, 1, 2]
-                dv = E_props.U_face[:, 0, 0] - E_props.U_face[:, 1, 0]
 
-                self.eq.plot_flux(torch.stack([dv, dp], dim=1), title=f"Value at t={i * self.dt :.2g}", show_index=False)
-                # self.eq.plot_flux(E_props.U_face[:, :, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
-                self.eq.plot_cells(primatives[:, [0, 2]], convert=False, title=f"Values at t={i * self.dt :.4g}")
+                self.eq.plot_cells(primatives[:, ], convert=False, title=f"Values at t={i * self.dt :.4g}", show_index=False)
+                # self.eq.plot_flux_limited(E_props.U_face[:, 0, 0], xlim=[0.5, 1], ylim=[1.3, 1.55], title=f"Vx t={i * self.dt :.4g}", show_index=True)
+                #self.eq.plot_flux(dp, title=f"Vx t={i * self.dt :.4g}", show_index=True)
 
-            if t >= 4.5:
+                # exit("DONE PLOTTING")
+
+
+            if t >= 5:
                 Eks, Eps = torch.tensor(Eks), torch.tensor(Eps)
                 E = Eks + Eps
                 plt.plot(ts, Eks, label="Kinetic Energy")
@@ -94,11 +95,11 @@ class TSolver(ABC):
                 print(f'{E.max() = }')
                 plt.legend()
                 plt.show()
-
-                TVs = torch.stack(TVs, dim=0)
-                plt.plot(ts, TVs, label="Total Variation")
-                plt.legend()
-                plt.show()
+                #
+                # TVs = torch.stack(TVs, dim=0)
+                # plt.plot(ts, TVs, label="Total Variation")
+                # plt.legend()
+                # plt.show()
 
                 exit(9)
 
