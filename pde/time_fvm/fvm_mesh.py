@@ -150,7 +150,7 @@ def build_sparse_gradient_matrix(combined_neigh, G_mat, dim, n_cells, n_boundari
     indices = torch.tensor([rows, cols], dtype=torch.long)
     values = torch.tensor(vals, dtype=G_mat[0].dtype)
     A = torch.sparse_coo_tensor(indices, values, (n_cells, n_cells + n_boundaries))
-    return A.to_sparse_csr()
+    return A
 
 
 class FVMMesh:
@@ -171,7 +171,6 @@ class FVMMesh:
     normals_main: torch.Tensor  # shape = (n_edge_main, 2)
     cell_grad_stuff: tuple # Stuff needed to calculate gradient on a cell
     edge_to_tri_main: torch.Tensor # shape = (n_edge_main, 2)              # Mapping edge to triangle indices for non boundary edges
-    edge_to_tri_w_main: torch.Tensor  # shape = (n_edge_main, 2)         # Weights for interpolation of face value
 
     # Only for boundary edges
     edge_to_tri_bc: torch.Tensor # shape = (n_edge_bc, 1)              # Mapping edge to triangle indices for boundary edges
@@ -200,6 +199,17 @@ class FVMMesh:
          """
         bound_edge_idxs = torch.nonzero(self.bc_edge_mask, as_tuple=False).flatten()
         global_to_local = {int(global_idx): local_idx for local_idx, global_idx in enumerate(bound_edge_idxs)}
+        edge_to_tri_comb = []
+        for e, cell in edge_to_tri_ord.items():
+            if len(cell) == 2:
+                edge_to_tri_comb.append(cell)
+            else:
+                bc_edge_id = global_to_local[e] + self.n_cells
+                bc_edge_id = torch.tensor([bc_edge_id, bc_edge_id])
+
+                edge_to_tri_comb.append(bc_edge_id)
+
+        edge_to_tri_comb = torch.stack(edge_to_tri_comb)
 
         combined_neigh = []
         A_inv_di_T = []
@@ -221,8 +231,7 @@ class FVMMesh:
                     glob_edge_idx = global_to_local[e]
                     neighbors.append(glob_edge_idx + self.n_cells)
 
-            combined = torch.tensor(neighbors)
-            combined_neigh.append(combined)
+            combined_neigh.append(torch.tensor(neighbors))
 
             # Compute distance vectors
             neighbors_cent = torch.cat(centers)  # [3, 2]
@@ -264,12 +273,12 @@ class FVMMesh:
         cell_disps = torch.stack(cell_disps)
         edge_dist_bc = torch.stack(edge_dist_bc)
 
-        neigh_loc = torch.cat([centroids, midpoints[bound_edge_idxs]], dim=0)   # [n_cells + n_bc_edge, 2]
-        cell_neigh_disps = neigh_loc[combined_neigh]        # [n_cells, 3, 2]
-        disps_combine = cell_neigh_disps - centroids.unsqueeze(1)   # [n_cells, 3, 2]
+        #neigh_loc = torch.cat([centroids, midpoints[bound_edge_idxs]], dim=0)   # [n_cells + n_bc_edge, 2]
+        #cell_neigh_disps = neigh_loc[combined_neigh]        # [n_cells, 3, 2]
+        #disps_combine = cell_neigh_disps - centroids.unsqueeze(1)   # [n_cells, 3, 2]
         # disps_combine = disps_combine.permute(0, 2, 1)             # [n_cells, 2, 3]
 
-        return cell_disps, edge_dist_bc, G_mats, combined_neigh, disps_combine
+        return cell_disps, edge_dist_bc, G_mats, combined_neigh, edge_to_tri_comb
 
     def _compute_edge_props(self, vertices, triangles, edges):
         # Compute edge normals and lengths
@@ -290,36 +299,17 @@ class FVMMesh:
         tri_to_edge = self._get_tri_edges(triangles, edges) # shape = [n_cells, 3]
         self.tri_to_edge = tri_to_edge
         unique_edges, _ = torch.unique(tri_to_edge, sorted=True, return_inverse=True)
-        edge_to_tri, tri_edge_idxs = {}, {}
+        _edge_to_tri, tri_edge_idxs = {}, {}
         for edge in unique_edges:
             pos = (edge == tri_to_edge).nonzero()
-            edge_to_tri[edge.item()] = pos[:, 0]
+            _edge_to_tri[edge.item()] = pos[:, 0]
             tri_edge_idxs[edge.item()] = pos[:, 1]
-
         # Sort triangle in order of edge signed direction. ORDER: [-, +], so cell on right comes first.
-        self.tri_edge_signs, edge_to_tri, cent_to_edge_disp, e_c_to_e_disp = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals, edge_to_tri, tri_edge_idxs)
+        self.tri_edge_signs, edge_to_tri, cent_to_edge_disp = self._tri_edge_sign(self.centroids, edge_vectors, midpoints, tri_to_edge, self.normals, _edge_to_tri, tri_edge_idxs)
         self.edge_to_tri = edge_to_tri
 
-        # Compute distance from triangle centroid to edge midpoint
-        # weight = [d_far / (d_far + d_near)]
-        edge_to_tri_w = {}
-        for edge, tri in edge_to_tri.items():
-            if tri.shape[0] == 1:
-                edge_to_tri_w[edge] = None
-                continue
-
-            v = midpoints[edge] - self.centroids[tri]
-            n = self.normals[edge]
-            n_hat = n / torch.norm(n, dim=-1, keepdim=True)
-            d = torch.abs(torch.sum(v * n_hat, dim=-1))
-
-            w_right = d[1] / (d[0] + d[1])
-            w_left = d[0] / (d[0] + d[1])
-            edge_to_tri_w[edge] = torch.stack([w_right, w_left], dim=0)
-
-
         # Split tensors into edge and main
-        normals_main, edge_to_tri_main, edge_to_tri_w_main, edge_c_to_e_disp_m = [], [], [], []
+        normals_main, edge_to_tri_main = [], []
         edge_to_tri_bc, normals_bc = [], []
         for e_idx, e_bc in enumerate(self.bc_edge_mask):
             if e_bc:
@@ -330,14 +320,10 @@ class FVMMesh:
                 # Precompute tensors for interior edges
                 normals_main.append(normals[e_idx])
                 edge_to_tri_main.append(edge_to_tri[e_idx])
-                edge_to_tri_w_main.append(edge_to_tri_w[e_idx])
-                edge_c_to_e_disp_m.append(e_c_to_e_disp[e_idx])
 
         self.normals_main = torch.stack(normals_main)
         self.edge_to_tri_main = torch.stack(edge_to_tri_main)
-        self.edge_to_tri_w_main =  torch.stack(edge_to_tri_w_main) * 0 + 0.5
         self.cent_to_edge_disp = cent_to_edge_disp
-        self.e_c_to_e_disp_m = torch.stack(edge_c_to_e_disp_m)
         self.edge_to_tri_bc = torch.stack(edge_to_tri_bc).squeeze()
         self.normals_bc = torch.stack(normals_bc)
 
@@ -370,7 +356,6 @@ class FVMMesh:
             normal = normals[edge]          # shape = [3, 2]
 
             p_diff = midpoint - center      # shape = [3, 2]
-            #p_diff = p_diff / torch.norm(p_diff, dim=-1, keepdim=True)
             edge_vect = edge_vect / torch.norm(edge_vect, dim=-1, keepdim=True)
 
             # (midpt-center) X edge_vect
@@ -392,14 +377,12 @@ class FVMMesh:
         cent_to_edge_disp = torch.stack(cent_to_edge_disp)  # shape = [n_cells, 3, 2]
 
         edge_to_tri_ordered = {}
-        edge_to_cent_disp = {}
         p_m, m_p = torch.tensor([1, -1]), torch.tensor([-1, 1])
         for edge in sorted(edge_to_tri.keys()):
             tri_idx = edge_to_tri[edge]
             tri_edge = tri_edge_idxs[edge]
 
             order = signs[tri_idx, tri_edge]
-            rs = cent_to_edge_disp[tri_idx, tri_edge]
 
             # Boundary edges only have 1 triangle
             if order.shape[0] == 1:
@@ -407,11 +390,9 @@ class FVMMesh:
             else:
                 if torch.all(order == m_p):
                     tri_idx = torch.flip(tri_idx, dims=[0])
-                    rs = torch.flip(rs, dims=[0])
             edge_to_tri_ordered[edge] = tri_idx
-            edge_to_cent_disp[edge] = rs
 
-        return signs, edge_to_tri_ordered, cent_to_edge_disp, edge_to_cent_disp
+        return signs, edge_to_tri_ordered, cent_to_edge_disp
 
     def _get_tri_edges(self, triangles, edges):
         """

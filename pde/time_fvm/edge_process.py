@@ -5,6 +5,52 @@ from cprint import c_print
 import torch
 
 
+def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
+    """
+    Instead of fluxes[:, idxs] = A, use fluxes = S @ A.flatten()
+
+    Create a sparse matrix S that maps a flattened tensor with shape
+      (num_blocks * len(selected_indices))
+    to a flattened tensor with shape
+      (num_blocks * full_block_size)
+    by scattering the values into positions determined by selected_indices for each block.
+
+    For each block i and for each local index j (with v = selected_indices[j]),
+    set:
+        S[i * full_block_size + v,  i * len(selected_indices) + j] = 1.
+
+    Args:
+        num_blocks (int): Number of blocks (e.g. n_edges).
+        full_block_size (int): Size of the full block (e.g. n_component).
+        selected_indices (list or iterable): Indices within each block where values should be inserted.
+        device (torch.device, optional): Device for the resulting tensor.
+        dtype (torch.dtype, optional): Data type for the values.
+
+    Returns:
+        torch.Tensor: A sparse matrix of shape (num_blocks * full_block_size, num_blocks * len(selected_indices)).
+    """
+    num_selected = len(selected_indices)
+    total_rows = num_blocks * full_block_size
+    total_cols = num_blocks * num_selected
+
+    row_indices = []
+    col_indices = []
+    values = []
+
+    for block in range(num_blocks):
+        for j, v in enumerate(selected_indices):
+            row = block * full_block_size + v
+            col = block * num_selected + j
+            row_indices.append(row)
+            col_indices.append(col)
+            values.append(1.0)
+
+    indices = torch.tensor([row_indices, col_indices], dtype=torch.long, device=device)
+    values = torch.tensor(values, dtype=dtype, device=device)
+    S = torch.sparse_coo_tensor(indices, values, (total_rows, total_cols))
+    return S
+
+
 def invert_selection_matrix(num_blocks, block_size, selected_indices, device=None, dtype=torch.float32):
     """
     Create a matrix that "inverts" the selection performed by create_selection_matrix().
@@ -261,12 +307,12 @@ class FVMEdgeInfo:
     n_component: int
 
     # Shared
-    edge_len: torch.Tensor  # shape = (n_edges)
+    edge_len: torch.Tensor  # shape = (n_edges, 1)
     normals: torch.Tensor  # shape = (n_edges, 2)
+    # edge_to_tri_comb: torch.Tensor  # shape = (n_edges, 2)
     # Main mesh
     n_edges_m: int
     edge_to_tri_main: torch.Tensor  # shape = [n_edges_m, 2], ordered so triangle parallel to edge normal comes last, antiparallel first.
-    edge_to_tri_w: torch.Tensor  # shape = [n_edges_m, 2]
     cell_dist: torch.Tensor  # shape = (n_edges_m)
     tri_edge_signs: torch.Tensor  # shape = (3 * n_cells)
     tri_to_edge: torch.Tensor  # shape = (3 * n_cells)
@@ -280,10 +326,8 @@ class FVMEdgeInfo:
 
     # Gradients
     G_mats: list[torch.Tensor]  # shape = [2](n_cells, n_cells)  Gradient matrix for every cell
-    # cell_disps: torch.Tensor  # shape = (n_edges_m, 2)     Displacement vector between cell centroids, for every edge_main
     edge_dists_bc: torch.Tensor  # shape = (n_bc_edges, 3)     Distance between cell centroids, for every edge_bc
     neigh_combine: torch.Tensor # shape = (n_cell, 2). Used for masking neighbors of cell incl boundary edges, in format [Us, U_face_bc]
-    # disps_combine: torch.Tensor # shape = [n_cells, n_neigh=3, 2]. Used for masking neighbors of cell incl boundary edges.
 
     # Temporary Variables
     cell_grads: torch.Tensor  # shape = (n_cells, 2, N_component)  Gradient of cell values
@@ -292,6 +336,7 @@ class FVMEdgeInfo:
     # Primitive face variables
     Vs_faces: torch.Tensor  # shape = (n_edges, 2, 2)  Face values
     rho_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Face values
+    Us_face_sign: torch.Tensor  # shape = (n_edges, 2)  Allowed sign of diffusion term
 
     def __init__(self, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
         self.device = device
@@ -302,7 +347,6 @@ class FVMEdgeInfo:
 
         self.normals_main = mesh.normals_main.to(device)
         self.edge_to_tri_main = mesh.edge_to_tri_main.to(device)
-        self.edge_to_tri_w = mesh.edge_to_tri_w_main.to(device)
         self.cent_to_edge_disp = mesh.cent_to_edge_disp.to(device).unsqueeze(-1)
         self.tri_edge_signs = (-self.mesh.tri_edge_signs + 1 / 2).int().view(3*self.n_cells).to(device)
         self.tri_to_edge = mesh.tri_to_edge.view(3*self.n_cells).to(device)
@@ -311,16 +355,15 @@ class FVMEdgeInfo:
         self.bc_edge_mask = mesh.bc_edge_mask.to(device)
         #self.normals_bc = mesh.normals_bc.to(device)
 
-        (cell_disps, edge_dists_bc, G_mats, neigh_combine, disps_combine) = mesh.cell_grad_stuff
-        cell_disps = cell_disps.to(device)
+        (cell_disps, edge_dists_bc, G_mats, neigh_combine, edge_to_tri_comb) = mesh.cell_grad_stuff
         self.edge_dists_bc = edge_dists_bc.to(device).unsqueeze(-1).expand(-1, self.n_component)
-        self.G_mats = []
-        for G in G_mats:
-            self.G_mats.append(G.to(device))
+        self.G_mats = torch.cat([G_mats[0], G_mats[1]], dim=0).to_sparse_csr().to(device)
+
         self.neigh_combine = neigh_combine.to(device)
         self.cell_dist = torch.norm(cell_disps, dim=1).to(device)
         self.normals = mesh.normals.to(device)
-        self.edge_len = torch.norm(self.normals, dim=1).to(device)
+        self.edge_len = torch.norm(self.normals, dim=1).to(device).unsqueeze(-1)
+        # self.edge_to_tri_comb = edge_to_tri_comb.to(device)
 
         self.bc_tags = bc_tags # {edge_num: bc_tag}
         self._init_bc(bc_tags)
@@ -328,6 +371,7 @@ class FVMEdgeInfo:
         self._build_spm_face_vals()
         self._build_spm_face_grads()
 
+        self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_component, [0, 1], device=device).to_sparse_csr()
 
     def _build_spm_face_grads(self):
         n_edges = self.edge_to_tri_main.shape[0]  # number of faces (edges)
@@ -504,9 +548,11 @@ class FVMEdgeInfo:
         # self.normal_rho = D @ self.E_div
 
 
+    @torch.compile()
     def precompute_shared(self, Us):
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """
+
         U_face_bc = self._bc_face_vals(Us)
         self.cell_grads = self._cell_grads(Us, U_face_bc) # shape = [n_cells, 2, n_component]
         self.grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_component]
@@ -528,14 +574,12 @@ class FVMEdgeInfo:
         # U_upper = torch.maximum(U_cent, Us_neigh) - U_cent      # shape = [n_cells, neigh=3, n_component]
         # U_lower = torch.minimum(U_cent, Us_neigh) - U_cent
         numerator = torch.where(dU > 0, U_upper, U_lower)
-        r = numerator / (dU+1e-8)
-        phi = self._phi(r)                  # shape = [n_cells, neigh=3, n_component]
+        phi = self._phi(numerator / (dU+1e-8))                  # shape = [n_cells, neigh=3, n_component]
         Us_face = U_cent + phi * dU      # shape = [n_cells, neigh=3, n_component]
 
         self.U_face = torch.empty((self.n_edges, 2, self.n_component), device=self.device)
         self.U_face[self.tri_to_edge, self.tri_edge_signs] = Us_face.view(3*self.n_cells, 3)
         self.U_face[self.bc_edge_mask] = U_face_bc.unsqueeze(1)
-
         # U_face_flat = torch.mm(self.S_cells, Us_face.view(3*self.n_cells, 3))
         # self.U_face = U_face_flat.view(self.n_edges, 2, self.n_component)
         # self.U_face[self.bc_edge_mask] = U_face_bc.unsqueeze(1)
@@ -549,26 +593,30 @@ class FVMEdgeInfo:
         # r = self.mesh.e_c_to_e_disp_m.unsqueeze(-1).cuda() # shape = [n_edges_m, cells=2, dims=2, 1]
         # dU = (grads * r).sum(dim=2)  # shape = [n_edges_m, cells=2, n_component]
         # U_test = U_cent + dU
-
         # self.U_face[~self.bc_edge_mask] = U_test # torch.stack([U_r, U_l], dim=1)
-        """ TESTS """
-        # print()
-        # # print(f'{self.cent_to_edge_disp[1087, 2].squeeze()}')
-        # # print(f'{self.cent_to_edge_disp[335, 2].squeeze()}')
-        # # exit(9)
-        # # # print(f'{self.mesh.tri_to_edge[1087] = }')  # [2796, 1120, 1681]
-        # # # print(f'{self.mesh.edge_to_tri[1120] = }') # [1087, 1088]
-        # print(f'{Us[1087, 1] = }')
-        # print(f'{Us[335, 1] = }')
-        # # print(f'{Us[335, 2] = }')
-        #
-        # print(phi[1087, :, 1])
-        # # print(f'{self.cell_grads[1087, :, 1] = }')
-        # # print(f'{self.cell_grads[335, :, 1] = }')
-        # c_print(f'{Us_neigh[1087, :, 1] = }', color="cyan")
-        # c_print(f'{Us_face[1087, :, 1] = }', color="cyan")
 
-        #exit(7)
+        # Us_face_raw = Us_cell_face[self.edge_to_tri_comb]
+        # self.Us_face_sign = Us_face_raw[:, 1, :] - Us_face_raw[:, 0, :]
+
+
+    def _phi(self, r):
+        # VENKATAKRISHNAN
+        # eps = 0.3*3e-3
+        # _r = r**2 + r + eps
+        # phi = (_r + r) / (_r + 2)
+        # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
+
+        # BJ
+        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
+
+        # Cell wide clamping
+        # phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]
+        # phi = torch.mean(phi, dim=1, keepdim=True)        # shape = [n_cells, neigh=1, n_component]
+
+        #phi = torch.min(phi, dim=2, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp=1]
+
+        return phi
+
 
     def _bc_face_vals(self, Us):
         """ U_face, with linear interpolation.
@@ -593,31 +641,13 @@ class FVMEdgeInfo:
         # U_face[self.neumann_mask] = U_face_neum
 
 
-        Us_flat = Us.reshape(-1)
+        Us_flat = Us.flatten()
         # Final U_face in flattened form.
         U_face_flat = torch.mv(self.A_bc, Us_flat) + self.b_bc      # shape = [n_edges_bc * n_component]
         # Reshape back to (n_edges_bc, n_component)
         U_face = U_face_flat.view(self.n_edges_bc, self.n_component)
 
         return  U_face
-
-    def _phi(self, r):
-        # VENKATAKRISHNAN
-        # eps = 0.3*3e-3
-        # _r = r**2 + r + eps
-        # phi = (_r + r) / (_r + 2)
-        # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
-
-        # BJ
-        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
-
-        # Cell wide clamping
-        # phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]
-        # phi = torch.mean(phi, dim=1, keepdim=True)        # shape = [n_cells, neigh=1, n_component]
-
-        #phi = torch.min(phi, dim=2, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp=1]
-
-        return phi
 
     def _cell_grads(self, Us, U_face_bc):
         """ Vectorised gradient computation
@@ -626,18 +656,9 @@ class FVMEdgeInfo:
             Returns: Gradient matrix of shape (n_cells, 2, N_component)
         """
         Us_cell_face = torch.cat([Us, U_face_bc])
+        combined_grad = torch.sparse.mm(self.G_mats, Us_cell_face)  # combined_grad.shape == [2 * n_cells, N_component]
+        cell_grads = combined_grad.view(2, -1, self.n_component).permute(1, 0, 2)    # shape = [n_cells, 2, N_component]
 
-        grad_x = torch.sparse.mm(self.G_mats[0], Us_cell_face)  # Shape: [n_cells, N_component]
-        grad_y = torch.sparse.mm(self.G_mats[1], Us_cell_face)  # Shape: [n_cells, N_component]
-        cell_grads = torch.stack([grad_x, grad_y], dim=1)  # Shape: [n_cells, 2, N_component]
-        # print(grad_x)
-        # exit(7)
-        #
-
-        # cell_grads = cell_grads * phi_cand
-        # max_grad = cell_grads[:, 0, 2].abs().max()
-        # print(f'{max_grad = }')
-        # print(torch.where(cell_grads.abs()==max_grad))
         return cell_grads
 
     def _face_grads(self, Us):
@@ -696,7 +717,7 @@ class FVMEdgeInfo:
         """ SPARSE"""
         Us_flat = Us.flatten()
         dUdn_face_flat = torch.mv(self.A_face_grad, Us_flat) + self.b_face_grad
-        dUdn_face = dUdn_face_flat.reshape(self.n_edges, self.n_component)
+        dUdn_face = dUdn_face_flat.view(self.n_edges, self.n_component)
 
         return dUdn_face
 

@@ -13,11 +13,11 @@ from pde.time_fvm.time_fvm import FVMMesh, FVMEquation
 def mesh_graph(cfg):
     N_comp = 3
 
-    new_graph = False
+    new_graph = True
     if new_graph:
         xmin, xmax = 0, 3
         ymin, ymax = 0.0, 1.5
-        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[3e-3, 5e-3])
+        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[1.5e-3, 1.5e-3])
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
     else:
@@ -53,9 +53,9 @@ def init_conds(centroids):
     us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 3)
     # us_init = (x-3) ** 2
     # # us_init = us_init.repeat(1, 3)
-    us_init[:, 0] =  ((x>1) * (x < 2)) * 0.01 # torch.randn_like(us_init[:, 0]) * 0.00 #us_init[:, 0] * 1e-6 + 0.0
+    us_init[:, 0] =  0 #((x>1) * (x < 2)) * 0.01 # torch.randn_like(us_init[:, 0]) * 0.00 #us_init[:, 0] * 1e-6 + 0.0
     us_init[:, 1] = 0
-    us_init[:, 2] = 0 # ((x>1) * (x < 2)) * 0.01
+    us_init[:, 2] =  ((x>1) * (x < 2)) * 0.01
 
     # print(us_init)
     # exit(9)
