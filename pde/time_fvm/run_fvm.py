@@ -15,9 +15,9 @@ def mesh_graph(cfg):
 
     new_graph = True
     if new_graph:
-        xmin, xmax = 0, 3
+        xmin, xmax = 0, 4
         ymin, ymax = 0.0, 1.5
-        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[1.5e-3, 1.5e-3])
+        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[1e-3, 1e-3])
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
     else:
@@ -35,12 +35,15 @@ def mesh_graph(cfg):
         if e_tag == "Wall":
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.0, 0, None], [None, None, 0])   #(E.WALL, 0)
         elif e_tag == "Left":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.0, 0, None], [None, None, 0]) #(E.INLET, 0)
+            X0, X1 = Xs[e_vert]
+            x0, y0 = X0
+            x1, y1 = X1
+            v_in = 1.1 if (0. < (y0+y1)/2 < 0.3) else 0
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Neuman, E.Neuman], [v_in, None, None], [None, 0, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.0, 0, None], [None, None, 0]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
+            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield], [None, None, 3], [0, 0, None]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
-
 
     c_print(f'Number of mesh points: {len(Xs)}', "green")
 
@@ -53,9 +56,9 @@ def init_conds(centroids):
     us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 3)
     # us_init = (x-3) ** 2
     # # us_init = us_init.repeat(1, 3)
-    us_init[:, 0] =  0 #((x>1) * (x < 2)) * 0.01 # torch.randn_like(us_init[:, 0]) * 0.00 #us_init[:, 0] * 1e-6 + 0.0
+    us_init[:, 0] = 0#(x>1) * (x < 1.5) * 0.1
     us_init[:, 1] = 0
-    us_init[:, 2] =  ((x>1) * (x < 2)) * 0.01
+    us_init[:, 2] = 3 #- ((x>1) * (x < 2)) * 0.9
 
     # print(us_init)
     # exit(9)

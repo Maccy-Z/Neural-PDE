@@ -304,7 +304,7 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False):
                     arrowprops=dict(arrowstyle='->', lw=.5)
                 )
 
-                # ax.set_xlim([0.5, 1])
+                ax.set_xlim([2.75, 3])
                 # ax.set_ylim([1.3, 1.55])
         # If colors are provided, create a ScalarMappable for the colorbar.
         if color is not None:

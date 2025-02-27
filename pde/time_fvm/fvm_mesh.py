@@ -1,5 +1,5 @@
 import torch
-
+from cprint import c_print
 
 # def build_sparse_gradient_matrix(cell_to_neigh_idx, G_mat, dim):
 #     """
@@ -210,7 +210,6 @@ class FVMMesh:
                 edge_to_tri_comb.append(bc_edge_id)
 
         edge_to_tri_comb = torch.stack(edge_to_tri_comb)
-
         combined_neigh = []
         A_inv_di_T = []
         for cell_id, edges in enumerate(tri_to_edge):  # Must keep this order. Neighbor id: torch.cat([Us, Us_bc_edge])
