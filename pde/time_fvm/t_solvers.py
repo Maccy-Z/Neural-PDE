@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from cprint import c_print
 import torch
 from abc import ABC, abstractmethod
 from codetiming import Timer
@@ -38,6 +38,12 @@ class FVMCells:
 
         return primatives, state[:, :2]
 
+    def save(self, name="state.pt"):
+        torch.save(self.state, name)
+
+    def load(self, name="state.pt"):
+        self.state = torch.load(name, weights_only=True)
+
 
 class TSolver(ABC):
     """
@@ -60,21 +66,22 @@ class TSolver(ABC):
         self.cells = cells
         self.eq: FVMEquation = eq
 
+    @torch.inference_mode()
     def solve(self):
         E_props = self.eq.E_props
+        # self.cells.load()
+
         run = True
         if run:
-            plot_i = int(0.5 / self.dt)
+            plot_i = int(1 / self.dt)
             Eks, Eps, ts, TVs = [], [], [], []
 
             for i in range(self.n_steps):
                 t = i * self.dt
-                with Timer(text=f"{i=} Time: {{:.4g}}"):
+                with Timer(text=f"{i=}, {t=} Time: {{:.4g}}"):
                     new_Us = self._step()
 
                 primatives = self.cells.get_values()[0]
-
-
 
                 # Track total energy
                 A = self.eq.mesh.areas.cuda()
@@ -82,14 +89,17 @@ class TSolver(ABC):
                 Ep = torch.log(primatives[:, 2]) * A
                 Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
 
-                if i % plot_i == 0 and i != 0:
-                    # exit(f"DONE PLOTTING {t = }")
+                if i % plot_i == 0:
                     primatives = self.cells.get_values()[0]
 
-                    self.eq.plot_cells(primatives[:], convert=False, title=f"Values at t={i * self.dt :.4g}", show_index=False)
-                    # self.eq.plot_flux(E_props.U_face[:, 0, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
-                    #self.eq.plot_flux(dp, title=f"Vx t={i * self.dt :.4g}", show_index=True)
+                    self.eq.plot_cells(primatives[:], title=f"Values at t={i * self.dt :.4g}", show_index=False)
+                    # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True)
 
+                    # self.eq.plot_flux(E_props.U_face[:, 0, 2], title=f"Vx t={i * self.dt :.4g}", show_index=True, lims=[3.7, 4.1])
+
+                    if torch.any(torch.isnan(primatives)):
+                        print(f'{primatives = }')
+                        exit(9)
                     # exit("DONE PLOTTING")
 
                 self.cells.update_cells(new_Us)
@@ -111,9 +121,27 @@ class TSolver(ABC):
 
         else:
 
-            for _ in range(5):
+            for _ in range(2):
                 new_Us = self._step()
                 self.cells.update_cells(new_Us)
+
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            tot_el = 0
+            for name, value in vars(self.eq.t_solver).items():
+
+                if torch.is_tensor(value) and value.is_cuda:
+                    if value.is_sparse or value.is_sparse_csr:
+                        numel = value._nnz()
+                    else:
+                        numel = value.numel()
+                    print(f"Name: {name}, Size: {value.size()}, numel = {numel}")
+                    tot_el += numel
+
+
+            c_print(f'{tot_el = }', color="magenta")
+            exit(3)
 
             with torch.profiler.profile(
                     activities=[
@@ -170,6 +198,7 @@ class ExplMidpoint(TSolver):
         primatives, _ = self.cells.get_values()
 
         dUdt_star = self.eq.forward(primatives, None)
+
 
         U_star = state + 0.5 * self.dt * dUdt_star        # U_{i+0.5}
         primatives_star, _ = self.cells.convert_state_to_value(U_star)

@@ -55,7 +55,6 @@ def create_insertion_matrix(num_blocks, full_block_size, selected_indices, devic
     return S
 
 
-
 class FVMEdgeFunc(ABC):
     device: str
 
@@ -76,20 +75,7 @@ class FVMEdgeFunc(ABC):
 
 class Advect(FVMEdgeFunc, ABC):
     def __init__(self, E_props: FVMEdgeInfo, device="cpu"):
-        self.edge_idx = torch.arange(E_props.n_edges_m, device=device)
-
-    def _beta(self, r):
-        # van Albada scheme
-        #beta = (r**2 + r) / (1 + r**2)
-        # van Leer scheme
-        # print(f'{r.max() = }')
-        beta = (r + abs(r)) / (1 + abs(r))
-        # minmod scheme
-        #beta = torch.clamp(r, max=1)
-        # limited linear
-        #beta = torch.clamp(2 * r, max=1)
-        # print(f'{beta.abs().max() = }')
-        return beta
+        pass
 
 
 class AdvectVector(Advect):
@@ -130,7 +116,6 @@ class AdvectVector(Advect):
         return fluxes_flat
 
 
-
 class Viscosity(FVMEdgeFunc):
     """ Viscous forces: div(mu grad(u)) = sum_f """
     E_props: FVMEdgeInfo
@@ -141,21 +126,21 @@ class Viscosity(FVMEdgeFunc):
 
         self.V_dims = V_dims
         self.mu = mu
-        self.edge_len_mu = E_props.edge_len * self.mu
+        edge_len_mu = E_props.edge_len * self.mu
         proj_mat = E_props.V_insertion_matrix # create_insertion_matrix(E_props.n_edges, E_props.n_component, [0, 1], device=device).to_sparse_csr()
 
 
         """ SPM TESTING """
         n_edges, n_comp = E_props.n_edges, E_props.n_component
-        edge_len_mu = self.edge_len_mu.repeat(1, 2)
+        edge_len_mu = edge_len_mu.repeat(1, 2)
         visc_mat = create_selection_matrix(n_blocks=n_edges, block_size=n_comp, selected_dims=V_dims, weights=-edge_len_mu).to_sparse_csr().cuda()
 
         proj_visc_mat = proj_mat @ visc_mat
 
         self.A_visc = proj_visc_mat @ self.E_props.A_face_grad
         self.b_visc = proj_visc_mat @ self.E_props.b_face_grad
-        # print(proj_visc_mat)
-        # exit(8)
+
+        del self.E_props.A_face_grad, self.E_props.b_face_grad
 
     def edge_fluxes(self, Us):
 
@@ -174,7 +159,6 @@ class Viscosity(FVMEdgeFunc):
         Us_flat = Us.flatten()
         dUdn_face_flat = self.A_visc @ Us_flat + self.b_visc
         return dUdn_face_flat
-
 
 
 class AdvectScalar(Advect):
@@ -214,73 +198,6 @@ class AdvectScalar(Advect):
 
         return fluxes_flat
 
-    # def _upwind_coef(self, V_face):
-    #     E_props = self.E_props
-    #
-    #     # 1. Compute the upwind indicator.
-    #     dot_vn = (E_props.normals_main * V_face).sum(dim=1)  # [n_edges]
-    #     upwind = torch.sign(dot_vn).long() # [n_edges], values 0 or 1
-    #     upwind_idx = E_props.edge_to_tri_main[self.edge_idx, upwind]  # [n_edges]
-    #     # 2. Gather the upwind cell gradients.
-    #     upwind_grad = E_props.cell_grads[upwind_idx, :, self.rho_dim]  # [n_edges, 2]
-    #     # 3. Compute the directional derivative at the face (du/dn_face)
-    #     dudn_face = E_props.grad_faces_n[self.q_main_mask]
-    #     # 4. Compute the limiter. r = max( 2 * (grad_cell . d) / (|d| * du/dn_face) - 1 , 0)
-    #     dot_disp_grad = (E_props.cell_disps * upwind_grad).sum(dim=1)  # [n_edges]
-    #     denom = E_props.cell_dist * dudn_face + 1e-7  # [n_edges]
-    #     r = torch.clamp(2 * dot_disp_grad / denom - 1, min=0)  # enforce r >= 0, [n_edges]
-    #     beta = self._beta(r)
-    #     # print(f'{r.max().cpu() = }')
-    #     # print(torch.nonzero(r == r.max()))
-    #     return beta, upwind
-    #
-    # def _main_fluxes(self, rho):
-    #     """ Compute u_face for each edge.
-    #         div(u V) = sum_i( V_f . dS_f * u_f)
-    #             Linear flux interpolation
-    #             Upwinding
-    #
-    #         Us.shape = (n_cells)
-    #         V_dir.shape = (n_cells, 2)
-    #
-    #         Return.shape = (n_edges_main)
-    #     """
-    #     E_props = self.E_props
-    #
-    #     Us_face = E_props.U_face[~E_props.bc_edge_mask]  # shape = [n_edges, 2]
-    #     V_face_lin = Us_face[:, self.V_dims]  # shape = [n_edges, 2]
-    #     # rho_face_lin = Us_face[:, self.rho_dim]    # shape = [n_edges]
-    #
-    #     # phi = dS_face * V_face
-    #     phi = (E_props.normals_main * V_face_lin).sum(-1)
-    #     # # Upwinding
-    #     #beta, upwind = self._upwind_coef(V_face_lin)
-    #     # # 5. Corrected face value: rho_face = (1 - beta) * u_upwind + beta * u_face_lin
-    #     # rho_centroid = rho[E_props.edge_to_tri_main]  # [n_edges_, 2]
-    #     # TODO: TEMP TEST
-    #     #rho_face_cor = (1 - beta) * rho_centroid[self.edge_idx, upwind] + beta * rho_face_lin  # [n_edges]
-    #     # 6. Compute div(rhoV) = phi * u_face_cor
-    #     flux_uV = phi #* rho_face_cor       # [n_edges]
-    #
-    #     return flux_uV
-    #
-    # def _bc_fluxes_(self):
-    #     """ Flux = rho_face * phi
-    #         phi = n_face dot V_f.
-    #     """
-    #     E_props = self.E_props
-    #
-    #     # Flux = U_face * phi
-    #     # phi = normal dot Vf on face. Vf is the nearest cell value.
-    #     Us_face = E_props.U_face[E_props.bc_edge_mask]      # shape = [n_bc_edges, 3]
-    #     V_face_lin = Us_face[:, self.V_dims]                          # shape = [n_bc_edges, 2]
-    #     # TODO: TEMP TEST
-    #     #rho_face = Us_face[:, self.rho_dim] * 0 + 1      # shape = [n_bc_edges]
-    #
-    #     phi = (E_props.normals_bc * V_face_lin).sum(-1)
-    #     bc_fluxes = phi #* rho_face
-    #
-    #     return bc_fluxes
 
 
 class Density(FVMEdgeFunc):
@@ -328,8 +245,12 @@ class KTDiffusion(FVMEdgeFunc):
     def edge_fluxes(self, momentums, a):
         # fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
-        U = self.E_props.U_face     # shape = [n_edges, 2, n_comp=3]
-        fluxes = (a/2)  * (U[:, 0] - U[:, 1]) * self.E_props.edge_len  # shape = [n_edges, n_comp=3]
+        rho = self.E_props.rho_faces
+        Us = self.E_props.Vs_faces
+
+        momentum = Us * rho      # shape = [n_edges, 2, 2]
+        As = torch.cat([momentum, rho], dim=2)  # shape = [n_edges, 2, 3]
+        fluxes = (a/2)  * (As[:, 0] - As[:, 1]) * self.E_props.edge_len  # shape = [n_edges, n_comp=3]
         fluxes_flat = fluxes.flatten()
 
 
@@ -343,8 +264,8 @@ class FVMEquation:
     cells: FVMCells
     n_comp: int
     areas: torch.Tensor  # shape = (n_cells)
-    tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
-    tri_edge_sign: torch.Tensor  # shape = (n_cells, 3)
+    # tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
+    # tri_edge_sign: torch.Tensor  # shape = (n_cells, 3)
 
     def __init__(self, mesh: FVMMesh, n_comp, bc_tag, us_init=None, device="cuda"):
         self.device = device
@@ -356,23 +277,28 @@ class FVMEquation:
         self.E_props = E_props
 
         # Cell divergence calcs
-        self.tri_to_edge = mesh.tri_to_edge
-        self.tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1).to(device)
-        self.areas = mesh.areas.to(device)
+        tri_to_edge = mesh.tri_to_edge
+        tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1).to(device)
+        self.areas = mesh.areas
 
         self.P_advect = AdvectScalar(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.P_force = Density(E_props, p_dim=2, V_dims=[0, 1], device=device)
+        self.P_force = Density(E_props, V_dims=[0, 1], p_dim=2, device=device)
         self.U_advect = AdvectVector(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.U_visc = Viscosity(E_props, mu=0.001, V_dims=[0, 1], device=device)
+        self.U_visc = Viscosity(E_props, mu=0.0005, V_dims=[0, 1], device=device)
         self.KT_diff = KTDiffusion(E_props, device=device)
 
         # Matrix for converting edge fluxes to cell divergence
-        self.flux_mat = self.build_flux_mat(self.tri_to_edge, -self.tri_edge_sign, mesh.n_edges, device=device)
+        self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges)
 
-        t_solver = ExplMidpoint(self.cells, 0.005, 9001, self)
-        t_solver.solve()
+        self.t_solver = ExplMidpoint(self.cells, 0.005, 20001, self)
 
-    def build_flux_mat(self, tri_to_edge, tri_edge_sign, n_edges, device=None, dtype=torch.float32):
+        del self.areas
+
+
+    def solve(self):
+        self.t_solver.solve()
+
+    def build_flux_mat(self, tri_to_edge, tri_edge_sign, n_edges,  dtype=torch.float32):
         """
         Build the incidence matrix T of shape (n_tri, n_edges).
         For each triangle i and local edge j, we set:
@@ -380,7 +306,7 @@ class FVMEquation:
         """
         # 1. Build the incidence matrix T.
         n_tri, n_local = tri_to_edge.shape  # n_local is typically 3.
-        T = torch.zeros(n_tri, n_edges, device=device, dtype=dtype)
+        T = torch.zeros(n_tri, n_edges, device="cpu", dtype=dtype)
         for i in range(n_tri):
             for j in range(n_local):
                 edge_idx = tri_to_edge[i, j]
@@ -393,10 +319,12 @@ class FVMEquation:
         D = A_inv @ T  # shape: (n_tri, n_edges)
         # 4. "Lift" D to act on the full fluxes (all components) using the Kronecker product.
         #    We want M = D ⊗ I_{n_component}, which has shape (n_tri*n_component, n_edges*n_component)
-        I_comp = torch.eye(self.n_comp, device=device)
-        flux_mat = torch.kron(D, I_comp)
+        I_comp = torch.eye(self.n_comp, device="cpu")
+        flux_mat = torch.kron(D.cpu(), I_comp)
+        #TODO: Permenant fix
+        flux_mat = flux_mat.to_sparse_coo().cuda().to_sparse_csr()
 
-        return flux_mat.to_sparse_csr()
+        return flux_mat #flux_mat.to_sparse_coo()
 
 
     def _flux_to_div(self, fluxes):
@@ -432,20 +360,33 @@ class FVMEquation:
         fluxes += self.KT_diff.edge_fluxes(primatives, 1)
         divergence = self._flux_to_div(fluxes)
 
+        # if torch.any(torch.isnan(divergence)):
+        #     fluxes = self.P_force.edge_fluxes()
+        #     print(torch.any(torch.isnan(fluxes)))
+        #
+        #     fluxes = self.U_advect.edge_fluxes()
+        #     print(torch.any(torch.isnan(fluxes)))
+        #
+        #     fluxes = self.P_advect.edge_fluxes()
+        #     print(torch.any(torch.isnan(fluxes)))
+        #
+        #     fluxes = self.U_visc.edge_fluxes(primatives)
+        #     print(torch.any(torch.isnan(fluxes)))
+        #
+        #     fluxes = self.KT_diff.edge_fluxes(primatives, 1)
+        #
+        #
+        #     print(torch.any(torch.isnan(fluxes)))
+        #     exit(7)
+        # print(f'{torch.any(torch.isnan(divergence)) = }')
         return divergence
 
-    def plot_flux(self, fluxes, title="Fluxes", show_index=False):
-        plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes, show_index=show_index)
+    def plot_flux(self, fluxes, title="Fluxes", show_index=False, lims=None):
+        plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes, show_index=show_index, lims=lims)
 
 
-    def plot_cells(self, values, title="Cell Values", convert=False, show_index=False):
-        if convert:
-            momentum_x, momentum_y, density = values[:, 0], values[:, 1], values[:, 2]
-            u_x, u_y = momentum_x, momentum_y
-            #u_x, u_y = momentum_x / density, momentum_y / density
-            density = (density - 1)
-            values = torch.stack([u_x, u_y, density], dim=1)
-        plot_points(self.mesh.centroids.cpu(), values.T, show_index=show_index, title=title)#, lims=[-0.01, 0.01])
+    def plot_cells(self, values, title="Cell Values", show_index=False, lims=None):
+        plot_points(self.mesh.centroids.cpu(), values.T, show_index=show_index, title=title, lims=lims)
 
 
 

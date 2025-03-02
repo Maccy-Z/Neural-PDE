@@ -190,6 +190,8 @@ class FVMMesh:
 
         self._compute_edge_props(vertices, triangles, edges)
 
+        c_print(f'Computed mesh properties', color="bright_magenta")
+
     def _grad_weighting(self, tri_to_edge, edge_to_tri_ord, centroids, midpoints, normals):
         """ Use least squares formula to compute gradient weighting.
             grad(u) = A^-1 * b
@@ -271,11 +273,6 @@ class FVMMesh:
                 cell_disps.append(d)
         cell_disps = torch.stack(cell_disps)
         edge_dist_bc = torch.stack(edge_dist_bc)
-
-        #neigh_loc = torch.cat([centroids, midpoints[bound_edge_idxs]], dim=0)   # [n_cells + n_bc_edge, 2]
-        #cell_neigh_disps = neigh_loc[combined_neigh]        # [n_cells, 3, 2]
-        #disps_combine = cell_neigh_disps - centroids.unsqueeze(1)   # [n_cells, 3, 2]
-        # disps_combine = disps_combine.permute(0, 2, 1)             # [n_cells, 2, 3]
 
         return cell_disps, edge_dist_bc, G_mats, combined_neigh, edge_to_tri_comb
 

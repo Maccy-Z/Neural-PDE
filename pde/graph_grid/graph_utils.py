@@ -227,15 +227,15 @@ def plot_points(Xs, values, lims=None, title="", show_index=False):
         fig.colorbar(sc, ax=ax)
         ax.set_aspect('equal', adjustable='box')
 
-        # ax.set_xlim([0.5, 1])
-        # ax.set_ylim([1.3, 1.55])
+        # ax.set_xlim([1.5, 1.9])
+        # ax.set_ylim([0.25, 0.5])
 
     plt.tight_layout()
     plt.show()
 
 
 
-def plot_edges(coords, edge_idx, color=None, title="", show_index=False):
+def plot_edges(coords, edge_idx, color=None, title="", show_index=False, lims=None):
     """ Plot the edges of the mesh.
         coords.shape = (n, 2)
         edge_idx.shape = (m, 2)
@@ -252,6 +252,7 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False):
             color = color.unsqueeze(-1)
             fig, axes = plt.subplots(1, 1, figsize=(16, 12))
             axes = [axes]
+            n_plots = 1
         else:
             n_plots = color.shape[1]
             fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
@@ -262,8 +263,13 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False):
         edge_scalar = color.cpu().detach().numpy().T  # shape = (n_plots, m)
 
         # Compute per-batch min and max for labeling and color normalization.
-        min_c = edge_scalar.min(axis=1, keepdims=True)
-        max_c = edge_scalar.max(axis=1, keepdims=True)
+        if lims is None:
+            min_c = edge_scalar.min(axis=1, keepdims=True)
+            max_c = edge_scalar.max(axis=1, keepdims=True)
+        else:
+            min_c, max_c = lims
+            min_c = np.array([min_c] * n_plots)
+            max_c = np.array([max_c] * n_plots)
 
         # Normalize the scalar values to [0, 1] for mapping to RGBA.
         norm_scalar = (edge_scalar - min_c) / (max_c - min_c + 1e-9)
@@ -304,8 +310,8 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False):
                     arrowprops=dict(arrowstyle='->', lw=.5)
                 )
 
-                ax.set_xlim([2.75, 3])
-                # ax.set_ylim([1.3, 1.55])
+            ax.set_xlim([3.5, 4.1])
+            ax.set_ylim([0.5, 1.0])
         # If colors are provided, create a ScalarMappable for the colorbar.
         if color is not None:
             # Use the original scalar range for this batch.

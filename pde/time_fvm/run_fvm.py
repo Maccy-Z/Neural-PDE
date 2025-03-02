@@ -17,7 +17,7 @@ def mesh_graph(cfg):
     if new_graph:
         xmin, xmax = 0, 4
         ymin, ymax = 0.0, 1.5
-        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[1e-3, 1e-3])
+        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[0.25e-3, 0.25e-3])
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
     else:
@@ -39,13 +39,13 @@ def mesh_graph(cfg):
             x0, y0 = X0
             x1, y1 = X1
             v_in = 1.1 if (0. < (y0+y1)/2 < 0.3) else 0
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Neuman, E.Neuman], [v_in, None, None], [None, 0, 0]) #(E.INLET, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [v_in, 0, None], [None, None, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield], [None, None, 3], [0, 0, None]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 
-    c_print(f'Number of mesh points: {len(Xs)}', "green")
+    c_print(f'Number of mesh cells: {len(tri_idx)}', "green")
 
     return Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp
 
@@ -82,7 +82,7 @@ def main():
     centroids = mesh.centroids.clone()
     us_init = init_conds(centroids)
     solver = FVMEquation(mesh, N_comp, bc_tags, us_init=us_init, device="cuda")
-
+    solver.solve()
 
 if __name__ == "__main__":
     main()
