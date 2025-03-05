@@ -18,7 +18,7 @@ class FVMCells:
             self.state = torch.zeros(n_cells, n_component, device=device)
         else:
             assert init_val.shape == (n_cells, n_component), f'Incorrect us init shape {init_val.shape = }'
-            self.state = init_val.clone().to(device)
+            self.state = init_val.to(device)
 
     def update_cells(self, state_new):
         """ Update cell values """
@@ -66,6 +66,52 @@ class TSolver(ABC):
         self.cells = cells
         self.eq: FVMEquation = eq
 
+    def _solve(self):
+        plot_i = int(1 / self.dt)
+        Eks, Eps, ts, TVs = [], [], [], []
+
+        for i in range(self.n_steps):
+            t = i * self.dt
+            with Timer(text=f"{i=}, {t=} Time: {{:.4g}}"):
+                new_Us = self._step()
+
+            primatives = self.cells.get_values()[0]
+
+            # Track total energy
+            A = self.eq.mesh.areas.cuda()
+            Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
+            Ep = torch.log(primatives[:, 2]) * A
+            Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
+
+            if i % plot_i == 0:
+                primatives = self.cells.get_values()[0]
+
+                self.eq.plot_cells(primatives[:], title=f"Values at t={i * self.dt :.4g}", show_index=False)
+                # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True)
+
+                # self.eq.plot_flux(E_props.U_face[:, 0, 2], title=f"Vx t={i * self.dt :.4g}", show_index=True, lims=[3.7, 4.1])
+
+                if torch.any(torch.isnan(primatives)):
+                    print(f'{primatives = }')
+                    exit(9)
+                # exit("DONE PLOTTING")
+
+            self.cells.update_cells(new_Us)
+
+        Eks, Eps = torch.tensor(Eks), torch.tensor(Eps)
+        E = Eks + Eps
+        plt.plot(ts, Eks, label="Kinetic Energy")
+        plt.plot(ts, Eps, label="Potential Energy")
+        plt.plot(ts, E, label="Total Energy")
+        plt.legend()
+        plt.show()
+        #
+        # TVs = torch.stack(TVs, dim=0)
+        # plt.plot(ts, TVs, label="Total Variation")
+        # plt.legend()
+        # plt.show()
+        exit(9)
+
     @torch.inference_mode()
     def solve(self):
         E_props = self.eq.E_props
@@ -73,98 +119,55 @@ class TSolver(ABC):
 
         run = True
         if run:
-            plot_i = int(1 / self.dt)
-            Eks, Eps, ts, TVs = [], [], [], []
-
-            for i in range(self.n_steps):
-                t = i * self.dt
-                with Timer(text=f"{i=}, {t=} Time: {{:.4g}}"):
-                    new_Us = self._step()
-
-                primatives = self.cells.get_values()[0]
-
-                # Track total energy
-                A = self.eq.mesh.areas.cuda()
-                Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
-                Ep = torch.log(primatives[:, 2]) * A
-                Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
-
-                if i % plot_i == 0:
-                    primatives = self.cells.get_values()[0]
-
-                    self.eq.plot_cells(primatives[:], title=f"Values at t={i * self.dt :.4g}", show_index=False)
-                    # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True)
-
-                    # self.eq.plot_flux(E_props.U_face[:, 0, 2], title=f"Vx t={i * self.dt :.4g}", show_index=True, lims=[3.7, 4.1])
-
-                    if torch.any(torch.isnan(primatives)):
-                        print(f'{primatives = }')
-                        exit(9)
-                    # exit("DONE PLOTTING")
-
-                self.cells.update_cells(new_Us)
-
-            Eks, Eps = torch.tensor(Eks), torch.tensor(Eps)
-            E = Eks + Eps
-            plt.plot(ts, Eks, label="Kinetic Energy")
-            plt.plot(ts, Eps, label="Potential Energy")
-            plt.plot(ts, E, label="Total Energy")
-            print(f'{E.max() = }')
-            plt.legend()
-            plt.show()
-            #
-            # TVs = torch.stack(TVs, dim=0)
-            # plt.plot(ts, TVs, label="Total Variation")
-            # plt.legend()
-            # plt.show()
-            exit(9)
+            self._solve()
 
         else:
+            self._solve_profile()
 
-            for _ in range(2):
+    def _solve_profile(self):
+        for _ in range(2):
+            new_Us = self._step()
+            self.cells.update_cells(new_Us)
+
+        # import gc
+        # gc.collect()
+        # torch.cuda.empty_cache()
+        # tot_el = 0
+        # for name, value in vars(self.eq.t_solver).items():
+        #
+        #     if torch.is_tensor(value) and value.is_cuda:
+        #         if value.is_sparse or value.is_sparse_csr:
+        #             numel = value._nnz()
+        #         else:
+        #             numel = value.numel()
+        #         print(f"Name: {name}, Size: {value.size()}, numel = {numel}")
+        #         tot_el += numel
+        #
+        # c_print(f'{tot_el = }', color="magenta")
+
+        with torch.profiler.profile(
+                activities=[
+                    torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA,
+                ],
+                # schedule=torch.profiler.schedule(
+                #     warmup=1,  # Skip the first iteration (warm-up)
+                #     wait=1,  # Skip the first iteration (warm-up)
+                #     active=3  # Capture the next 3 iterations
+                # ),
+                # on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
+                record_shapes=True,  # Records tensor shapes for each op
+                with_stack=True,
+        ) as prof:
+
+            for i in range(10):
+                prof.step()
                 new_Us = self._step()
                 self.cells.update_cells(new_Us)
 
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
-            tot_el = 0
-            for name, value in vars(self.eq.t_solver).items():
+        print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
+        prof.export_chrome_trace("trace.json")
 
-                if torch.is_tensor(value) and value.is_cuda:
-                    if value.is_sparse or value.is_sparse_csr:
-                        numel = value._nnz()
-                    else:
-                        numel = value.numel()
-                    print(f"Name: {name}, Size: {value.size()}, numel = {numel}")
-                    tot_el += numel
-
-
-            c_print(f'{tot_el = }', color="magenta")
-            exit(3)
-
-            with torch.profiler.profile(
-                    activities=[
-                        torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA,
-                    ],
-                    # schedule=torch.profiler.schedule(
-                    #     warmup=1,  # Skip the first iteration (warm-up)
-                    #     wait=1,  # Skip the first iteration (warm-up)
-                    #     active=3  # Capture the next 3 iterations
-                    # ),
-                    #on_trace_ready=torch.profiler.tensorboard_trace_handler('./log'),
-                    record_shapes=True,  # Records tensor shapes for each op
-                    with_stack=True,
-            ) as prof:
-
-                for i in range(10):
-                    prof.step()
-                    new_Us = self._step()
-                    self.cells.update_cells(new_Us)
-
-            print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
-            prof.export_chrome_trace("trace.json")
 
     @abstractmethod
     def _step(self):

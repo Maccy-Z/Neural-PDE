@@ -233,7 +233,7 @@ def combine_edge_operators(A_main, A_bc, b_bc, bc_edge_mask, n_edges, n_cells, n
                     -- the combined offset vector.
     """
 
-    # Get the COO indices and values for the two operators.
+    """# Get the COO indices and values for the two operators.
     # (They must be in COO format.)
     A_main_indices = A_main._indices()  # shape (2, L_main)
     A_main_values = A_main._values()  # shape (L_main,)
@@ -293,6 +293,7 @@ def combine_edge_operators(A_main, A_bc, b_bc, bc_edge_mask, n_edges, n_cells, n
         else:
             bc_counter += 1
 
+
     # Convert the lists into tensors.
     indices = torch.tensor([global_rows, global_cols], dtype=torch.long, device=device)
     values = torch.tensor(global_vals, dtype=A_main_values.dtype, device=device)
@@ -301,7 +302,66 @@ def combine_edge_operators(A_main, A_bc, b_bc, bc_edge_mask, n_edges, n_cells, n
     # an output of length n_edges*n_comp.
     size_all = (n_edges * n_comp, n_cells * n_comp)
     A_all = torch.sparse_coo_tensor(indices, values, size=size_all).coalesce()
-    b_all = torch.tensor(b_all_list, dtype=A_main_values.dtype, device=device)
+    b_all = torch.tensor(b_all_list, dtype=A_main_values.dtype, device=device)"""
+
+    # Assume the following inputs are given:
+    # A_main: sparse COO tensor of shape (n_edges_m*n_comp, n_cells*n_comp)
+    # A_bc: sparse COO tensor of shape (n_edges_bc*n_comp, n_cells*n_comp)
+    # b_bc: tensor of shape (n_edges_bc*n_comp,)
+    # bc_edge_mask: Boolean tensor of shape (n_edges,), where True indicates a boundary edge.
+    # n_edges, n_cells, n_comp, device are given.
+
+    # First, compute the mapping for global main and boundary edges.
+    # The ordering of the local operators corresponds to the order of the global edges.
+    main_edge_global_indices = torch.where(~bc_edge_mask)[0]  # shape: (n_main_edges,)
+    bc_edge_global_indices = torch.where(bc_edge_mask)[0]  # shape: (n_bc_edges,)
+
+    A_main_indices = A_main._indices()  # shape: (2, L_main)
+    A_main_values = A_main._values()  # shape: (L_main,)
+    A_bc_indices = A_bc._indices()  # shape: (2, L_bc)
+    A_bc_values = A_bc._values()  # shape: (L_bc,)
+
+    # --- Process A_main ---
+    # For each local row in A_main, determine its main edge index and component:
+    local_rows_main = A_main_indices[0, :]  # local row indices in A_main (range: 0 to n_edges_m*n_comp - 1)
+    j_main = local_rows_main // n_comp  # index into main_edge_global_indices
+    c_main = local_rows_main % n_comp  # component index
+
+    # Map to global row index: for main edges the global row is (global_edge_index * n_comp + component)
+    global_rows_main = main_edge_global_indices[j_main] * n_comp + c_main
+    global_cols_main = A_main_indices[1, :]
+
+
+    # --- Process A_bc ---
+    local_rows_bc = A_bc_indices[0, :]  # local row indices in A_bc (range: 0 to n_edges_bc*n_comp - 1)
+    j_bc = local_rows_bc // n_comp  # index into bc_edge_global_indices
+    c_bc = local_rows_bc % n_comp  # component index
+
+    global_rows_bc = bc_edge_global_indices[j_bc] * n_comp + c_bc
+    global_cols_bc = A_bc_indices[1, :]
+
+    # --- Combine the main and boundary contributions ---
+    global_rows = torch.cat([global_rows_main, global_rows_bc], dim=0)
+    global_cols = torch.cat([global_cols_main, global_cols_bc], dim=0)
+    global_vals = torch.cat([A_main_values, A_bc_values], dim=0)
+    global_indices = torch.stack([global_rows, global_cols], dim=0)
+
+    # Build the global sparse operator of shape (n_edges*n_comp, n_cells*n_comp).
+    A_all = torch.sparse_coo_tensor(global_indices, global_vals,
+                                    size=(n_edges * n_comp, n_cells * n_comp),
+                                    device=device, dtype=A_main.dtype).coalesce()
+
+    # --- Build the global offset vector b_all ---
+    b_all = torch.zeros(n_edges * n_comp, device=device, dtype=b_bc.dtype)
+    # For the boundary rows, compute the global row indices similarly.
+    # Create a vector for the local rows in the boundary operator.
+    r_bc = torch.arange(b_bc.numel(), device=device)
+    j_bc_for_b = r_bc // n_comp  # which boundary edge block each entry belongs to
+    c_bc_for_b = r_bc % n_comp  # component within the block
+
+    global_b_rows = bc_edge_global_indices[j_bc_for_b] * n_comp + c_bc_for_b
+    b_all[global_b_rows] = b_bc
+
 
     return A_all.to_sparse_csr(), b_all
 
@@ -414,16 +474,23 @@ class FVMEdgeInfo:
         self.edge_len = torch.norm(self.normals, dim=1).to(device).unsqueeze(-1)
 
         self._init_bc(bc_tags)
+        c_print(f'_init_bc done', color="magenta")
         self._build_spm_face_vals()
+        c_print(f'_build_spm_face_vals done', color="magenta")
+
         self._build_spm_face_grads()
+        c_print(f'_build_spm_face_grads done', color="magenta")
 
         self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_component, [0, 1], device=device).to_sparse_csr()
+        c_print(f'V_insertion_matrix done', color="magenta")
 
         self.U_face = torch.empty((self.n_edges, 2, self.n_component), device=self.device)
 
         del self.edge_dists_bc, self.cell_dist, self.edge_to_tri_main, self.dirich_val, self.neumann_val, self.edge_to_tri_bc
         del self.dirich_mask, self.neumann_mask
         torch.cuda.empty_cache()
+
+        c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
     def _build_spm_face_grads(self):
         n_edges = self.edge_to_tri_main.shape[0]  # number of faces (edges)
@@ -502,6 +569,7 @@ class FVMEdgeInfo:
         self.A_face_grad_bc = A_grad_bc
         self.b_face_grad_bc = b_grad
 
+        # print("Starting combine_edge_operators")
         self.A_face_grad, self.b_face_grad = combine_edge_operators(A_face_grad_main, A_grad_bc, b_grad, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_component, self.device)
 
 
@@ -643,17 +711,17 @@ class FVMEdgeInfo:
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
         self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1).mean(dim=1, keepdim=True) # shape = [n_edges, 1]
 
-        print(f'{torch.any(torch.isnan(phi)) = }')
+        assert not torch.any(torch.isnan(phi)), f'Nan in phi'
 
     def _phi(self, r):
         # VENKATAKRISHNAN
-        # eps = 0.2*3e-3
-        # _r = r**2 + r + eps
-        # phi = (_r + r) / (_r + 2)
+        eps = 0.2*0.25e-3
+        _r = r**2 + r + eps
+        phi = (_r + r) / (_r + 2)
         #phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
 
         # BJ
-        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
+        # phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
 
         # Cell wide clamping
         phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]

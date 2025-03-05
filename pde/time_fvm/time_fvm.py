@@ -117,7 +117,7 @@ class AdvectVector(Advect):
 
 
 class Viscosity(FVMEdgeFunc):
-    """ Viscous forces: div(mu grad(u)) = sum_f """
+    """ Viscous forces: div(mu grad(u)) = sum_f grad(u) * mu_f * l_f"""
     E_props: FVMEdgeInfo
     V_dims: list[int]
     def __init__(self, E_props: FVMEdgeInfo, V_dims, mu=0.01, device="cpu"):
@@ -199,7 +199,6 @@ class AdvectScalar(Advect):
         return fluxes_flat
 
 
-
 class Density(FVMEdgeFunc):
     """ Special case. N
         grad(p) = div(p I) """
@@ -242,7 +241,7 @@ class KTDiffusion(FVMEdgeFunc):
         self.E_props = E_props
 
 
-    def edge_fluxes(self, momentums, a):
+    def edge_fluxes(self, a):
         # fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
         rho = self.E_props.rho_faces
@@ -278,7 +277,7 @@ class FVMEquation:
 
         # Cell divergence calcs
         tri_to_edge = mesh.tri_to_edge
-        tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1).to(device)
+        tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1) # .to(device)
         self.areas = mesh.areas
 
         self.P_advect = AdvectScalar(E_props, V_dims=[0, 1], rho_dim=2, device=device)
@@ -290,7 +289,7 @@ class FVMEquation:
         # Matrix for converting edge fluxes to cell divergence
         self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges)
 
-        self.t_solver = ExplMidpoint(self.cells, 0.005, 20001, self)
+        self.t_solver = ExplMidpoint(self.cells, 0.001, 5000, self)
 
         del self.areas
 
@@ -304,27 +303,60 @@ class FVMEquation:
         For each triangle i and local edge j, we set:
             T[i, tri_to_edge[i, j]] = tri_edge_sign[i, j].
         """
-        # 1. Build the incidence matrix T.
-        n_tri, n_local = tri_to_edge.shape  # n_local is typically 3.
-        T = torch.zeros(n_tri, n_edges, device="cpu", dtype=dtype)
-        for i in range(n_tri):
-            for j in range(n_local):
-                edge_idx = tri_to_edge[i, j]
-                T[i, edge_idx] = tri_edge_sign[i, j]
+        c_print("Constricting flux matrix", color="bright_green")
+        # # 1. Build the incidence matrix T.
+        # n_tri, n_local = tri_to_edge.shape  # n_local is typically 3.
+        # T = torch.zeros(n_tri, n_edges, device="cpu", dtype=dtype)
+        # for i in range(n_tri):
+        #     for j in range(n_local):
+        #         edge_idx = tri_to_edge[i, j]
+        #         T[i, edge_idx] = tri_edge_sign[i, j]
+        # # 2. Build the diagonal area inverse matrix A_inv.
+        # A_inv = torch.diag(1.0 / self.areas.cpu())  # shape: (n_tri, n_tri)
+        # # 3. Combine to form D = A_inv @ T.
+        # D = A_inv @ T  # shape: (n_tri, n_edges)
+        # del T
 
+        # I_comp = torch.eye(self.n_comp, device="cpu")
+        # flux_mat = torch.kron(D.to_dense(), I_comp)
+        # Assume tri_to_edge and tri_edge_sign are torch tensors of shape (n_tri, n_local),
+        # and that self.areas is a tensor of length n_tri.
+        n_tri, n_local = tri_to_edge.shape  # typically, n_local == 3
 
-        # 2. Build the diagonal area inverse matrix A_inv.
-        A_inv = torch.diag(1.0 / self.areas)  # shape: (n_tri, n_tri)
-        # 3. Combine to form D = A_inv @ T.
-        D = A_inv @ T  # shape: (n_tri, n_edges)
-        # 4. "Lift" D to act on the full fluxes (all components) using the Kronecker product.
+        # Create row indices: each triangle i contributes n_local entries.
+        row_indices = torch.arange(n_tri).unsqueeze(1).expand(n_tri, n_local).reshape(-1)
+
+        # Flatten the edge indices from tri_to_edge for column indices.
+        col_indices = tri_to_edge.reshape(-1)
+        # Flatten the sign values from tri_edge_sign.
+        values = tri_edge_sign.reshape(-1).to(dtype)
+        # Compute the inverse areas (A_inv is diagonal) and scale the nonzero values.
+        areas_inv = (1.0 / self.areas.cpu()).to(dtype)
+        D_values = values * areas_inv[row_indices]
+        # Stack row and column indices for the sparse tensor.
+        D_indices = torch.stack([row_indices, col_indices])
+
+        # "Lift" D to act on the full fluxes (all components) using the Kronecker product.
         #    We want M = D ⊗ I_{n_component}, which has shape (n_tri*n_component, n_edges*n_component)
-        I_comp = torch.eye(self.n_comp, device="cpu")
-        flux_mat = torch.kron(D.cpu(), I_comp)
-        #TODO: Permenant fix
-        flux_mat = flux_mat.to_sparse_coo().cuda().to_sparse_csr()
+        comp_ids = torch.arange(self.n_comp, device="cpu")  # shape: (n_comp,)
+        new_rows = D_indices[0].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
+        new_cols = D_indices[1].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
 
-        return flux_mat #flux_mat.to_sparse_coo()
+        # Flatten the new indices.
+        new_rows = new_rows.reshape(-1)
+        new_cols = new_cols.reshape(-1)
+        flux_indices = torch.stack([new_rows, new_cols], dim=0)
+
+        # The values are just the original ones repeated for each component.
+        flux_values = D_values.unsqueeze(1).expand(-1, self.n_comp).reshape(-1)
+
+        # Define the shape of the lifted matrix:
+        flux_shape = (n_tri * self.n_comp, n_edges * self.n_comp)
+
+        # Construct the sparse flux matrix.
+        flux_mat = torch.sparse_coo_tensor(flux_indices, flux_values, size=flux_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
+
+        return flux_mat
 
 
     def _flux_to_div(self, fluxes):
@@ -357,28 +389,9 @@ class FVMEquation:
         fluxes += self.U_advect.edge_fluxes()
         fluxes += self.P_advect.edge_fluxes()
         fluxes += self.U_visc.edge_fluxes(primatives)
-        fluxes += self.KT_diff.edge_fluxes(primatives, 1)
+        fluxes += self.KT_diff.edge_fluxes(1)
         divergence = self._flux_to_div(fluxes)
 
-        # if torch.any(torch.isnan(divergence)):
-        #     fluxes = self.P_force.edge_fluxes()
-        #     print(torch.any(torch.isnan(fluxes)))
-        #
-        #     fluxes = self.U_advect.edge_fluxes()
-        #     print(torch.any(torch.isnan(fluxes)))
-        #
-        #     fluxes = self.P_advect.edge_fluxes()
-        #     print(torch.any(torch.isnan(fluxes)))
-        #
-        #     fluxes = self.U_visc.edge_fluxes(primatives)
-        #     print(torch.any(torch.isnan(fluxes)))
-        #
-        #     fluxes = self.KT_diff.edge_fluxes(primatives, 1)
-        #
-        #
-        #     print(torch.any(torch.isnan(fluxes)))
-        #     exit(7)
-        # print(f'{torch.any(torch.isnan(divergence)) = }')
         return divergence
 
     def plot_flux(self, fluxes, title="Fluxes", show_index=False, lims=None):
