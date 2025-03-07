@@ -223,14 +223,19 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None):
     else:
         min_area, max_area = areas
 
-
-    mesh_props = MeshProps(min_area, max_area, lengthscale=0.5)
+    lengthscale = 1.#
+    mesh_props = MeshProps(min_area, max_area, lengthscale=lengthscale)
+    triscale = np.sqrt(2 * min_area)
+    lims = [xmin, ymin], [xmax, ymax]
 
     coords = [
-                Line([xmin, ymin], [xmax, ymin], True, name="Wall"),     # Bottom
-                Line([xmin, ymax], [xmax, ymax], True, name="Wall"),     # Top
-                Line([xmin, ymin], [xmin, ymax], True, name="Left"),    # Left
-                Line([xmax, ymax], [xmax, ymin], True, name="Right"),   # Right
+                Line([[xmin, ymin], [xmax, ymin]], True, name="Wall"),     # Bottom
+                Line([[xmin, ymax], [xmax, ymax]], False, name="Wall"),     # Top
+                Line([[xmin, ymin], [xmin, ymax]], False, name="Left"),    # Left
+                Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
+                #Circle((1.5, 0.7), 0.3, lengthscale, True, name="Wall"),
+                Ellipse((2., 2), 2.5, 0.8, np.pi, triscale, lims=lims, hole=True, dist_req=True, name="Wall"),
+
     ]
 
     mesh, marker_tags = create_mesh(coords, mesh_props)

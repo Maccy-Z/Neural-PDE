@@ -132,7 +132,7 @@ class FVMMesh:
         d = neigh_cents - center_expanded  # shape: [n_cells, 3, 2]
         # Compute weights per neighbor: w_i = 1 / sqrt(norm(d_i))
         # (Note: original code uses: 1 / torch.norm(d_i, dim=1)**0.5, and here each d_i is along dim=2)
-        w = 1 / torch.norm(d, dim=2) ** 0.5  # shape: [n_cells, 3]
+        w = 1 / torch.norm(d, dim=2) ** 1.5  # shape: [n_cells, 3]
         w2 = w ** 2  # shape: [n_cells, 3]
         # Compute A = dᵀ @ diag(w²) @ d for each cell.
         # dᵀ has shape [n_cells, 2, 3] and d * w2.unsqueeze(-1) scales each 2D neighbor vector.

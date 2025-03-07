@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch import Tensor
 from cprint import c_print
+import matplotlib.tri as tri
 
 from scipy.sparse.csgraph import reverse_cuthill_mckee
 from scipy.sparse import csr_matrix
@@ -227,12 +228,97 @@ def plot_points(Xs, values, lims=None, title="", show_index=False):
         fig.colorbar(sc, ax=ax)
         ax.set_aspect('equal', adjustable='box')
 
-        # ax.set_xlim([1.5, 1.9])
-        # ax.set_ylim([0.25, 0.5])
+        ax.set_xlim([0.5, 1.5])
+        ax.set_ylim([1, 1.5])
 
     plt.tight_layout()
     plt.show()
 
+
+# def plot_interp(Xs, values, lims=None, title="", resolution=1000):
+#     Xs = Xs.cpu().numpy()
+#     values = values.cpu()
+#
+#     if len(values.shape) == 1:
+#         values = values.unsqueeze(0)
+#         fig, axes = plt.subplots(1, 1, figsize=(12, 9))
+#         axes = [axes]
+#     else:
+#         n_plots = values.shape[0]
+#         fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+#
+#     # Generate interpoplation grid
+#     x_min, x_max = Xs[:, 0].min(), Xs[:, 0].max()
+#     y_min, y_max = Xs[:, 1].min(), Xs[:, 1].max()
+#     grid_x, grid_y = np.mgrid[x_min:x_max:complex(resolution), y_min:y_max:complex(resolution)]
+#
+#     # Loop over each batch
+#     for i, ax in enumerate(axes):
+#         ax.set_title(f"{title} - Batch {i}")
+#         color = griddata(Xs, values[i], (grid_x, grid_y), method='nearest')
+#         sc = ax.imshow(color.T, extent=(x_min, x_max, y_min, y_max), origin='lower', cmap='viridis')
+#
+#         fig.colorbar(sc, ax=ax)
+#         ax.set_aspect('equal', adjustable='box')
+#
+#         # ax.set_xlim([1.5, 1.9])
+#         # ax.set_ylim([0.25, 0.5])
+#
+#     plt.tight_layout()
+#     plt.show()
+def plot_interp(Xs, values, triangles, lims=None, title="", resolution=1000):
+    """
+    Xs: Tensor of vertex coordinates (N x 2)
+    values: Tensor of face-based values.
+            If values is 1D, it's assumed to be defined on the triangulation faces.
+            If 2D, each row is treated as a separate batch.
+    lims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
+    title: Plot title.
+    resolution: (Unused here; kept for interface consistency)
+    """
+    # Convert to numpy arrays.
+    Xs = Xs.cpu().numpy()
+    values = values.cpu().numpy()
+    triangles = triangles.cpu().numpy()
+
+    # If values is 1D, expand to a batch of one.
+    if len(values.shape) == 1:
+        values = values[None, :]
+        fig, axes = plt.subplots(1, 1, figsize=(12, 9))
+        axes = [axes]
+    else:
+        n_plots = values.shape[0]
+        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+
+    # Create a triangulation from the vertex locations.
+    triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles)
+
+
+    # Determine plot limits.
+    if lims:
+        xlim, ylim = lims
+    else:
+        xlim = (Xs[:, 0].min(), Xs[:, 0].max())
+        ylim = (Xs[:, 1].min(), Xs[:, 1].max())
+
+    # Loop over each batch.
+    for i, ax in enumerate(axes):
+        ax.set_title(f"{title} - Batch {i}")
+
+        # Plot the mesh edges.
+        ax.triplot(triang, color='black', lw=0.8)
+
+        # Color the triangles based on the face-based values.
+        # Here, we assume that len(values[i]) equals the number of triangles in the triangulation.
+        tc = ax.tripcolor(triang, facecolors=values[i], edgecolors='none', cmap='viridis', shading='flat')
+        fig.colorbar(tc, ax=ax)
+
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_aspect('equal', adjustable='box')
+
+    plt.tight_layout()
+    plt.show()
 
 
 def plot_edges(coords, edge_idx, color=None, title="", show_index=False, lims=None):
@@ -310,8 +396,8 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False, lims=No
                     arrowprops=dict(arrowstyle='->', lw=.5)
                 )
 
-            ax.set_xlim([3.5, 4.1])
-            ax.set_ylim([0.5, 1.0])
+            # ax.set_xlim([3.5, 4.1])
+            # ax.set_ylim([0.5, 1.0])
         # If colors are provided, create a ScalarMappable for the colorbar.
         if color is not None:
             # Use the original scalar range for this batch.

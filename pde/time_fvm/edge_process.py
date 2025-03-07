@@ -442,12 +442,13 @@ class FVMEdgeInfo:
     # Temporary Variables
     cell_grads: torch.Tensor  # shape = (n_cells, 2, N_component)  Gradient of cell values
     grad_faces_n: torch.Tensor  # shape = (n_edges, N_component)  n . grad(u) on faces
-    U_face: torch.Tensor  # shape = (n_edges, 2, N_component)  Face values, on both sides of the face
+    # U_face: torch.Tensor  # shape = (n_edges, 2, N_component)  Face values, on both sides of the face
     # Primitive face variables
     Vs_faces: torch.Tensor  # shape = (n_edges, 2, 2)  Face values
     rho_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Face values
     Us_face_sign: torch.Tensor  # shape = (n_edges, 2)  Allowed sign of diffusion term
-    phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals
+    phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
+    farfield_rho = None
 
     def __init__(self, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
         self.device = device
@@ -484,7 +485,7 @@ class FVMEdgeInfo:
         self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_component, [0, 1], device=device).to_sparse_csr()
         c_print(f'V_insertion_matrix done', color="magenta")
 
-        self.U_face = torch.empty((self.n_edges, 2, self.n_component), device=self.device)
+        # self.U_face = torch.empty((self.n_edges, 2, self.n_component), device=self.device)
 
         del self.edge_dists_bc, self.cell_dist, self.edge_to_tri_main, self.dirich_val, self.neumann_val, self.edge_to_tri_bc
         del self.dirich_mask, self.neumann_mask
@@ -642,6 +643,9 @@ class FVMEdgeInfo:
             dirich_val.append(e_type.U)
             neumann_val.append(e_type.dUdn)
 
+            if e_type.rho_far is not None:
+                self.farfield_rho = e_type.rho_far
+
 
         self.dirich_mask, self.neumann_mask = torch.tensor(dirich_mask, device=self.device), torch.tensor(neumann_mask, device=self.device)
         self.farfield_mask = torch.tensor(farfield_mask, device=self.device)  # All farfield must be the same
@@ -656,18 +660,6 @@ class FVMEdgeInfo:
 
         # Exit cell to edge mask
         self.exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask[:, 2]]
-
-
-        # self.neumann_idx = bc_indices[self.neumann_mask]
-        # # Matrix for nomal dot V
-        # I = torch.eye(self.n_edges, device="cuda")  # Shape (m, m)
-        # normals_mat =  (I.unsqueeze(-1) * self.normals.unsqueeze(1)).reshape(self.n_edges, self.n_edges * 2)
-        # self.E = create_selection_matrix(self.n_edges, 3, [0, 1], device=self.device)
-        # self.normal_dot_V = normals_mat @ self.E
-        # # Matrix for normal * rho
-        # D = create_block_diagonal(self.normals)
-        # self.E_div = create_selection_matrix(self.n_edges, 3, [2], device=self.device)
-        # self.normal_rho = D @ self.E_div
 
 
     #@torch.compile()
@@ -703,12 +695,14 @@ class FVMEdgeInfo:
         U_face_all = torch.empty((self.n_edges, 2, self.n_component), device=self.device)
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face.view(3*self.n_cells, 3)
         U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)
+
         # U_face_flat = torch.mm(self.S_cells, Us_face.view(3*self.n_cells, 3))
         # self.U_face = U_face_flat.view(self.n_edges, 2, self.n_component)
         # self.U_face[self.bc_edge_mask] = U_face_bc.unsqueeze(1)
 
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
+        # TODO: We should take mean after computing f, not here.
         self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1).mean(dim=1, keepdim=True) # shape = [n_edges, 1]
 
         assert not torch.any(torch.isnan(phi)), f'Nan in phi'
@@ -725,7 +719,6 @@ class FVMEdgeInfo:
 
         # Cell wide clamping
         phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]
-        # phi = torch.mean(phi, dim=1, keepdim=True)        # shape = [n_cells, neigh=1, n_component]
 
         #phi = torch.min(phi, dim=2, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp=1]
 
@@ -762,14 +755,16 @@ class FVMEdgeInfo:
 
 
         # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
-        rho_inf = 3
-        beta = 1 - 0.005 * 3.
-        Us_bc_cells = Us[self.exit_cell2edge]
-        vx_interior = Us_bc_cells[:, 0]
-        rho_interior = Us_bc_cells[:, 2]
+        if self.farfield_rho is not None:
+            rho_inf = self.farfield_rho
+            beta = 1 - 0.005 * 20
+            Us_bc_cells = Us[self.exit_cell2edge]
+            vx_interior = Us_bc_cells[:, 0]
+            rho_interior = Us_bc_cells[:, 2]
 
-        inflow_mask = (vx_interior < 0)
-        U_face[self.farfield_mask] = (beta * rho_interior + (1-beta) * rho_inf) * (~inflow_mask) + rho_interior * inflow_mask * torch.exp(vx_interior)
+            inflow_mask = (vx_interior < 0)
+            U_face[self.farfield_mask] = (~inflow_mask) * (beta * rho_interior + (1-beta) * rho_inf) + inflow_mask * rho_interior * torch.exp(vx_interior)
+        #U_face[self.farfield_mask] =  rho_interior * torch.exp(vx_interior)
 
 
         return  U_face

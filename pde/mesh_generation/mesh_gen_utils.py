@@ -31,7 +31,7 @@ def min_dist_to_boundary(point, seg_points, segment_indices):
     point_vectors = point - segment_starts
 
     # Project point_vectors onto segment_vectors
-    projection_lengths = np.einsum('ij,ij->i', point_vectors, segment_vectors) / np.einsum('ij,ij->i', segment_vectors, segment_vectors)
+    projection_lengths = np.einsum('ij,ij->i', point_vectors, segment_vectors) / (np.einsum('ij,ij->i', segment_vectors, segment_vectors)+1e-8)
     projection_lengths = np.clip(projection_lengths, 0, 1)
 
     # Closest points on each segment to the point

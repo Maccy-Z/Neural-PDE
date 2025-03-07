@@ -3,10 +3,10 @@ from abc import ABC, abstractmethod
 from codetiming import Timer
 from cprint import c_print
 
-from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges
+from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges, plot_interp
 from pde.time_fvm.fvm_mesh import FVMMesh
 from pde.time_fvm.edge_process import FVMEdgeInfo, create_selection_matrix, invert_selection_matrix
-from pde.time_fvm.t_solvers import FVMCells, Euler, ExplMidpoint
+from pde.time_fvm.t_solvers import FVMCells, Euler, ExplMidpoint, Heuns
 
 
 def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
@@ -161,8 +161,8 @@ class Viscosity(FVMEdgeFunc):
         return dUdn_face_flat
 
 
-class AdvectScalar(Advect):
-    """ div(q V) for scalar u, fixed vector V.
+class AdvectDensity(Advect):
+    """ div(rho V).
         The convection dimension is dim.
     """
     E_props: FVMEdgeInfo
@@ -185,21 +185,27 @@ class AdvectScalar(Advect):
         """
         fluxes_all = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
-        #V_faces = self.E_props.Vs_faces        # shape = [n_edges, edges=2, n_comp=2]
+        # V_faces = self.E_props.Vs_faces        # shape = [n_edges, edges=2, n_comp=2]
+        # rho_faces = self.E_props.rho_faces     # shape = [n_edges, edges=2, n_comp=1]
         # normals = self.E_props.normals.unsqueeze(1)     # shape = [n_edges, 1, 2]
-        # fluxes = (V_faces * normals).sum(dim=-1)        # shape = [n_edges, edges=2]
-        # fluxes = fluxes.mean(dim=1)
+        #
+        # flux = (rho_faces * V_faces * normals).sum(dim=-1)        # shape = [n_edges, edges=2]
+        # flux = flux.mean(dim=1)
 
-        fluxes = self.E_props.phi.squeeze()
+        V_dot_l = self.E_props.phi                  # shape = [n_edges, 1]
+        rho_face = self.E_props.rho_faces.squeeze()               # shape = [n_edges, edges=2]
 
-        fluxes_all[:, self.rho_dim] = fluxes
+        flux = V_dot_l * rho_face               # shape = [n_edges, edges=2]
+        flux = flux.mean(dim=1)                 # shape = [n_edges]
+
+        fluxes_all[:, self.rho_dim] = flux
         fluxes_flat = fluxes_all.flatten()
         # fluxes_flat = self.proj_mat @ fluxes.flatten()
 
         return fluxes_flat
 
 
-class Density(FVMEdgeFunc):
+class PressureForce(FVMEdgeFunc):
     """ Special case. N
         grad(p) = div(p I) """
     E_props: FVMEdgeInfo
@@ -245,10 +251,15 @@ class KTDiffusion(FVMEdgeFunc):
         # fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
         rho = self.E_props.rho_faces
-        Us = self.E_props.Vs_faces
+        Vs = self.E_props.Vs_faces      # shape = [n_edges, edges=2, n_comp=2]
 
-        momentum = Us * rho      # shape = [n_edges, 2, 2]
+        momentum = Vs * rho      # shape = [n_edges, 2, 2]
         As = torch.cat([momentum, rho], dim=2)  # shape = [n_edges, 2, 3]
+
+        # Wavespeed is a + v_max
+        Vs = Vs.norm(dim=-1)            # shape = [n_edges, edges=2]
+        Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
+        a = a + Vs_max                  # shape = [n_edges, 1]
         fluxes = (a/2)  * (As[:, 0] - As[:, 1]) * self.E_props.edge_len  # shape = [n_edges, n_comp=3]
         fluxes_flat = fluxes.flatten()
 
@@ -280,16 +291,16 @@ class FVMEquation:
         tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1) # .to(device)
         self.areas = mesh.areas
 
-        self.P_advect = AdvectScalar(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.P_force = Density(E_props, V_dims=[0, 1], p_dim=2, device=device)
+        self.rho_advect = AdvectDensity(E_props, V_dims=[0, 1], rho_dim=2, device=device)
+        self.P_force = PressureForce(E_props, V_dims=[0, 1], p_dim=2, device=device)
         self.U_advect = AdvectVector(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.U_visc = Viscosity(E_props, mu=0.0005, V_dims=[0, 1], device=device)
+        self.U_visc = Viscosity(E_props, mu=0.00001, V_dims=[0, 1], device=device)
         self.KT_diff = KTDiffusion(E_props, device=device)
 
         # Matrix for converting edge fluxes to cell divergence
         self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges)
 
-        self.t_solver = ExplMidpoint(self.cells, 0.001, 5000, self)
+        self.t_solver = Euler(self.cells, 0.0025, 20001, self)
 
         del self.areas
 
@@ -377,19 +388,24 @@ class FVMEquation:
         return divergence
 
     #@torch.compile()
-    def forward(self, primatives, momentum, i=None):
+    def forward(self, primatives, momentum, t=0):
         """ primatives.shape = (n_cells, n_component) """
 
         E_props = self.E_props
 
         E_props.precompute_shared(primatives)
 
-
+        # d(rho_u)/dt
         fluxes = self.P_force.edge_fluxes()
         fluxes += self.U_advect.edge_fluxes()
-        fluxes += self.P_advect.edge_fluxes()
         fluxes += self.U_visc.edge_fluxes(primatives)
+
+        # d(rho)/dt
+        fluxes += self.rho_advect.edge_fluxes()
+
+        # MUSCL term
         fluxes += self.KT_diff.edge_fluxes(1)
+
         divergence = self._flux_to_div(fluxes)
 
         return divergence
@@ -397,9 +413,54 @@ class FVMEquation:
     def plot_flux(self, fluxes, title="Fluxes", show_index=False, lims=None):
         plot_edges(self.mesh.vertices.cpu(), self.mesh.edges.cpu(), title=title, color=fluxes, show_index=show_index, lims=lims)
 
-
     def plot_cells(self, values, title="Cell Values", show_index=False, lims=None):
         plot_points(self.mesh.centroids.cpu(), values.T, show_index=show_index, title=title, lims=lims)
 
+    def plot_interp(self, values, title="Cell Values", lims=None, resolution=1000):
+        plot_interp(self.mesh.vertices, values.T, self.mesh.triangles, title=title, lims=lims, resolution=resolution)
 
-
+        # Example vertex coordinates (arrays of x and y positions)
+        # import numpy as np
+        # import matplotlib.pyplot as plt
+        # import matplotlib.tri as tri
+        #
+        # Xs = self.mesh.vertices.cpu().numpy()
+        # triangles = self.mesh.triangles.cpu().numpy()
+        #
+        # x, y = Xs[:, 0], Xs[:, 1]
+        #
+        # # x = np.array([0, 1, 2, 0.5, 1.5])
+        # # y = np.array([0, 0, 0, 1, 1])
+        #
+        # # Example triangles defined by indices into the x, y arrays.
+        # # Each row is a triangle (three vertex indices)
+        # # triangles = np.array([
+        # #     [0, 1, 3],
+        # #     [1, 4, 3],
+        # #     [1, 2, 4]
+        # # ])
+        #
+        # # Example values at the vertices (for coloring the mesh)
+        # # z_faces = np.array([0.2, 0.8, 0.5])
+        # z_faces = values[:, 0].cpu().numpy()#np.random.randn(triangles.shape[0])
+        # print(f'{values.shape = }, {z_faces.shape}')
+        # # Create the Triangulation object
+        # mesh = tri.Triangulation(x, y, triangles)
+        #
+        # plt.figure(figsize=(8, 6))
+        #
+        # # Optionally, plot the triangle edges to visualize the mesh structure
+        # plt.triplot(mesh, color='black', lw=0.8)
+        #
+        # # Plot the mesh with colors defined by the face values.
+        # # Because z_faces has one value per triangle, each triangle gets a uniform color.
+        # plt.tripcolor(mesh, facecolors=z_faces, edgecolors='none', cmap='viridis', shading='flat')
+        #
+        # # Add a colorbar to show the mapping from z-values to colors
+        # plt.colorbar()
+        #
+        # plt.xlabel('X')
+        # plt.ylabel('Y')
+        # plt.title('2D Mesh Plot with Face-based Values')
+        # plt.show()
+        # exit(7)

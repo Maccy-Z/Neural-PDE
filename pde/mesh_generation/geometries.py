@@ -12,12 +12,12 @@ class MeshFacet:
 
 
 class Circle(MeshFacet):
-    def __init__(self, center, radius, lengthscale, hole: bool = False, dist_req: bool = True, name = None):
+    def __init__(self, center, radius, lengthscale, hole: bool = False, dist_req: bool = True, name = None, lims=None):
         """
         Generate points and segments for a circle boundary.
         :param center: Tuple (x, y) for the circle center.
         :param radius: Radius of the circle.
-        :param num_segments: Number of line segments to approximate the circle.
+        :param lengthscale: Size of segments
         :param hole: Boolean indicating if the circle is a hole.
         :return: Arrays of points and segments defining the circle boundary.
         """
@@ -32,6 +32,9 @@ class Circle(MeshFacet):
             center[1] + radius * np.sin(angles)
         ))
 
+        if lims is not None:
+            self.points = np.clip(self.points, lims[0], lims[1])
+
         self.segments = np.column_stack((np.arange(num_segments), (np.arange(num_segments) + 1) % num_segments))
 
         if hole:
@@ -41,14 +44,14 @@ class Circle(MeshFacet):
 
 
 class Ellipse(MeshFacet):
-    def __init__(self, center, semi_major_axis, eccentricity, rotation_angle, lengthscale,
+    def __init__(self, center, semi_major_axis, eccentricity, rotation_angle, lengthscale, lims=None,
                  hole: bool = False, dist_req: bool = True, name = None):
         """
         Generate points and segments for an ellipse boundary using eccentricity and rotation angle.
         :param center: Tuple (x, y) for the ellipse center.
         :param semi_major_axis: Length of the semi-major axis (along the x-axis before rotation).
         :param eccentricity: Eccentricity of the ellipse (0 <= eccentricity < 1).
-        :param num_segments: Number of line segments to approximate the ellipse.
+        :param lengthscale: Size of segments
         :param rotation_angle: Angle in radians to rotate the ellipse (counterclockwise).
         :param hole: Boolean indicating if the ellipse is a hole.
         :return: Arrays of points and segments defining the ellipse boundary.
@@ -81,10 +84,15 @@ class Ellipse(MeshFacet):
 
         # Translate the points to the center
         self.points = rotated_points + np.array(center)
+        if lims is not None:
+            self.points = np.clip(self.points, lims[0], lims[1])
 
         # Generate the segments to connect the points
         self.segments = np.column_stack((np.arange(num_segments), (np.arange(num_segments) + 1) % num_segments))
 
+        # print(f'{self.points.shape = }, {self.segments.shape = }')
+        # print(self.points)
+        # exit(7)
         # Handle the hole parameter
         if hole:
             self.hole = center
@@ -127,10 +135,10 @@ class Box(MeshFacet):
 
 
 class Line(MeshFacet):
-    def __init__(self, start, end, dist_req: bool = False, name = None):
+    def __init__(self, lims, dist_req: bool = False, name = None):
         self.name = name
         self.hole = False
         self.dist_req = dist_req
 
-        self.points = np.array([start, end])
+        self.points = np.array(lims)
         self.segments = np.array([(0, 1)])

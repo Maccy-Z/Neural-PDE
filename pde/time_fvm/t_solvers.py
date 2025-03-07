@@ -32,11 +32,14 @@ class FVMCells:
         # TODO: TEMPORARY
         momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
 
-        density = torch.clamp(density, 0.05, 1e6)
+        density = torch.clamp(density, 0.1, 1e6)
         u_x, u_y = momentum_x / density, momentum_y / density
+
         primatives = torch.stack([u_x, u_y, density], dim=1)
 
-        return primatives, state[:, :2]
+        #primatives[:, 0] = 1.5
+
+        return primatives, None # state[:, :2]
 
     def save(self, name="state.pt"):
         torch.save(self.state, name)
@@ -67,29 +70,32 @@ class TSolver(ABC):
         self.eq: FVMEquation = eq
 
     def _solve(self):
-        plot_i = int(1 / self.dt)
+        plot_i =  int(1. / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
 
         for i in range(self.n_steps):
             t = i * self.dt
-            with Timer(text=f"{i=}, {t=} Time: {{:.4g}}"):
-                new_Us = self._step()
+            with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
+                new_Us = self._step(t)
 
             primatives = self.cells.get_values()[0]
 
             # Track total energy
             A = self.eq.mesh.areas.cuda()
             Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
-            Ep = torch.log(primatives[:, 2]) * A
+            Ep = torch.log(primatives[:, 2]/1) * A
             Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
 
-            if i % plot_i == 0:
+            if i % plot_i == 0 :
                 primatives = self.cells.get_values()[0]
 
-                self.eq.plot_cells(primatives[:], title=f"Values at t={i * self.dt :.4g}", show_index=False)
+                self.eq.plot_interp(primatives[:], title=f"Values at t={i * self.dt :.4g}")
+                # self.eq.plot_cells(primatives[:], title=f"Values at t={i * self.dt :.4g}")
+
                 # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True)
 
-                # self.eq.plot_flux(E_props.U_face[:, 0, 2], title=f"Vx t={i * self.dt :.4g}", show_index=True, lims=[3.7, 4.1])
+                # self.eq.plot_flux(self.eq.E_props.Vs_faces[:, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
+                # exit(34)
 
                 if torch.any(torch.isnan(primatives)):
                     print(f'{primatives = }')
@@ -170,7 +176,7 @@ class TSolver(ABC):
 
 
     @abstractmethod
-    def _step(self):
+    def _step(self, t):
         """
         Perform a single time step of the solver.
 
@@ -185,28 +191,46 @@ class Euler(TSolver):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq = equation
 
-    def _step(self):
+    def _step(self, t):
         dUdt = self.eq.forward(*self.cells.get_values())
 
         U_i_1 = self.cells.state + self.dt * dUdt
         return U_i_1
+
 
 class ExplMidpoint(TSolver):
     def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq: FVMEquation = equation
 
-    def _step(self):
+    def _step(self, t):
         state = self.cells.state
         primatives, _ = self.cells.get_values()
 
         dUdt_star = self.eq.forward(primatives, None)
-
-
         U_star = state + 0.5 * self.dt * dUdt_star        # U_{i+0.5}
-        primatives_star, _ = self.cells.convert_state_to_value(U_star)
 
+        primatives_star, _ = self.cells.convert_state_to_value(U_star)
         dUdt = self.eq.forward(primatives_star, None)
         U_i_1 = state + self.dt * dUdt
 
+        return U_i_1
+
+
+class Heuns(TSolver):
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
+        super().__init__(cells, dt, n_steps, eq=equation)
+        self.eq: FVMEquation = equation
+
+    def _step(self, t):
+
+        # y_star = y_n + dt*f(t_n, y_n)
+        dUdt_star = self.eq.forward(*self.cells.get_values(), t=t)
+        U_star = self.cells.state + self.dt * dUdt_star
+
+        # y_{n+1} = y_n + 0.5*dt*[f(t_n, y_n) + f(t_n+1, y_star)]
+        primatives_star, _ = self.cells.convert_state_to_value(U_star)
+        dUdt = self.eq.forward(primatives_star, None, t=t)
+
+        U_i_1 = self.cells.state + 0.5 * self.dt * (dUdt_star + dUdt)
         return U_i_1
