@@ -200,7 +200,7 @@ def plot_interp_graph(points, values, resolution=1000, title='Nearest Neighbor I
     plt.show()
 
 
-def plot_points(Xs, values, lims=None, title="", show_index=False):
+def plot_points(Xs, values, lims=None, title="", show_index=False, Xlims=None):
     Xs = Xs.cpu()
     values = values.cpu()
 
@@ -213,6 +213,9 @@ def plot_points(Xs, values, lims=None, title="", show_index=False):
         fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots*4))
 
     # Loop over each batch
+    if Xlims is None:
+        Xlims = (Xs[:, 0].min(), Xs[:, 0].max()), (Xs[:, 1].min(), Xs[:, 1].max())
+
     for i, ax in enumerate(axes):
         ax.set_title(f"{title} - Batch {i}")
         if lims is None:
@@ -224,49 +227,19 @@ def plot_points(Xs, values, lims=None, title="", show_index=False):
         if show_index:
             for i, X in enumerate(Xs):
                 x, y = X
-                ax.text(x, y, f"{i}", fontsize=8)
+                if (Xlims[0][0] <= x <= Xlims[0][1]) and (Xlims[1][0] <= y <= Xlims[1][1]):
+                    ax.text(x, y, f"{i}", fontsize=8)
         fig.colorbar(sc, ax=ax)
         ax.set_aspect('equal', adjustable='box')
 
-        ax.set_xlim([0.5, 1.5])
-        ax.set_ylim([1, 1.5])
+        ax.set_xlim(Xlims[0])
+        ax.set_ylim(Xlims[1])
 
-    plt.tight_layout()
+    #plt.tight_layout()
     plt.show()
 
 
-# def plot_interp(Xs, values, lims=None, title="", resolution=1000):
-#     Xs = Xs.cpu().numpy()
-#     values = values.cpu()
-#
-#     if len(values.shape) == 1:
-#         values = values.unsqueeze(0)
-#         fig, axes = plt.subplots(1, 1, figsize=(12, 9))
-#         axes = [axes]
-#     else:
-#         n_plots = values.shape[0]
-#         fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
-#
-#     # Generate interpoplation grid
-#     x_min, x_max = Xs[:, 0].min(), Xs[:, 0].max()
-#     y_min, y_max = Xs[:, 1].min(), Xs[:, 1].max()
-#     grid_x, grid_y = np.mgrid[x_min:x_max:complex(resolution), y_min:y_max:complex(resolution)]
-#
-#     # Loop over each batch
-#     for i, ax in enumerate(axes):
-#         ax.set_title(f"{title} - Batch {i}")
-#         color = griddata(Xs, values[i], (grid_x, grid_y), method='nearest')
-#         sc = ax.imshow(color.T, extent=(x_min, x_max, y_min, y_max), origin='lower', cmap='viridis')
-#
-#         fig.colorbar(sc, ax=ax)
-#         ax.set_aspect('equal', adjustable='box')
-#
-#         # ax.set_xlim([1.5, 1.9])
-#         # ax.set_ylim([0.25, 0.5])
-#
-#     plt.tight_layout()
-#     plt.show()
-def plot_interp(Xs, values, triangles, lims=None, title="", resolution=1000):
+def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
     """
     Xs: Tensor of vertex coordinates (N x 2)
     values: Tensor of face-based values.
@@ -295,24 +268,37 @@ def plot_interp(Xs, values, triangles, lims=None, title="", resolution=1000):
 
 
     # Determine plot limits.
-    if lims:
-        xlim, ylim = lims
+    if Xlims is not None:
+        xlim, ylim = Xlims
     else:
         xlim = (Xs[:, 0].min(), Xs[:, 0].max())
         ylim = (Xs[:, 1].min(), Xs[:, 1].max())
 
-    # Loop over each batch.
+    in_region = []
+    for tri_indices in triang.triangles:
+        verts = np.column_stack((Xs[tri_indices, 0], Xs[tri_indices, 1]))
+        if np.all((verts[:, 0] >= xlim[0]) & (verts[:, 0] <= xlim[1]) &
+                  (verts[:, 1] >= ylim[0]) & (verts[:, 1] <= ylim[1])):
+            in_region.append(True)
+        else:
+            in_region.append(False)
+    in_region = np.array(in_region)
+
+    # Create a new triangulation using only the triangles inside the region.
+    new_triangles = triang.triangles[in_region]
+    new_triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles=new_triangles)
+
+    # Loop over each batch and plot only the triangles inside the region.
     for i, ax in enumerate(axes):
         ax.set_title(f"{title} - Batch {i}")
 
-        # Plot the mesh edges.
-        ax.triplot(triang, color='black', lw=0.8)
+        # Filter the face-based values for the triangles inside the region.
+        new_facecolors = values[i][in_region]
 
-        # Color the triangles based on the face-based values.
-        # Here, we assume that len(values[i]) equals the number of triangles in the triangulation.
-        tc = ax.tripcolor(triang, facecolors=values[i], edgecolors='none', cmap='viridis', shading='flat')
+        # Plot using the new triangulation and corresponding facecolors.
+        tc = ax.tripcolor(new_triang, facecolors=new_facecolors, edgecolors='none',
+                          cmap='viridis', shading='flat')
         fig.colorbar(tc, ax=ax)
-
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
         ax.set_aspect('equal', adjustable='box')
@@ -321,7 +307,7 @@ def plot_interp(Xs, values, triangles, lims=None, title="", resolution=1000):
     plt.show()
 
 
-def plot_edges(coords, edge_idx, color=None, title="", show_index=False, lims=None):
+def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=None, Xlims=None):
     """ Plot the edges of the mesh.
         coords.shape = (n, 2)
         edge_idx.shape = (m, 2)
@@ -332,43 +318,20 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False, lims=No
     coords = coords.cpu().detach().numpy()
     edge_idx = edge_idx.cpu().detach().numpy()
 
-    if color is not None:
-        # If color is a 1D tensor, unsqueeze to (m, 1) and create a single subplot.
-        if len(color.shape) == 1:
-            color = color.unsqueeze(-1)
-            fig, axes = plt.subplots(1, 1, figsize=(16, 12))
-            axes = [axes]
-            n_plots = 1
-        else:
-            n_plots = color.shape[1]
-            fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
-
-        colormap = plt.get_cmap("viridis")
-        # Get scalar values for each edge and transpose so that each row corresponds
-        # to one subplot/batch.
-        edge_scalar = color.cpu().detach().numpy().T  # shape = (n_plots, m)
-
-        # Compute per-batch min and max for labeling and color normalization.
-        if lims is None:
-            min_c = edge_scalar.min(axis=1, keepdims=True)
-            max_c = edge_scalar.max(axis=1, keepdims=True)
-        else:
-            min_c, max_c = lims
-            min_c = np.array([min_c] * n_plots)
-            max_c = np.array([max_c] * n_plots)
-
-        # Normalize the scalar values to [0, 1] for mapping to RGBA.
-        norm_scalar = (edge_scalar - min_c) / (max_c - min_c + 1e-9)
-
-        # Create an array of RGBA colors for each batch.
-        edge_colors = []
-        for i in range(norm_scalar.shape[0]):
-            edge_colors.append(colormap(norm_scalar[i]))
-    else:
-        # When no color is provided, simply use black for all edges.
-        edge_colors = [np.array(['k'] * len(edge_idx))]
-        fig, axes = plt.subplots(1, 1, figsize=(12, 9))
+    if colors is None:
+        colors = torch.zeros(len(edge_idx))
+        
+    # If color is a 1D tensor, unsqueeze to (m, 1) and create a single subplot.
+    if len(colors.shape) == 1:
+        colors = colors.unsqueeze(-1)
+        fig, axes = plt.subplots(1, 1, figsize=(16, 12))
         axes = [axes]
+    else:
+        n_plots = colors.shape[1]
+        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+
+    colormap = plt.get_cmap("viridis")
+    edge_colors = colors.cpu().detach().numpy().T  # shape = (n_plots, m)
 
     # Extract the coordinates of each edge. Each row in 'points' is an edge defined
     # by its two endpoints (shape: (m, 2, 2)).
@@ -376,15 +339,30 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False, lims=No
 
     # Plot each batch (subplot).
     for i, ax in enumerate(axes):
-        if color is not None:
-            ax.set_title(f"{title} - Batch {i}, [min={min_c[i].item():.3g}, max={max_c[i].item():.3g}]")
-        else:
-            ax.set_title(f"{title} - Batch {i}")
-
         ax.set_aspect('equal', adjustable='box')
 
         # Plot each edge using the corresponding color.
-        for j, (edge, c) in enumerate(zip(points, edge_colors[i], strict=True)):
+        if Xlims is None:
+            xmin, xmax = coords[:, 0].min(), coords[:, 0].max()
+            ymin, ymax = coords[:, 1].min(), coords[:, 1].max()
+        else:
+            (xmin, xmax), (ymin, ymax) = Xlims
+
+        edge_nums, edge_scalars = [], []
+        for j, (edge, s) in enumerate(zip(points, edge_colors[i], strict=True)):
+            midpoint = edge.mean(axis=0)
+            if not ((xmin <= midpoint[0] <= xmax) and (ymin <= midpoint[1] <= ymax)):
+                continue
+            edge_scalars.append(s)
+            edge_nums.append(j)
+
+        edge_scalars = np.array(edge_scalars)
+        min_c, max_c = edge_scalars.min(), edge_scalars.max()
+        edge_scalars = (edge_scalars - min_c) / (max_c - min_c + 1e-9)
+
+        for j, s in zip(edge_nums, edge_scalars, strict=True):
+            c = colormap(s)
+            edge = points[j]
             ax.plot(edge[:, 0], edge[:, 1], color=c)
             if show_index:
                 midpoint = edge.mean(axis=0)
@@ -392,22 +370,23 @@ def plot_edges(coords, edge_idx, color=None, title="", show_index=False, lims=No
                 ax.annotate(
                     '',  # No text
                     xy=(edge[1]),  # Arrow tip (end of the line)
-                    xytext=(midpoint),  # Arrow tail (start of the line)
+                    xytext=midpoint,  # Arrow tail (start of the line)
                     arrowprops=dict(arrowstyle='->', lw=.5)
                 )
 
-            # ax.set_xlim([3.5, 4.1])
-            # ax.set_ylim([0.5, 1.0])
-        # If colors are provided, create a ScalarMappable for the colorbar.
-        if color is not None:
-            # Use the original scalar range for this batch.
-            norm = plt.Normalize(vmin=min_c[i].item(), vmax=max_c[i].item())
-            sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
-            # Optional: attach the actual scalar array (could also use an empty array)
-            sm.set_array(edge_scalar[i])
-            cbar = fig.colorbar(sm, ax=ax)
-            cbar.set_label("Scalar Value")
+            ax.set_xlim([xmin, xmax])
+            ax.set_ylim([ymin, ymax])
 
+
+        # If colors are provided, create a ScalarMappable for the colorbar.
+        ax.set_title(f"{title} - Batch {i}, [min={min_c.item():.3g}, max={max_c.item():.3g}]")
+
+        # Use the original scalar range for this batch.
+        norm = plt.Normalize(vmin=min_c.item(), vmax=max_c.item())
+        sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
+        # Optional: attach the actual scalar array (could also use an empty array)
+        cbar = fig.colorbar(sm, ax=ax)
+        cbar.set_label("Scalar Value")
     plt.tight_layout()
     plt.show()
 

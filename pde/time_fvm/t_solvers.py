@@ -32,8 +32,9 @@ class FVMCells:
         # TODO: TEMPORARY
         momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
 
-        density = torch.clamp(density, 0.1, 1e6)
+        density = torch.clamp(density, 0.01, 1e6)
         u_x, u_y = momentum_x / density, momentum_y / density
+        #u_x, u_y = momentum_x , momentum_y
 
         primatives = torch.stack([u_x, u_y, density], dim=1)
 
@@ -70,35 +71,74 @@ class TSolver(ABC):
         self.eq: FVMEquation = eq
 
     def _solve(self):
-        plot_i =  int(1. / self.dt)
+        E_props = self.eq.E_props
+
+        plot_i =  int(2 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
 
         for i in range(self.n_steps):
             t = i * self.dt
-            with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
-                new_Us = self._step(t)
+            # with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
+            new_Us = self._step(t)
+            #new_Us[:, 1] = new_Us[:, 1] *0.999
 
+            # # Track total energy
             primatives = self.cells.get_values()[0]
-
-            # Track total energy
             A = self.eq.mesh.areas.cuda()
             Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
-            Ep = torch.log(primatives[:, 2]/1) * A
+            Ep = torch.log(primatives[:, 2]/0.1) * A
             Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
 
-            if i % plot_i == 0 :
+            # if t == 12:
+            #     with open("save_state.pt", "wb") as f:
+            #         torch.save(self.cells.state, f)
+            #     exit(7)
+
+            if i % plot_i == 0 and t>0.2:
+                c_print(f'{t = :.5g}', color="bright_yellow")
+                # print(f'{E_props.phi_lim.mean() = }')
+
                 primatives = self.cells.get_values()[0]
+                Xlims = None # [[0.45, 0.52], [0.77, 0.84]]
 
-                self.eq.plot_interp(primatives[:], title=f"Values at t={i * self.dt :.4g}")
-                # self.eq.plot_cells(primatives[:], title=f"Values at t={i * self.dt :.4g}")
 
-                # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True)
+                # print(f'Div:    {self.eq.div_all[7255].cpu()}, {self.eq.div_all[7147].cpu()} ')
+                #print(f'Visc:   {self.eq.div_visc[7255].cpu()}, {self.eq.div_visc[7147].cpu()}')
+                # print(f'Advect: {self.eq.div_advect[7255].cpu()}, {self.eq.div_advect[7147].cpu()}')
+                # print(f'P:      {self.eq.div_P[7255].cpu()}, {self.eq.div_P[7147].cpu()}')
+                # print(f'Grads:  {E_props.cell_grads[7255, :, 0].cpu()}, {E_props.cell_grads[7147, :, 0].cpu()}')
 
-                # self.eq.plot_flux(self.eq.E_props.Vs_faces[:, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
+                # adv_flux = self.eq.adv_flux.view(-1, 3)[:, :2]
+                # print(f'{adv_flux[[11010, 9993]] = }')
+                #self.eq.plot_flux(adv_flux, title=f"Vx t={i * self.dt :.4g}", Xlims=Xlims, show_index=True )
+                # print(f'{primatives[[7082, 7256, 7255]]}')
+                # [7225, 7147]
+                """ KT FLUX """
+                # div_KT = self.eq.div_KT.view(-1, 3)
+                # flux_KT = self.eq.KT_flux.view(-1, 3)
+                # print(f'{div_KT[14580] = }')
+                # print(f'{E_props.cell_grads[14580, :, 0] = }')
+                # print(f'{E_props.phi_lim[14580, :, 0] = }')
+
+                #print(f'{E_props.mesh.tri_to_edge[14580,] = }')     # [22358, 22368, 22359])
+                # print(f'{flux_KT.abs().mean() = }')
+                # print(f'{flux_KT[[22358, 22368, 22359]] = }')
+
+
+                # self.eq.plot_interp(E_props.cell_grads[:, 1, 0], title=f"Grad t={i * self.dt :.4g}", Xlims=Xlims)
+                # self.eq.plot_interp(div_KT[:, 0], title=f"KT t={i * self.dt :.4g}", Xlims=Xlims)
+                # self.eq.plot_cells(div_KT[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True, Xlims=Xlims)
+                # self.eq.plot_flux(flux_KT[:, 0], title=f"Vx t={i * self.dt :.4g}", Xlims=Xlims, show_index=True)
+
+                # self.eq.plot_interp(E_props.phi_lim.mean(dim=1), title=f"Values at t={i * self.dt :.4g}", Xlims=Xlims)
+
+                self.eq.plot_interp(primatives[:], title=f"Values at t={i * self.dt :.4g}", Xlims=Xlims)
+                # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True, Xlims=Xlims)
+
+
                 # exit(34)
-
                 if torch.any(torch.isnan(primatives)):
-                    print(f'{primatives = }')
+                    #print(f'{primatives = }')
                     exit(9)
                 # exit("DONE PLOTTING")
 
@@ -120,13 +160,9 @@ class TSolver(ABC):
 
     @torch.inference_mode()
     def solve(self):
-        E_props = self.eq.E_props
-        # self.cells.load()
-
         run = True
         if run:
             self._solve()
-
         else:
             self._solve_profile()
 
@@ -192,9 +228,12 @@ class Euler(TSolver):
         self.eq = equation
 
     def _step(self, t):
-        dUdt = self.eq.forward(*self.cells.get_values())
+        dUdt = self.eq.forward(*self.cells.get_values(), t=t)
 
+        # c_print(f'{self.dt * dUdt[[66, 122, 60], 2] = }', color='green')
         U_i_1 = self.cells.state + self.dt * dUdt
+        # c_print(f'{self.cells.state[[66, 122, 60], 2] = }', color='green')
+
         return U_i_1
 
 
@@ -207,11 +246,11 @@ class ExplMidpoint(TSolver):
         state = self.cells.state
         primatives, _ = self.cells.get_values()
 
-        dUdt_star = self.eq.forward(primatives, None)
+        dUdt_star = self.eq.forward(primatives, None, t=t)
         U_star = state + 0.5 * self.dt * dUdt_star        # U_{i+0.5}
 
         primatives_star, _ = self.cells.convert_state_to_value(U_star)
-        dUdt = self.eq.forward(primatives_star, None)
+        dUdt = self.eq.forward(primatives_star, None, t=t)
         U_i_1 = state + self.dt * dUdt
 
         return U_i_1

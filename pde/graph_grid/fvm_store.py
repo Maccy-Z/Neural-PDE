@@ -18,6 +18,7 @@ class Edge:
     U: list[float] = None
     dUdn: list[float] = None
     rho_far: float = None
+    euler_wall: bool = False
 
     def __post_init__(self):
         for e, u, dudn in zip(self.edge_type, self.U, self.dUdn, strict=True):

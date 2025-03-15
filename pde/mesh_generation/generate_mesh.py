@@ -55,22 +55,25 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
     for i, facets in enumerate(coords):
         cur_p = len(points)
 
-        points = np.concatenate((points, facets.points))
-        segments = np.concatenate((segments, facets.segments + cur_p))
+        if facets.real_face:
+            points = np.concatenate((points, facets.points))
+            segments = np.concatenate((segments, facets.segments + cur_p))
+
+            # Default marker is 0, so start at 1
+            mark_id = i + 1
+            seg_marks += [mark_id] * len(facets.segments)
+            p_marks += [mark_id] * len(facets.points)
+            if facets.hole:
+                holes.append(facets.hole)
+
+            marker_names[mark_id] = facets.name
 
         if facets.dist_req:
             cur_dist_p = len(dist_p)
             dist_p = np.concatenate((dist_p, facets.points))
             dist_seg = np.concatenate((dist_seg, facets.segments + cur_dist_p))
 
-        # Default marker is 0, so start at 1
-        mark_id = i + 1
-        seg_marks += [mark_id] * len(facets.segments)
-        p_marks += [mark_id] * len(facets.points)
-        if facets.hole:
-            holes.append(facets.hole)
 
-        marker_names[mark_id] = facets.name
 
     # # Create the mesh info object
     # mesh_info = tri.MeshInfo()
@@ -223,18 +226,19 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None):
     else:
         min_area, max_area = areas
 
-    lengthscale = 1.#
+    lengthscale = 2.#
     mesh_props = MeshProps(min_area, max_area, lengthscale=lengthscale)
     triscale = np.sqrt(2 * min_area)
     lims = [xmin, ymin], [xmax, ymax]
 
     coords = [
-                Line([[xmin, ymin], [xmax, ymin]], True, name="Wall"),     # Bottom
+                Line([[xmin, ymin], [xmax, ymin]], False, name="Wall"),     # Bottom
                 Line([[xmin, ymax], [xmax, ymax]], False, name="Wall"),     # Top
                 Line([[xmin, ymin], [xmin, ymax]], False, name="Left"),    # Left
                 Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
-                #Circle((1.5, 0.7), 0.3, lengthscale, True, name="Wall"),
-                Ellipse((2., 2), 2.5, 0.8, np.pi, triscale, lims=lims, hole=True, dist_req=True, name="Wall"),
+                Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Right
+                Circle((0.75, 0.7), 0.15, triscale, hole=True, dist_req=True, name="NavierWall"),
+                # Ellipse((0.5, 0.5), 0.075, 0.0, np.pi/3, triscale, lims=lims, hole=True, dist_req=True, name="NavierWall"),
 
     ]
 

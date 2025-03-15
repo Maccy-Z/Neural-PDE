@@ -130,8 +130,7 @@ class FVMMesh:
         # For each cell, compute the displacement vectors d_i = (neighbor center - cell center)
         center_expanded = centroids.unsqueeze(1)  # shape: [n_cells, 1, 2]
         d = neigh_cents - center_expanded  # shape: [n_cells, 3, 2]
-        # Compute weights per neighbor: w_i = 1 / sqrt(norm(d_i))
-        # (Note: original code uses: 1 / torch.norm(d_i, dim=1)**0.5, and here each d_i is along dim=2)
+        # Compute weights per neighbor: w_i = 1 / norm(d_i) ** k
         w = 1 / torch.norm(d, dim=2) ** 1.5  # shape: [n_cells, 3]
         w2 = w ** 2  # shape: [n_cells, 3]
         # Compute A = dᵀ @ diag(w²) @ d for each cell.
@@ -144,10 +143,18 @@ class FVMMesh:
         # Multiply dᵀ by w2 along the neighbor dimension:
         A_inv_di_T = torch.bmm(A_inv, dT * w2.unsqueeze(1))  # shape: [n_cells, 2, 3]
 
+        # print(f'{tri_to_edge[7255] = }')
+        # # print(f'{d[7255] = }')
+        # print(f'{centroids[7255] = }')
+        # print(f'{A_inv_di_T[7255] = }')
+
+
         G_mats = []
         for i in range(2):
             G_mat = build_sparse_gradient_matrix(combined_neigh, A_inv_di_T, i, self.n_cells, self.n_bc_edge)
+            # print(f'{G_mat[7255] = }')
             G_mats.append(G_mat)
+        # exit(7)
 
         # Get displacement between cells with edge indexing. In direction of right to left
         cell_disps, edge_dist_bc = [], []
@@ -232,6 +239,8 @@ class FVMMesh:
         # Triangle area is half the absolute value of the cross product
         area = 0.5 * torch.abs(cross)
 
+        # TODO: Properly handle small cells
+        #area = torch.clamp(area, min=5e-5)
         return area
 
     def _tri_edge_sign(self, centroids, midpoints, tri_to_edge, normals, edge_to_tri, tri_edge_idxs):

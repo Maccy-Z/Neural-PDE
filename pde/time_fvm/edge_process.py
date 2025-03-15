@@ -493,6 +493,7 @@ class FVMEdgeInfo:
 
         c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
+
     def _build_spm_face_grads(self):
         n_edges = self.edge_to_tri_main.shape[0]  # number of faces (edges)
         n_cells = self.n_cells
@@ -635,13 +636,16 @@ class FVMEdgeInfo:
         dirich_mask, neumann_mask = [], []
         dirich_val, neumann_val = [], []
         farfield_mask = []
+        euler_w_mask = []
         for bc_idx, e_type in bc_tags.items():
             dirich_mask.append(e_type.dirichlet())
             neumann_mask.append(e_type.neumann())
-            farfield_mask.append(e_type.farfield())
-
             dirich_val.append(e_type.U)
             neumann_val.append(e_type.dUdn)
+
+            euler_w_mask.append(e_type.euler_wall)
+
+            farfield_mask.append(e_type.farfield())
 
             if e_type.rho_far is not None:
                 self.farfield_rho = e_type.rho_far
@@ -661,8 +665,19 @@ class FVMEdgeInfo:
         # Exit cell to edge mask
         self.exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask[:, 2]]
 
+        """ Inviscid Euler wall"""
+        # self.euler_w_mask = torch.tensor(euler_w_mask, device=self.device)
+        # wall_normals = self.normals[self.bc_edge_mask][self.euler_w_mask]
+        #
+        # wall_normals = wall_normals/torch.norm(wall_normals, dim=1, keepdim=True)
+        # wall_vects = torch.stack([-wall_normals[:, 1], wall_normals[:, 0]], dim=1)  # shape: [n_edges, 2]
+        #
+        # wall_matrix = torch.stack([wall_normals, wall_vects], dim=1)  # shape: [n_edges, 2, 2]
+        # # print(wall_matrix)
+        # self.inv_wall_mat = torch.inverse(wall_matrix).to(self.device)
+        # self.wall_vects = wall_vects.to(self.device)
 
-    #@torch.compile()
+    @torch.compile()
     def precompute_shared(self, Us):
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """
@@ -682,15 +697,21 @@ class FVMEdgeInfo:
         dU = (grads * self.cent_to_edge_disp).sum(dim=2)  # shape = [n_cells, neigh=3, n_component]
 
         # Select limiting neighbor values and compute gradient limiter
-        diff = Us_neigh - U_cent
-        U_upper = torch.clamp(diff, min=0)  # positive differences (or 0 if diff is negative)
-        U_lower = torch.clamp(diff, max=0)  # negative differences (or 0 if diff is positive)
+        # diff = Us_neigh - U_cent                # shape = [n_cells, neigh=3, n_component]
+        # U_upper = torch.clamp(diff, min=0)  # positive differences (or 0 if diff is negative)
+        # U_lower = torch.clamp(diff, max=0)  # negative differences (or 0 if diff is positive)
         # U_upper = torch.maximum(U_cent, Us_neigh) - U_cent      # shape = [n_cells, neigh=3, n_component]
         # U_lower = torch.minimum(U_cent, Us_neigh) - U_cent
+
+        U_cent_neigh = torch.cat([U_cent, Us_neigh], dim=1)
+        U_upper = torch.max(U_cent_neigh) - U_cent      # shape = [n_cells, neigh=3, n_component]
+        U_lower = torch.min(U_cent_neigh) - U_cent
+
         numerator = torch.where(dU > 0, U_upper, U_lower)
         dU = torch.where(dU == 0, 1e-8, dU)
-        phi = self._phi(numerator / dU)           # shape = [n_cells, neigh=3, n_component]
-        Us_face = U_cent + phi * dU      # shape = [n_cells, neigh=3, n_component]
+        phi_lim = self._phi(numerator / dU)           # shape = [n_cells, neigh=3, n_component]
+        Us_face = U_cent + phi_lim * dU      # shape = [n_cells, neigh=3, n_component]
+
 
         U_face_all = torch.empty((self.n_edges, 2, self.n_component), device=self.device)
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face.view(3*self.n_cells, 3)
@@ -702,41 +723,36 @@ class FVMEdgeInfo:
 
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
-        # TODO: We should take mean after computing f, not here.
-        self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1).mean(dim=1, keepdim=True) # shape = [n_edges, 1]
+        self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1) # shape = [n_edges, edges=2, ]
 
-        assert not torch.any(torch.isnan(phi)), f'Nan in phi'
+        assert not torch.any(torch.isnan(phi_lim)), f'Nan in phi'
 
     def _phi(self, r):
         # VENKATAKRISHNAN
-        eps = 0.2*0.25e-3
-        _r = r**2 + r + eps
-        phi = (_r + r) / (_r + 2)
+        # eps = 1*5e-5
+        # _r = r**2 + r + eps
+        # phi = (_r + r) / (_r + 2)
+        # assert not torch.any(torch.isnan(phi)), f'Nan in Venkatkrishnan phi'
         #phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
 
         # BJ
-        # phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
-
+        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
+        #
         # Cell wide clamping
         phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]
 
+        # Component wide clamping
         #phi = torch.min(phi, dim=2, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp=1]
 
         return phi
 
-    #@torch.compile()
+
     def _bc_face_vals(self, Us):
         """ U_face, with linear interpolation.
+            Us.shape = [n_cells, n_component]
             return.shape: [n_edges_bc, n_component]
 
          """
-        # # Main edges
-        # # #Weighted linear interpolation of two cell values
-        # # U_centroid = Us[self.edge_to_tri_main]  # [n_edges_m, 2, n_component]
-        # # w = self.edge_to_tri_w.unsqueeze(-1)  # shape: [n_edges, 2, 1]
-        # # U_lin_main = (w * U_centroid).sum(dim=1)  # shape: [n_edges, n_component]
-        # # U_face[~self.bc_edge_mask] = U_lin_main
-        # #
         # U_face = torch.empty((self.n_edges_bc, self.n_component), device=self.device)
         # # Boundary edges
         # u_centroid_bc = Us[self.edge_to_tri_bc] # shape = [n_bc_edges, N_component]
@@ -746,6 +762,14 @@ class FVMEdgeInfo:
         # U_cent_bc_neum = u_centroid_bc[self.neumann_mask]        # shape = [n_neum_edges]
         # U_face_neum = U_cent_bc_neum + self.neumann_val / self.edge_dists_bc[self.neumann_mask]
         # U_face[self.neumann_mask] = U_face_neum
+        # # Wall
+        # V_cent_wall = u_centroid_bc[self.euler_w_mask, :2]
+        # V_cent_wall = (self.wall_vects * V_cent_wall).sum(dim=1)        # Normal derivative. shape = [n_euler_w_edges]
+        # V_wall = V_cent_wall.unsqueeze(-1).repeat(1, 2)
+        # V_wall[:, 0] = 0
+        # U_face_wall = torch.matmul(self.inv_wall_mat, V_wall.unsqueeze(-1)).squeeze()       # shape = [n_euler_w_edges, 2]
+        # U_face[self.euler_w_mask, :2] = U_face_wall
+        #print(f'{U_face_wall = }')
 
         Us_flat = Us.flatten()
         # Final U_face in flattened form.a
@@ -757,14 +781,16 @@ class FVMEdgeInfo:
         # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
         if self.farfield_rho is not None:
             rho_inf = self.farfield_rho
-            beta = 1 - 0.005 * 20
+            beta = 1 - 0.001 * 100
             Us_bc_cells = Us[self.exit_cell2edge]
             vx_interior = Us_bc_cells[:, 0]
             rho_interior = Us_bc_cells[:, 2]
 
             inflow_mask = (vx_interior < 0)
             U_face[self.farfield_mask] = (~inflow_mask) * (beta * rho_interior + (1-beta) * rho_inf) + inflow_mask * rho_interior * torch.exp(vx_interior)
-        #U_face[self.farfield_mask] =  rho_interior * torch.exp(vx_interior)
+            #U_face[self.farfield_mask] = rho_inf * torch.exp(vx_interior-0.05)
+
+
 
 
         return  U_face
@@ -779,9 +805,11 @@ class FVMEdgeInfo:
 
         Us_cell_face = torch.cat([Us, U_face_bc])
         combined_grad = torch.sparse.mm(self.G_mats, Us_cell_face)  # combined_grad.shape == [2 * n_cells, N_component]
+        # print(f'{combined_grad[7255] = }')
         cell_grads = combined_grad.view(2, -1, self.n_component).permute(1, 0, 2)    # shape = [n_cells, 2, N_component]
-
+        # print(f'{cell_grads[7255] = }')
         return cell_grads
+
 
     def _face_grads(self, Us):
         """ n . grad(U) on faces.

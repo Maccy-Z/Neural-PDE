@@ -5,10 +5,11 @@ from dataclasses import dataclass
 class MeshFacet:
     points: np.ndarray
     segments: np.ndarray
-    seg_type: str
     hole: bool | np.ndarray  # False if its to be filled, otherwise any point inside object
     dist_req: bool  # If segment needs mesh refinement around
     name: any # Tag to be carried through to the mesh
+
+    real_face: bool = True # If segment is used for CFD mesh. Otherwise only for refining.
 
 
 class Circle(MeshFacet):
@@ -135,10 +136,11 @@ class Box(MeshFacet):
 
 
 class Line(MeshFacet):
-    def __init__(self, lims, dist_req: bool = False, name = None):
+    def __init__(self, lims, dist_req: bool = False, name = None, real=True):
         self.name = name
         self.hole = False
         self.dist_req = dist_req
+        self.real_face = real
 
         self.points = np.array(lims)
         self.segments = np.array([(0, 1)])
