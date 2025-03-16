@@ -102,8 +102,7 @@ class AdvectVector(Advect):
         #fluxes_all = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
         E_props = self.E_props
-        # TODO:
-        rho_faces = E_props.rho_faces #* 0 + 1  # shape = [n_edges, edges=2, n_comp=1]
+        rho_faces = E_props.rho_faces # shape = [n_edges, edges=2, n_comp=1]
         V_faces = E_props.Vs_faces  # shape = [n_edges, edges=2, n_comp=2]
         phi = E_props.phi           # Linear interpolation of convection vector = (v_faces dot normal). shape = [n_edges, edges=2]
 
@@ -308,14 +307,14 @@ class FVMEquation:
 
         self.P_force = PressureForce(E_props, self.c2, V_dims=[0, 1], p_dim=2, device=device)
         self.U_advect = AdvectVector(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.U_visc = Viscosity(E_props, mu=0.000005, V_dims=[0, 1], device=device)
+        self.U_visc = Viscosity(E_props, mu=0.00025, V_dims=[0, 1], device=device)
 
         self.KT_diff = KTDiffusion(E_props, device=device)
 
         # Matrix for converting edge fluxes to cell divergence
         self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges)
 
-        self.t_solver = ExplMidpoint(self.cells, 0.0015, 50001, self)
+        self.t_solver = Heuns(self.cells, 0.0032, 50001, self)
 
         del self.areas
         c_print("Done FVMEquation", color="bright_magenta")
@@ -414,7 +413,7 @@ class FVMEquation:
         # d(rho_u)/dt
         fluxes = self.P_force.edge_fluxes()
         fluxes += self.U_advect.edge_fluxes()
-        #fluxes += self.U_visc.edge_fluxes(primatives)
+        fluxes += self.U_visc.edge_fluxes(primatives)
 
         # d(rho)/dt
         fluxes += self.rho_advect.edge_fluxes()

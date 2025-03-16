@@ -219,15 +219,14 @@ def gen_mesh_time(xmin, xmax, ymin, ymax, areas=None):
     return points, p_tags
 
 
-def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None):
+def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None, cell_lnscale=2):
     if areas is None:
         min_area = 5.e-3
         max_area = 10e-3
     else:
         min_area, max_area = areas
 
-    lengthscale = 2.#
-    mesh_props = MeshProps(min_area, max_area, lengthscale=lengthscale)
+    mesh_props = MeshProps(min_area, max_area, lengthscale=cell_lnscale)
     triscale = np.sqrt(2 * min_area)
     lims = [xmin, ymin], [xmax, ymax]
 

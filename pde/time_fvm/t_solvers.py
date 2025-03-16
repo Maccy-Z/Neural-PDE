@@ -78,8 +78,8 @@ class TSolver(ABC):
 
         for i in range(self.n_steps):
             t = i * self.dt
-            # with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
-            new_Us = self._step(t)
+            with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
+                new_Us = self._step(t)
             #new_Us[:, 1] = new_Us[:, 1] *0.999
 
             # # Track total energy

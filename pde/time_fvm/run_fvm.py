@@ -17,7 +17,7 @@ def mesh_graph(new):
     if new:
         xmin, xmax = 0.0, 2
         ymin, ymax = 0.0, 1.4
-        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[0.05e-3, 5e-3])
+        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[0.1e-3, 5e-3], cell_lnscale=4)
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
     else:
@@ -82,7 +82,7 @@ def main():
     import pickle
     torch.manual_seed(0)
     # setup_logging(debug=False)
-    new = True
+    new = False
     load_state = False
 
     prob_definition = mesh_graph(new)
