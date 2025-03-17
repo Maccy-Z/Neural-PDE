@@ -7,8 +7,8 @@ import math
 from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges, plot_interp
 from pde.time_fvm.fvm_mesh import FVMMesh
 from pde.time_fvm.edge_process import FVMEdgeInfo, create_selection_matrix, invert_selection_matrix
-from pde.time_fvm.t_solvers import FVMCells, Euler, ExplMidpoint, Heuns
-
+from pde.time_fvm.t_solvers import FVMCells, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Heuns  # ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4,
+from pde.time_fvm.config_fvm import ConfigFVM
 
 def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
     """
@@ -243,12 +243,12 @@ class KTDiffusion(FVMEdgeFunc):
     """ Diffusion term from K-T solver """
     E_props: FVMEdgeInfo
 
-    def __init__(self, E_props: FVMEdgeInfo, device="cpu"):
+    def __init__(self, v_factor, E_props: FVMEdgeInfo, device="cpu"):
         self.device = device
+        self.v_factor = v_factor
         self.E_props = E_props
 
-
-    def edge_fluxes(self, a):
+    def edge_fluxes(self, c):
         # fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
         rho = self.E_props.rho_faces
@@ -260,19 +260,14 @@ class KTDiffusion(FVMEdgeFunc):
         # Wavespeed is a + v_max
         Vs = Vs.norm(dim=-1)            # shape = [n_edges, edges=2]
         Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
-        a = a + Vs_max                  # shape = [n_edges, 1]
-        # print(f'{a.shape = }')
-        a = a.repeat(1, 3) + Vs_max
-        # print(f'{Vs_max.shape = }')
-        a[:, 0] = Vs_max.squeeze() * 1.
-        a[:, 1] = Vs_max.squeeze() * 1.
-        #a[:, 2] += 2
+        a = torch.ones((self.E_props.n_edges, 3), device=self.device)
+        a = a * c + Vs_max                  # shape = [n_edges, 1]
+        a[:, 0] = Vs_max.squeeze() * 1. + self.v_factor * c
+        a[:, 1] = Vs_max.squeeze() * 1. + self.v_factor * c
+        #a[:, 2] = 0.25 * c + Vs_max.squeeze() * 1.
+
         fluxes = a/2 * (As[:, 0] - As[:, 1]) * self.E_props.edge_len  # shape = [n_edges, n_comp=3]
-        # print(f'{fluxes.shape = }')
-        # exit(8)
         fluxes_flat = fluxes.flatten()
-
-
         return fluxes_flat
 
 
@@ -286,12 +281,12 @@ class FVMEquation:
     # tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
     # tri_edge_sign: torch.Tensor  # shape = (n_cells, 3)
 
-    def __init__(self, mesh: FVMMesh, n_comp, bc_tag, us_init=None, device="cuda"):
+    def __init__(self, cfg: ConfigFVM, mesh: FVMMesh, n_comp, bc_tag, us_init=None, device="cuda"):
         self.device = device
         self.mesh = mesh
         self.n_comp = n_comp
 
-        E_props = FVMEdgeInfo(mesh, n_comp, bc_tag, device=device)
+        E_props = FVMEdgeInfo(cfg, mesh, n_comp, bc_tag, device=device)
         self.cells = FVMCells(mesh.n_cells, n_comp, us_init, device=device)
         self.E_props = E_props
 
@@ -300,21 +295,23 @@ class FVMEquation:
         tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1) # .to(device)
         self.areas = mesh.areas
         # Physical parameters
-        self.c2 = 1.0       # Speed of sound squared
-
+        self.c2 = cfg.c ** 2     # Speed of sound squared
 
         self.rho_advect = AdvectDensity(E_props, V_dims=[0, 1], rho_dim=2, device=device)
 
         self.P_force = PressureForce(E_props, self.c2, V_dims=[0, 1], p_dim=2, device=device)
         self.U_advect = AdvectVector(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.U_visc = Viscosity(E_props, mu=0.00025, V_dims=[0, 1], device=device)
+        self.U_visc = Viscosity(E_props, mu=cfg.viscosity, V_dims=[0, 1], device=device)
 
-        self.KT_diff = KTDiffusion(E_props, device=device)
+        self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
 
         # Matrix for converting edge fluxes to cell divergence
         self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges)
 
-        self.t_solver = Heuns(self.cells, 0.0032, 50001, self)
+
+        print(f'{mesh.areas.min() = }')
+        # exit(7)
+        self.t_solver = RK3_SSP4(self.cells, cfg.dt, cfg.n_iter, self)
 
         del self.areas
         c_print("Done FVMEquation", color="bright_magenta")
@@ -407,7 +404,6 @@ class FVMEquation:
         """ primatives.shape = (n_cells, n_component) """
 
         E_props = self.E_props
-
         E_props.precompute_shared(primatives)
 
         # d(rho_u)/dt

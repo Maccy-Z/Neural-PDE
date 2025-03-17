@@ -219,13 +219,9 @@ def gen_mesh_time(xmin, xmax, ymin, ymax, areas=None):
     return points, p_tags
 
 
-def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None, cell_lnscale=2):
-    if areas is None:
-        min_area = 5.e-3
-        max_area = 10e-3
-    else:
-        min_area, max_area = areas
+def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas, cell_lnscale=2):
 
+    min_area, max_area = areas
     mesh_props = MeshProps(min_area, max_area, lengthscale=cell_lnscale)
     triscale = np.sqrt(2 * min_area)
     lims = [xmin, ymin], [xmax, ymax]
@@ -235,7 +231,7 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=None, cell_lnscale=2):
                 Line([[xmin, ymax], [xmax, ymax]], False, name="Wall"),     # Top
                 Line([[xmin, ymin], [xmin, ymax]], False, name="Left"),    # Left
                 Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
-                Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Right
+                Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Refinement wall
                 Circle((0.75, 0.7), 0.15, triscale, hole=True, dist_req=True, name="NavierWall"),
                 # Ellipse((0.5, 0.5), 0.075, 0.0, np.pi/3, triscale, lims=lims, hole=True, dist_req=True, name="NavierWall"),
 

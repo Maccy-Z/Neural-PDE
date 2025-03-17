@@ -1,23 +1,22 @@
 from cprint import c_print
 import pickle
-import time
 import torch
 import numpy as np
 
-from pde.time_dependent.time_cfg import ConfigTime
 from pde.graph_grid.fvm_store import EdgeBCTypes as E
 from pde.graph_grid.fvm_store import Edge
-from pde.config import Config
 from pde.mesh_generation.generate_mesh import gen_mesh_fvm
 from pde.time_fvm.time_fvm import FVMMesh, FVMEquation
 from pde.graph_grid.graph_utils import plot_edges
+from pde.time_fvm.config_fvm import ConfigFVM
 
-def mesh_graph(new):
+def mesh_graph(cfg: ConfigFVM, new):
     N_comp = 3
     if new:
+        c_print(f'Creating new mesh', "green")
         xmin, xmax = 0.0, 2
         ymin, ymax = 0.0, 1.4
-        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[0.1e-3, 5e-3], cell_lnscale=4)
+        mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[cfg.min_A, cfg.max_A], cell_lnscale=cfg.lnscale)
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
     else:
@@ -38,7 +37,7 @@ def mesh_graph(new):
     bc_tags = {}
     for bc_idx, (e_tag, e_vert) in enumerate(zip(edge_tag, bound_edgs, strict=True)):
         if e_tag == "Wall":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0.1, 0, None], [None, None, 0])   #(E.WALL, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0., 0, None], [None, None, 0])   #(E.WALL, 0)
         elif e_tag == "NavierWall":
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0., 0, None], [None, None, 0])   #(E.WALL, 0)
 
@@ -46,7 +45,7 @@ def mesh_graph(new):
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
-            v_in = 0.1 # 0.1 if (0.4 < (y0+y1)/2 < 0.8) else 0
+            v_in = 0.1 #if (0.4 < (y0+y1)/2 < 0.8) else 0
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [v_in, 0, None], [None, None, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield], [None, None, 0], [0, 0, None], rho_far=1) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
@@ -74,7 +73,6 @@ def init_conds(centroids, load_state=False):
         us_init[:, 0] = us_init[:, 0] * us_init[:, 2]
         us_init[:, 1] = us_init[:, 1] * us_init[:, 2]
 
-
     return us_init
 
 
@@ -85,7 +83,9 @@ def main():
     new = False
     load_state = False
 
-    prob_definition = mesh_graph(new)
+    cfg = ConfigFVM()
+
+    prob_definition = mesh_graph(cfg, new)
     Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp = prob_definition
 
     if new:
@@ -98,7 +98,7 @@ def main():
 
     centroids = mesh.centroids.clone()
     us_init = init_conds(centroids, load_state)
-    solver = FVMEquation(mesh, N_comp, bc_tags, us_init=us_init, device="cuda")
+    solver = FVMEquation(cfg, mesh, N_comp, bc_tags, us_init=us_init, device="cuda")
     solver.solve()
 
 if __name__ == "__main__":

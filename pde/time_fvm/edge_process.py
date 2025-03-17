@@ -1,8 +1,10 @@
 import math
-from pde.time_fvm.fvm_mesh import FVMMesh
-from pde.graph_grid.fvm_store import Edge
 from cprint import c_print
 import torch
+
+from pde.time_fvm.fvm_mesh import FVMMesh
+from pde.graph_grid.fvm_store import Edge
+from pde.time_fvm.config_fvm import ConfigFVM
 
 
 def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
@@ -450,8 +452,9 @@ class FVMEdgeInfo:
     phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
     farfield_rho = None
 
-    def __init__(self, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
+    def __init__(self, cfg: ConfigFVM, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
         self.device = device
+        self.cfg = cfg
         self.mesh = mesh
         self.n_edges = mesh.n_edges
         self.n_cells = mesh.n_cells
@@ -697,12 +700,6 @@ class FVMEdgeInfo:
         dU = (grads * self.cent_to_edge_disp).sum(dim=2)  # shape = [n_cells, neigh=3, n_component]
 
         # Select limiting neighbor values and compute gradient limiter
-        # diff = Us_neigh - U_cent                # shape = [n_cells, neigh=3, n_component]
-        # U_upper = torch.clamp(diff, min=0)  # positive differences (or 0 if diff is negative)
-        # U_lower = torch.clamp(diff, max=0)  # negative differences (or 0 if diff is positive)
-        # U_upper = torch.maximum(U_cent, Us_neigh) - U_cent      # shape = [n_cells, neigh=3, n_component]
-        # U_lower = torch.minimum(U_cent, Us_neigh) - U_cent
-
         U_cent_neigh = torch.cat([U_cent, Us_neigh], dim=1)
         U_upper = torch.max(U_cent_neigh) - U_cent      # shape = [n_cells, neigh=3, n_component]
         U_lower = torch.min(U_cent_neigh) - U_cent
@@ -729,14 +726,14 @@ class FVMEdgeInfo:
 
     def _phi(self, r):
         # VENKATAKRISHNAN
-        # eps = 1*5e-5
-        # _r = r**2 + r + eps
-        # phi = (_r + r) / (_r + 2)
+        eps = 0.01*1e-4
+        _r = r**2 + r + eps
+        phi = (_r + r) / (_r + 2)
         # assert not torch.any(torch.isnan(phi)), f'Nan in Venkatkrishnan phi'
         #phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
 
         # BJ
-        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
+        # phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
         #
         # Cell wide clamping
         phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]
@@ -769,7 +766,6 @@ class FVMEdgeInfo:
         # V_wall[:, 0] = 0
         # U_face_wall = torch.matmul(self.inv_wall_mat, V_wall.unsqueeze(-1)).squeeze()       # shape = [n_euler_w_edges, 2]
         # U_face[self.euler_w_mask, :2] = U_face_wall
-        #print(f'{U_face_wall = }')
 
         Us_flat = Us.flatten()
         # Final U_face in flattened form.a
@@ -780,19 +776,21 @@ class FVMEdgeInfo:
 
         # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
         if self.farfield_rho is not None:
-            rho_inf = self.farfield_rho
-            beta = 1 - 0.001 * 100
+            rho_far = self.farfield_rho
+            v_far = self.cfg.v_far
+
             Us_bc_cells = Us[self.exit_cell2edge]
             vx_interior = Us_bc_cells[:, 0]
-            rho_interior = Us_bc_cells[:, 2]
 
-            inflow_mask = (vx_interior < 0)
-            U_face[self.farfield_mask] = (~inflow_mask) * (beta * rho_interior + (1-beta) * rho_inf) + inflow_mask * rho_interior * torch.exp(vx_interior)
-            #U_face[self.farfield_mask] = rho_inf * torch.exp(vx_interior-0.05)
+            if self.cfg.exit_mode == "decay":
+                beta = 1 - 0.001 * 10
+                rho_interior = Us_bc_cells[:, 2]
+                inflow_mask = (vx_interior < 0)
+                U_face[self.farfield_mask] = (~inflow_mask) * (beta * rho_interior + (1-beta) * rho_far) + inflow_mask * rho_interior * torch.exp(vx_interior)# - v_far)
 
 
-
-
+            elif self.cfg.exit_mode == "farfield":
+                U_face[self.farfield_mask] = rho_far * torch.exp(vx_interior - v_far)
         return  U_face
 
 
