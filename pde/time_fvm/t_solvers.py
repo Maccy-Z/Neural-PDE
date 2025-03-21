@@ -73,13 +73,14 @@ class TSolver(ABC):
     def _solve(self):
         E_props = self.eq.E_props
 
-        plot_i = int(10 / self.dt)
+        plot_i = int(1 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
 
         for i in range(self.n_steps):
             t = i * self.dt
             with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
                 new_Us = self._step(t)
+                self.cells.update_cells(new_Us)
 
             # # Track total energy
             # primatives = self.cells.get_values()[0]
@@ -93,7 +94,7 @@ class TSolver(ABC):
             #         torch.save(self.cells.state, f)
             #     exit(7)
 
-            if i % plot_i == 0 and t>0:
+            if i % plot_i == 0 and t>-0.:
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
@@ -111,9 +112,9 @@ class TSolver(ABC):
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
-                exit("DONE PLOTTING")
+                # exit("DONE PLOTTING")
 
-            self.cells.update_cells(new_Us)
+            # self.cells.update_cells(new_Us)
 
         Eks, Eps = torch.tensor(Eks), torch.tensor(Eps)
         E = Eks + Eps
@@ -490,9 +491,9 @@ class Butcher(TSolver):
             [0.5, 0.0, 0.0, 0.0],
             [0.5, 0.5, 0.0, 0.0],
             [1/6, 1/6, 1/6, 0.0]
-        ], dtype=torch.float32)
+        ], dtype=torch.float32).cuda()
 
-        b = torch.tensor([1 / 6, 1 / 6, 1 / 6, 1 / 2], dtype=torch.float32)
+        b = torch.tensor([1 / 6, 1 / 6, 1 / 6, 1 / 2], dtype=torch.float32).cuda()
         c = torch.tensor([0.0, 0.5, 1, 0.5], dtype=torch.float32)
 
         """ RK3 SSP5"""
@@ -507,8 +508,21 @@ class Butcher(TSolver):
         # b = torch.tensor([0.19707596384481, 0.11780316509765, 0.11709725193772, 0.27015874934251, 0.29786487010104], dtype=torch.float32)
         # c = torch.tensor([0, 0.37726891511710 , 0.75453783023419 , 0.49056882269314 , 0.78784303014311 ], dtype=torch.float32)
 
+        """ RK4 SSP5 """
+        # A = torch.tensor([
+        #     [0.0, 0.0, 0.0, 0.0, 0],
+        #     [0.39175222700392, 0.0, 0.0, 0.0, 0],
+        #     [0.21766909633821, 0.36841059262959, 0.0, 0.0, 0],
+        #     [0.08269208670950, 0.13995850206999,  0.25189177424738, 0.0, 0],
+        #     [0.06796628370320, 0.11503469844438, 0.20703489864929, 0.54497475021237, 0],
+        # ], dtype=torch.float32)
+        #
+        # b = torch.tensor([0.14681187618661, 0.24848290924556, 0.10425883036650, 0.27443890091960, 0.22600748319395], dtype=torch.float32)
+        # c = torch.tensor([0., 0.39175222700392, 0.58607968896779 , 0.47454236302687, 0.93501063100924], dtype=torch.float32)
+
+
         self.A = A
-        self.b = b
+        self.b = b.reshape(-1, 1, 1)
         self.c = c
         self.stages = b.shape[0]
 
@@ -524,20 +538,24 @@ class Butcher(TSolver):
         primatives, _ = self.cells.get_values()
 
 
-        k = []  # list to store stage derivatives
+        k = torch.zeros((self.stages, *state_0.shape), dtype=state_0.dtype, device=state_0.device)
         for i in range(self.stages):
-            # Compute the increment for y using previous stages
-            increment = torch.zeros_like(state_0)
-            for j in range(i):
-                increment += self.A[i, j] * k[j]
+            if i == 0:
+                increment = 0
+            else:
+                # Compute the increment for y using previous stages
+                # increment = torch.zeros_like(state_0)
+                # for j in range(i):
+                #     increment += self.A[i, j] * k[j]
+                increment = (self.A[i, :i].unsqueeze(-1) * k[:i].view(i, -1)).sum(dim=0)
+                increment = increment.view(state_0.shape)
             # Evaluate the derivative at the stage time and state
-            k_i = self.dt * self.eq.forward(self.cells.convert_state_to_value(state_0 + increment)[0], t + self.c[i] * self.dt)
-            k.append(k_i)
+            k_i =  self.dt * self.eq.forward(self.cells.convert_state_to_value(state_0 + increment)[0], t + self.c[i] * self.dt)
+            k[i] = k_i
 
+        # k = torch.stack(k)
         # Combine stages to compute next state
-        state_next = state_0.clone()
-        for i in range(self.stages):
-            state_next += self.b[i] * k[i]
+        state_next = state_0 + torch.sum(self.b * k, dim=0)
         return state_next
 
 

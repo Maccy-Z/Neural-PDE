@@ -8,7 +8,7 @@ class ConfigFVM:
     n_iter: int = 20001
 
     # mesh parameters
-    min_A: float = 1e-4
+    min_A: float = 0.5e-4
     max_A: float = 5e-3
     lnscale: float = 4
 
