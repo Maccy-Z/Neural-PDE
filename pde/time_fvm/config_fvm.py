@@ -4,7 +4,7 @@ from dataclasses import dataclass
 class ConfigFVM:
 
     # solver parameters
-    dt: float = 0.008
+    dt: float = 0.007
     n_iter: int = 20001
 
     # mesh parameters
@@ -13,11 +13,15 @@ class ConfigFVM:
     lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 0.5e-3
-    visc_bulk: float = 5e-3
+    viscosity: float = 1e-6
+    visc_bulk: float = 0e-5
     c: float = 1.
+    # Stability parameters
+    v_factor: float = 0.1     # Modification for velocity KT scheme
+    bulk_visc_lim: float = 1.
+
+    # Exit parameters
     v_far: float = 0.1
     p_far: float = 1
-    v_factor = 0.1     # Modification for velocity KT scheme
     exit_mode: str = "decay"    # {decay, farfield} BC
     decay_rate: float = 20

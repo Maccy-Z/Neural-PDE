@@ -6,8 +6,8 @@ import math
 
 from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges, plot_interp
 from pde.time_fvm.fvm_mesh import FVMMesh
-from pde.time_fvm.edge_process import FVMEdgeInfo, create_selection_matrix, invert_selection_matrix
-from pde.time_fvm.t_solvers import FVMCells, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Heuns  # ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4,
+from pde.time_fvm.edge_process import FVMEdgeInfo, create_selection_matrix
+from pde.time_fvm.t_solvers import FVMCells, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Butcher #, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4
 from pde.time_fvm.config_fvm import ConfigFVM
 
 def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
@@ -128,17 +128,17 @@ class Viscosity(FVMEdgeFunc):
         self.E_props = E_props
         self.V_dims = V_dims
 
-        self.clip_val = areas.to(device) / cfg.dt
 
         self.mu = cfg.viscosity
         self.mu_b = cfg.visc_bulk
-        edge_len_mu = E_props.edge_len * self.mu
-        proj_mat = E_props.V_insertion_matrix # create_insertion_matrix(E_props.n_edges, E_props.n_component, [0, 1], device=device).to_sparse_csr()
 
 
         """ Combine sparse matrices for viscosity: 
                 project to velocity component @ viscosity @ face gradient         
         """
+        edge_len_mu = E_props.edge_len * self.mu
+        proj_mat = E_props.V_insertion_matrix # create_insertion_matrix(E_props.n_edges, E_props.n_component, [0, 1], device=device).to_sparse_csr()
+
         n_edges, n_comp = E_props.n_edges, E_props.n_component
         edge_len_mu = edge_len_mu.repeat(1, 2)
         visc_mat = create_selection_matrix(n_blocks=n_edges, block_size=n_comp, selected_dims=V_dims, weights=-edge_len_mu).to_sparse_csr().cuda()
@@ -157,6 +157,9 @@ class Viscosity(FVMEdgeFunc):
         M = torch.sparse_coo_tensor(indices, values, size=(2 * n_edges, n_edges), device=device).to_sparse_csr()
 
         self.A_visc_bulk = - self.mu_b * flux_mat @ proj_mat @ M
+
+        self.clip_val = cfg.bulk_visc_lim * areas.to(device) / cfg.dt
+
 
         del self.E_props.A_face_grad, self.E_props.b_face_grad
 
@@ -214,29 +217,19 @@ class Viscosity(FVMEdgeFunc):
         div_visc = div_visc.view(-1, 3)         # shape = [n_cells, 3]
 
         """ Bulk viscosity: gradient = dux/dx + duy/dy, least squares gradient. Use this to compute cell divergence. """
-        # div_V = E_props.div_V.repeat_interleave(3)  # shape: [n_cells * 3]
-        # div_V_edge = torch.zeros(E_props.n_edges, device=self.device)       # shape = [n_edges]
-        # div_V_edge.index_add_(0, E_props.tri_to_edge, div_V, alpha=0.5)
-        # div_V_edge[E_props.bc_edge_mask] = E_props.div_V[E_props.edge_to_tri_bc]
+        if self.mu_b > 0:
+            div_V_edge = E_props.div_V_faces.mean(dim=1).flatten()
 
-        div_V_edge = E_props.div_V_faces.mean(dim=1).flatten()
+            # flux_bulk = div_u_edge * E_props.normals        # shape = [n_edges, 2]
+            div_bulk = self.A_visc_bulk @ div_V_edge
+            div_bulk = div_bulk.view(-1, 3)         # shape = [n_cells, 3]
+            bulk_norm = div_bulk.norm(dim=-1)
 
-        # div_V = E_props.div_V.repeat_interleave(3)                               # shape = [n_cells, 3]
-        # div_V_edge = torch.zeros((E_props.n_edges, 2), device=self.device)           # shape = [n_edges, 2]
-        # div_V_edge[E_props.tri_to_edge, E_props.tri_edge_signs] = div_V#.view(3 * E_props.n_cells)
-        # div_V_edge[E_props.bc_edge_mask] = E_props.div_V[E_props.edge_to_tri_bc].unsqueeze(-1)
-        # div_V_edge = div_V_edge.mean(dim=1, keepdim=True)     # shape = [n_edges, 1]
-
-
-        # E_props.normals.shape = [n_edges, 2]
-        # flux_bulk = div_u_edge * E_props.normals        # shape = [n_edges, 2]
-        div_bulk = self.A_visc_bulk @ div_V_edge
-        div_bulk = div_bulk.view(-1, 3)         # shape = [n_cells, 3]
-        bulk_norm = div_bulk.norm(dim=-1)
-
-        clip_val = self.clip_val
-        div_limit = torch.where(bulk_norm > clip_val, clip_val/bulk_norm, 1).unsqueeze(-1)
-        div_bulk = div_bulk * div_limit
+            clip_val = self.clip_val
+            div_limit = torch.where(bulk_norm > clip_val, clip_val/bulk_norm, 1).unsqueeze(-1)
+            div_bulk = div_bulk * div_limit
+        else:
+            div_bulk = 0
 
 
         return div_visc + div_bulk
@@ -327,6 +320,7 @@ class KTDiffusion(FVMEdgeFunc):
         self.v_factor = v_factor
         self.E_props = E_props
 
+    @torch.compile()
     def edge_fluxes(self, c):
         # fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
 
@@ -471,7 +465,7 @@ class FVMEquation:
         divergence = divergence_flat.view(-1, self.n_comp)  # shape: (n_cells, n_component)
         return divergence
 
-    def forward(self, primatives, momentum, t=0):
+    def forward(self, primatives, t=0):
         """ primatives.shape = (n_cells, n_component) """
 
         E_props = self.E_props

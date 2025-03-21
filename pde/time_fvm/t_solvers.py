@@ -33,15 +33,14 @@ class FVMCells:
         # TODO: TEMPORARY
         momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
 
-        density = torch.clamp(density, 0.01, 1e6)
-        u_x, u_y = momentum_x / density, momentum_y / density
-        #u_x, u_y = momentum_x , momentum_y
+        # density = torch.clamp(density, 0.01, 1e6)
+        v_x, v_y = momentum_x / density, momentum_y / density
 
-        primatives = torch.stack([u_x, u_y, density], dim=1)
+        primatives = torch.stack([v_x, v_y, density], dim=1)
 
         #primatives[:, 0] = 1.5
 
-        return primatives, state # state[:, :2]
+        return primatives , state # state[:, :2]
 
     def save(self, name="state.pt"):
         torch.save(self.state, name)
@@ -74,7 +73,7 @@ class TSolver(ABC):
     def _solve(self):
         E_props = self.eq.E_props
 
-        plot_i = int(4 / self.dt)
+        plot_i = int(5 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
 
         for i in range(self.n_steps):
@@ -110,9 +109,9 @@ class TSolver(ABC):
 
 
                 if torch.any(torch.isnan(primatives)):
-                    #print(f'{primatives = }')
+                    print("Nan in primatives")
                     exit(9)
-                exit("DONE PLOTTING")
+                # exit("DONE PLOTTING")
 
             self.cells.update_cells(new_Us)
 
@@ -127,7 +126,7 @@ class TSolver(ABC):
 
     @torch.inference_mode()
     def solve(self):
-        run = False
+        run = True
         if run:
             self._solve()
         else:
@@ -192,7 +191,7 @@ class TSolver(ABC):
 
     def _euler_step(self, U, t):
         prim_a, _ = self.cells.convert_state_to_value(U)
-        U_i_1 = U + self.dt * self.eq.forward(prim_a, None, t+self.dt)
+        U_i_1 = U + self.dt * self.eq.forward(prim_a, t+self.dt)
         return U_i_1
 
 class Euler(TSolver):
@@ -203,11 +202,8 @@ class Euler(TSolver):
     def _step(self, t):
         """U^{i+1} = U^i + dt * f(U^i)"""
 
-        dUdt = self.eq.forward(*self.cells.get_values(), t=t)
-
-        # c_print(f'{self.dt * dUdt[[66, 122, 60], 2] = }', color='green')
+        dUdt = self.eq.forward(self.cells.get_values()[0], t=t)
         U_i_1 = self.cells.state + self.dt * dUdt
-        # c_print(f'{self.cells.state[[66, 122, 60], 2] = }', color='green')
 
         return U_i_1
 
@@ -225,11 +221,11 @@ class ExplMidpoint(TSolver):
         state = self.cells.state
         primatives, _ = self.cells.get_values()
 
-        dUdt_star = self.eq.forward(primatives, None, t=t)
+        dUdt_star = self.eq.forward(primatives, t=t)
         U_star = state + 0.5 * self.dt * dUdt_star        # U_{i+0.5}
 
         primatives_star, _ = self.cells.convert_state_to_value(U_star)
-        dUdt = self.eq.forward(primatives_star, None, t=t)
+        dUdt = self.eq.forward(primatives_star, t=t)
         U_i_1 = state + self.dt * dUdt
 
         return U_i_1
@@ -245,12 +241,12 @@ class Heuns(TSolver):
             U_{i+1} = U_i + dt * [0.5 * f(U_s}) + 0.5 * f(U_i)]
         """
         # y_star = y_n + dt*f(t_n, y_n)
-        dUdt_star = self.eq.forward(*self.cells.get_values(), t=t)
+        dUdt_star = self.eq.forward(self.cells.get_values()[0], t=t)
         U_star = self.cells.state + self.dt * dUdt_star
 
         # y_{n+1} = y_n + 0.5*dt*[f(t_n, y_n) + f(t_n+1, y_star)]
         primatives_star, _ = self.cells.convert_state_to_value(U_star)
-        dUdt = self.eq.forward(primatives_star, None, t=t)
+        dUdt = self.eq.forward(primatives_star, t=t)
 
         U_i_1 = self.cells.state + 0.5 * self.dt * (dUdt_star + dUdt)
         return U_i_1
@@ -269,15 +265,15 @@ class RK3_SSP(TSolver):
 
         prim_i, U_i = self.cells.get_values()
         # U_a = U_i + dt * f(U_i)
-        U_a = U_i + self.dt * self.eq.forward(prim_i, None, t)
+        U_a = U_i + self.dt * self.eq.forward(prim_i, t)
 
         # U_b = 3/4 * U_i + 1/4 * dt * f(U_a)
         prim_a, U_a = self.cells.convert_state_to_value(U_a)
-        U_b = 3/4 * U_i + 1/4 * (U_a + self.dt * self.eq.forward(prim_a, None, t+self.dt))
+        U_b = 3/4 * U_i + 1/4 * (U_a + self.dt * self.eq.forward(prim_a, t+self.dt))
 
         # U_{i+1} = 1/3 * U_i + 2/3 [U_b + dt * f(U_b)]
         prim_b, U_b = self.cells.convert_state_to_value(U_b)
-        U_i_1 = 1/3 * U_i + 2/3 * (U_b + self.dt * self.eq.forward(prim_b, None, t+self.dt/2))
+        U_i_1 = 1/3 * U_i + 2/3 * (U_b + self.dt * self.eq.forward(prim_b, t+self.dt/2))
         return U_i_1
 
 
@@ -292,11 +288,11 @@ class RK2_SSP(TSolver):
         """
         prim_i, U_i = self.cells.get_values()
         # U_a = U_i + dt * f(U_i)
-        U_a = U_i + self.dt * self.eq.forward(prim_i, None, t)
+        U_a = U_i + self.dt * self.eq.forward(prim_i, t)
 
         # U_{i+1} = 0.5 * U_i + 0.5 * [U_a + dt * f(U_a)]
         prim_a, U_a = self.cells.convert_state_to_value(U_a)
-        U_i_1 = 0.5 * U_i + 0.5 * (U_a + self.dt * self.eq.forward(prim_a, None, t+self.dt))
+        U_i_1 = 0.5 * U_i + 0.5 * (U_a + self.dt * self.eq.forward(prim_a, t+self.dt))
         return U_i_1
 
 
@@ -362,18 +358,18 @@ class RK3_SSP4(TSolver):
             U_{i+1} = 1/2 * U_c + 1/2 [U_c + dt * f(U_c)]
         """
 
-        _, U_i = self.cells.get_values()
+        U_i = self.cells.state
         # U_a = 1/2 * U_i + 1/2 * [U_i + dt * f(U_i)]
         U_a = 1/2 * U_i + 1/2 * self._euler_step(U_i, t=t)
 
         # U_b = 1/2 * U_a + 1/2 * [U_a + dt * f(U_a)]
-        U_b = 1/2 * U_a + 1/2 * self._euler_step(U_a, t=t+self.dt/2) #(U_a + self.dt * self.eq.forward(prim_a, None, t+self.dt/2))
+        U_b = 1/2 * U_a + 1/2 * self._euler_step(U_a, t=t+self.dt/2)
 
         # U_c = 2/3 * U_i + 1/6 * U_b + 1/6 * [U_b + dt * f(U_b)]
-        U_c = 2/3 * U_i + 1/6 * U_b + 1/6 * self._euler_step(U_b, t=t+self.dt) #(U_b + self.dt * self.eq.forward(prim_b, None, t+self.dt))
+        U_c = 2/3 * U_i + 1/6 * U_b + 1/6 * self._euler_step(U_b, t=t+self.dt)
 
         # U_{i+1} = 1/2 * U_c + 1/2 [U_c + dt * f(U_c)]
-        U_i_1 = 1/2 * U_c + 1/2 * self._euler_step(U_c, t=t+self.dt/2) #(U_c + self.dt * self.eq.forward(prim_c, None, t+self.dt/2))
+        U_i_1 = 1/2 * U_c + 1/2 * self._euler_step(U_c, t=t+self.dt/2)
 
         return U_i_1
 
@@ -390,7 +386,7 @@ class Adams2(TSolver):
 
     def _init_states(self, t):
         prim, _ = self.cells.get_values()
-        dUdt_0 = self.eq.forward(prim, None, t)
+        dUdt_0 = self.eq.forward(prim, t)
 
         for _ in range(2):
             self.prev_dUdt.append(dUdt_0)
@@ -404,9 +400,9 @@ class Adams2(TSolver):
         if len(self.prev_dUdt) == 0:
             self._init_states(t)
 
-        prim_t, U_t = self.cells.get_values()
+        prim_t, U_t = self.cells.get_prims()
 
-        dUdt_t = self.eq.forward(prim_t, None, t)
+        dUdt_t = self.eq.forward(prim_t, t)
         dUdt_tm1 = self.prev_dUdt[-1]
         # dUdt_tm2 = self.prev_dUdt[-2]
 
@@ -430,7 +426,7 @@ class Adams3PC(TSolver):
 
     def _init_states(self, t):
         prim, _ = self.cells.get_values()
-        dUdt_0 = self.eq.forward(prim, None, t)
+        dUdt_0 = self.eq.forward(prim, t)
 
         for _ in range(2):
             self.prev_dUdt.append(dUdt_0)
@@ -448,19 +444,139 @@ class Adams3PC(TSolver):
 
         prim_t, U_t = self.cells.get_values()
 
-        dUdt_t = self.eq.forward(prim_t, None, t)
+        dUdt_t = self.eq.forward(prim_t, t)
         dUdt_tm1 = self.prev_dUdt[-1]
 
         # U_a = U_t + dt/2 * [3 * f(U_t) - f(U_{t-1})]
         U_a = U_t + self.dt/2 * (3 * dUdt_t - dUdt_tm1)
 
         # U_{t+1} = U_t + dt/12 * [5 * f(U_a) + 8 * f(U_{t}) - 1 * f(U_{t-1})]
-        dUdt_a = self.eq.forward(*self.cells.convert_state_to_value(U_a), t)
+        prim_a = self.cells.convert_state_to_value(U_a)[0]
+        dUdt_a = self.eq.forward(prim_a, t)
         U_t_1 =  U_t + self.dt/12 * (5 * dUdt_a + 8 * dUdt_t - dUdt_tm1)
 
         self.prev_dUdt.append(dUdt_t)
 
         return U_t_1
 
+
+class Butcher(TSolver):
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):#, A, b, c):
+        super().__init__(cells, dt, n_steps, eq=equation)
+    #def __init__(self, A: torch.Tensor, b: torch.Tensor, c: torch.Tensor):
+        """
+        Initializes the solver with a Butcher tableau.
+
+        Args:
+            A (torch.Tensor): 2D tensor of stage coefficients with shape (s, s),
+                              where s is the number of stages.
+            b (torch.Tensor): 1D tensor of weights for combining stages.
+            c (torch.Tensor): 1D tensor of time coefficients for each stage.
+        """
+        """ RK4 """
+        # A = torch.tensor([
+        #     [0.0, 0.0, 0.0, 0.0],
+        #     [0.5, 0.0, 0.0, 0.0],
+        #     [0.0, 0.5, 0.0, 0.0],
+        #     [0.0, 0.0, 1.0, 0.0]
+        # ], dtype=torch.float32)
+        #
+        # b = torch.tensor([1 / 6, 1 / 3, 1 / 3, 1 / 6], dtype=torch.float32)
+        # c = torch.tensor([0.0, 0.5, 0.5, 1.0], dtype=torch.float32)
+
+        """ RK3 SSP4 """
+        A = torch.tensor([
+            [0.0, 0.0, 0.0, 0.0],
+            [0.5, 0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0, 0.0],
+            [1/6, 1/6, 1/6, 0.0]
+        ], dtype=torch.float32)
+
+        b = torch.tensor([1 / 6, 1 / 6, 1 / 6, 1 / 2], dtype=torch.float32)
+        c = torch.tensor([0.0, 0.5, 1, 0.5], dtype=torch.float32)
+
+        """ RK3 SSP5"""
+        # A = torch.tensor([
+        #     [0.0, 0.0, 0.0, 0.0, 0],
+        #     [0.37726891511710, 0.0, 0.0, 0.0, 0],
+        #     [0.37726891511710, 0.37726891511710, 0.0, 0.0, 0],
+        #     [0.16352294089771, 0.16352294089771, 0.16352294089771, 0.0, 0],
+        #     [0.14904059394856, 0.14831273384724, 0.14831273384724, 0.34217696850008, 0],
+        # ], dtype=torch.float32)
+        #
+        # b = torch.tensor([0.19707596384481, 0.11780316509765, 0.11709725193772, 0.27015874934251, 0.29786487010104], dtype=torch.float32)
+        # c = torch.tensor([0, 0.37726891511710 , 0.75453783023419 , 0.49056882269314 , 0.78784303014311 ], dtype=torch.float32)
+
+        self.A = A
+        self.b = b
+        self.c = c
+        self.stages = b.shape[0]
+
+    def _step(self, t) -> torch.Tensor:
+        """
+        Take one step of the ODE solver.
+
+        Returns:
+            torch.Tensor: Updated state after one step.
+        """
+
+        state_0 = self.cells.state
+        primatives, _ = self.cells.get_values()
+
+
+        k = []  # list to store stage derivatives
+        for i in range(self.stages):
+            # Compute the increment for y using previous stages
+            increment = torch.zeros_like(state_0)
+            for j in range(i):
+                increment += self.A[i, j] * k[j]
+            # Evaluate the derivative at the stage time and state
+            k_i = self.dt * self.eq.forward(self.cells.convert_state_to_value(state_0 + increment)[0], t + self.c[i] * self.dt)
+            k.append(k_i)
+
+        # Combine stages to compute next state
+        state_next = state_0.clone()
+        for i in range(self.stages):
+            state_next += self.b[i] * k[i]
+        return state_next
+
+
+# Define the RK4 Butcher tableau coefficients
+# Butcher table for RK4:
+# 0   |
+# 1/2 | 1/2
+# 1/2 | 0   1/2
+# 1   | 0   0   1
+# -----------------
+#     | 1/6 1/3 1/3 1/6
+
+
+# class RK4Solver(ODESolver):
+#     def __init__(self):
+#         """
+#         Initializes the RK4 solver using the predefined Butcher tableau.
+#         """
+#         super().__init__(A_rk4, b_rk4, c_rk4)
+#
+#
+# # Example usage:
+# if __name__ == "__main__":
+#     # Define an ODE: dy/dt = f(t, y)
+#     def f(t, y):
+#         return -y  # Example: exponential decay
+#
+#
+#     # Initial condition
+#     t0 = 0.0
+#     y0 = torch.tensor(1.0)
+#     h = 0.1  # Step size
+#
+#     solver = RK4Solver()
+#     t = t0
+#     y = y0
+#
+#     # Take a single RK4 step
+#     y_next = solver.step(f, t, y, h)
+#     print("y_next =", y_next.item())
 
 

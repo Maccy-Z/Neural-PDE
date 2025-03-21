@@ -773,7 +773,7 @@ class FVMEdgeInfo:
         # U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face.view(3*self.n_cells, -1)
         # U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)      # Boundary conditions are fixed as is.
 
-        # assert not torch.any(torch.isnan(phi_lim)), f'Nan in phi'
+        assert not torch.any(torch.isnan(phi_lim)), f'Nan in phi'
 
         # U_face_flat = torch.mm(self.S_cells, Us_face.view(3*self.n_cells, 3))
         # self.U_face = U_face_flat.view(self.n_edges, 2, self.n_component)
