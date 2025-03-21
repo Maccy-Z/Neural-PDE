@@ -45,7 +45,7 @@ def mesh_graph(cfg: ConfigFVM, new):
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
-            v_in = 0.1 if (0.025 < (y0+y1)/2 < 1.375) else 0
+            v_in = 0.1 #if (0.025 < (y0+y1)/2 < 1.375) else 0
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [v_in, 0, None], [None, None, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield], [None, None, 0], [0, 0, None], rho_far=1) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)

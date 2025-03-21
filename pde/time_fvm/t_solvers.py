@@ -73,7 +73,7 @@ class TSolver(ABC):
     def _solve(self):
         E_props = self.eq.E_props
 
-        plot_i = int(5 / self.dt)
+        plot_i = int(10 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
 
         for i in range(self.n_steps):
@@ -111,7 +111,7 @@ class TSolver(ABC):
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
-                # exit("DONE PLOTTING")
+                exit("DONE PLOTTING")
 
             self.cells.update_cells(new_Us)
 

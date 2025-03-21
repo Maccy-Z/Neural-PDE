@@ -13,7 +13,7 @@ class ConfigFVM:
     lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 1e-6
+    viscosity: float = 1e-5
     visc_bulk: float = 0e-5
     c: float = 1.
     # Stability parameters
@@ -23,5 +23,5 @@ class ConfigFVM:
     # Exit parameters
     v_far: float = 0.1
     p_far: float = 1
-    exit_mode: str = "decay"    # {decay, farfield} BC
+    exit_mode: str = "farfield"    # {decay, farfield} BC
     decay_rate: float = 20
