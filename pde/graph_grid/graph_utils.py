@@ -386,7 +386,6 @@ def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=N
         sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
         # Optional: attach the actual scalar array (could also use an empty array)
         cbar = fig.colorbar(sm, ax=ax)
-        cbar.set_label("Scalar Value")
     plt.tight_layout()
     plt.show()
 

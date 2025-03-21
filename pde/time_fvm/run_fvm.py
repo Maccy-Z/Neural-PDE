@@ -29,9 +29,9 @@ def mesh_graph(cfg: ConfigFVM, new):
     all_edgs = torch.cat([int_edgs, bound_edgs], dim=0)
     bc_edge_mask = torch.cat([torch.zeros_like(int_edgs[:, 0], dtype=torch.bool), torch.ones_like(bound_edgs[:, 0], dtype=torch.bool)], dim=0)
 
-    all_tags = np.concatenate([np.zeros(len(int_edgs)), np.ones(len(edge_tag))], axis=0, dtype=np.float32)
-    all_tags = torch.from_numpy(all_tags)
-    plot_edges(Xs, all_edgs, all_tags)
+    # all_tags = np.concatenate([np.zeros(len(int_edgs)), np.ones(len(edge_tag))], axis=0, dtype=np.float32)
+    # all_tags = torch.from_numpy(all_tags)
+    # plot_edges(Xs, all_edgs, all_tags)
     # exit(7)
 
     bc_tags = {}
@@ -45,7 +45,7 @@ def mesh_graph(cfg: ConfigFVM, new):
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
-            v_in = 0.1 #if (0.4 < (y0+y1)/2 < 0.8) else 0
+            v_in = 0.1 if (0.025 < (y0+y1)/2 < 1.375) else 0
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [v_in, 0, None], [None, None, 0]) #(E.INLET, 0)
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield], [None, None, 0], [0, 0, None], rho_far=1) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
@@ -96,10 +96,14 @@ def main():
         c_print(f'Loading mesh', "green")
         mesh = pickle.load(open("mesh.pkl", "rb"))
 
+    print(f'{mesh.areas.min() = }')
+
     centroids = mesh.centroids.clone()
     us_init = init_conds(centroids, load_state)
     solver = FVMEquation(cfg, mesh, N_comp, bc_tags, us_init=us_init, device="cuda")
     solver.solve()
 
 if __name__ == "__main__":
+    print("Running fvm ")
+    print()
     main()

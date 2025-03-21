@@ -74,74 +74,45 @@ class TSolver(ABC):
     def _solve(self):
         E_props = self.eq.E_props
 
-        plot_i =  int(10 / self.dt)
+        plot_i = int(4 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
 
         for i in range(self.n_steps):
             t = i * self.dt
             with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
                 new_Us = self._step(t)
-            #new_Us[:, 1] = new_Us[:, 1] *0.999
 
             # # Track total energy
-            primatives = self.cells.get_values()[0]
-            A = self.eq.mesh.areas.cuda()
-            Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
-            Ep = torch.log(primatives[:, 2]/0.1) * A
-            Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
+            # primatives = self.cells.get_values()[0]
+            # A = self.eq.mesh.areas.cuda()
+            # Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
+            # Ep = torch.log(primatives[:, 2]/0.1) * A
+            # Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
 
             # if t == 12:
             #     with open("save_state.pt", "wb") as f:
             #         torch.save(self.cells.state, f)
             #     exit(7)
 
-            if i % plot_i == 0 and t>1.2:
+            if i % plot_i == 0 and t>0:
                 c_print(f'{t = :.5g}', color="bright_yellow")
-                # print(f'{E_props.phi_lim.mean() = }')
 
                 primatives = self.cells.get_values()[0]
                 Xlims = None # [[0.45, 0.52], [0.77, 0.84]]
 
-
-                # print(f'Div:    {self.eq.div_all[7255].cpu()}, {self.eq.div_all[7147].cpu()} ')
-                #print(f'Visc:   {self.eq.div_visc[7255].cpu()}, {self.eq.div_visc[7147].cpu()}')
-                # print(f'Advect: {self.eq.div_advect[7255].cpu()}, {self.eq.div_advect[7147].cpu()}')
-                # print(f'P:      {self.eq.div_P[7255].cpu()}, {self.eq.div_P[7147].cpu()}')
-                # print(f'Grads:  {E_props.cell_grads[7255, :, 0].cpu()}, {E_props.cell_grads[7147, :, 0].cpu()}')
-
-                # adv_flux = self.eq.adv_flux.view(-1, 3)[:, :2]
-                # print(f'{adv_flux[[11010, 9993]] = }')
-                #self.eq.plot_flux(adv_flux, title=f"Vx t={i * self.dt :.4g}", Xlims=Xlims, show_index=True )
-                # print(f'{primatives[[7082, 7256, 7255]]}')
-                # [7225, 7147]
-                """ KT FLUX """
-                # div_KT = self.eq.div_KT.view(-1, 3)
-                # flux_KT = self.eq.KT_flux.view(-1, 3)
-                # print(f'{div_KT[14580] = }')
-                # print(f'{E_props.cell_grads[14580, :, 0] = }')
-                # print(f'{E_props.phi_lim[14580, :, 0] = }')
-
-                #print(f'{E_props.mesh.tri_to_edge[14580,] = }')     # [22358, 22368, 22359])
-                # print(f'{flux_KT.abs().mean() = }')
-                # print(f'{flux_KT[[22358, 22368, 22359]] = }')
-
-
                 # self.eq.plot_interp(E_props.cell_grads[:, 1, 0], title=f"Grad t={i * self.dt :.4g}", Xlims=Xlims)
-                # self.eq.plot_interp(div_KT[:, 0], title=f"KT t={i * self.dt :.4g}", Xlims=Xlims)
                 # self.eq.plot_cells(div_KT[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True, Xlims=Xlims)
-                # self.eq.plot_flux(flux_KT[:, 0], title=f"Vx t={i * self.dt :.4g}", Xlims=Xlims, show_index=True)
+                # self.eq.plot_flux(self.eq.div_V_face[:, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
 
-                # self.eq.plot_interp(E_props.phi_lim.mean(dim=1), title=f"Values at t={i * self.dt :.4g}", Xlims=Xlims)
 
                 self.eq.plot_interp(primatives[:], title=f"Values at t={i * self.dt :.4g}", Xlims=Xlims)
                 # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True, Xlims=Xlims)
 
 
-                # exit(34)
                 if torch.any(torch.isnan(primatives)):
                     #print(f'{primatives = }')
                     exit(9)
-                # exit("DONE PLOTTING")
+                exit("DONE PLOTTING")
 
             self.cells.update_cells(new_Us)
 
@@ -152,24 +123,20 @@ class TSolver(ABC):
         plt.plot(ts, E, label="Total Energy")
         plt.legend()
         plt.show()
-        #
-        # TVs = torch.stack(TVs, dim=0)
-        # plt.plot(ts, TVs, label="Total Variation")
-        # plt.legend()
-        # plt.show()
-        exit(9)
+
 
     @torch.inference_mode()
     def solve(self):
-        run = True
+        run = False
         if run:
             self._solve()
         else:
             self._solve_profile()
 
+
     def _solve_profile(self):
-        for _ in range(2):
-            new_Us = self._step()
+        for _ in range(5):
+            new_Us = self._step(0)
             self.cells.update_cells(new_Us)
 
         # import gc
@@ -204,8 +171,9 @@ class TSolver(ABC):
         ) as prof:
 
             for i in range(10):
+                t = i * self.dt
                 prof.step()
-                new_Us = self._step()
+                new_Us = self._step(t)
                 self.cells.update_cells(new_Us)
 
         print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
@@ -331,6 +299,7 @@ class RK2_SSP(TSolver):
         U_i_1 = 0.5 * U_i + 0.5 * (U_a + self.dt * self.eq.forward(prim_a, None, t+self.dt))
         return U_i_1
 
+
 class RK2_SSP3(TSolver):
     def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
         super().__init__(cells, dt, n_steps, eq=equation)
@@ -447,6 +416,7 @@ class Adams2(TSolver):
         self.prev_dUdt.append(dUdt_t)
 
         return U_t_1
+
 
 class Adams3PC(TSolver):
     """ Adams–Bashforth–Moulton predictor corrector 3 solver
