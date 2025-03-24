@@ -1,294 +1,287 @@
-import torch
+import numpy as np
 
 
-def rkc_coefficients(s: int, epsilon: float = 0.05, device=None, dtype=torch.float32):
-        """
-        Generate coefficients for a second-order Runge-Kutta-Chebyshev (RKC) method.
+class IMPRKCSolver:
+        def __init__(self, f, s, shat, eta=2 / 13):
+                """
+                Initialize the improved RKC solver.
 
-        Parameters:
-            s (int): Number of stages (must be >= 2).
-            epsilon (float): Damping parameter (typically a small positive number, e.g. 0.05).
-            device: torch.device (defaults to CPU).
-            dtype: torch data type (default: torch.float32).
+                Parameters:
+                -----------
+                f : callable
+                    Function f(t, y) defining the ODE y' = f(t,y). y must be a NumPy array.
+                s : int
+                    Classical stage number.
+                shat : int
+                    Extra stage number for improvement (typically 1 or a small integer).
+                eta : float, optional
+                    Damping parameter (default 2/13 for second–order method).
+                """
+                self.f = f
+                self.s = s
+                self.shat = shat
+                self.N = s + shat  # total number of stages for the method
+                self.eta = eta
+                self.theta = 1.0 / (shat + 1)
+                # Compute the second-order RKC coefficients and stage nodes.
+                self._compute_coefficients()
 
-        Returns:
-            dict: Dictionary with the following keys:
-                - "a": Tensor of a_j coefficients, j = 0,..., s.
-                - "mu": Tensor of mu_j coefficients (for j>=2; mu[0] and mu[1] are not used).
-                - "nu": Tensor of nu_j coefficients (for j>=2; nu[0] and nu[1] are not used).
-                - "kappa": Tensor of kappa_j coefficients (for j>=1; kappa[0] is not used).
+        @staticmethod
+        def _acosh(x):
+                return np.log(x + np.sqrt(x * x - 1))
 
-        The function uses the recurrences for Chebyshev polynomials:
-            T_0(x) = 1,   T_1(x) = x,   T_j(x) = 2*x*T_{j-1}(x) - T_{j-2}(x),
-        and for their derivatives:
-            T'_0(x) = 0,  T'_1(x) = 1,  T'_j(x) = 2*T_{j-1}(x) + 2*x*T'_{j-1}(x) - T'_{j-2}(x),
-        and the second derivative:
-            T''_0(x) = 0, T''_1(x) = 0, T''_j(x) = 4*T'_{j-1}(x) + 2*x*T''_{j-1}(x) - T''_{j-2}(x).
+        def _chebT(self, j, x):
+                # Chebyshev polynomial of first kind: T_j(x) = cosh(j*acosh(x)) for x>=1.
+                return np.cosh(j * self._acosh(x))
 
-        The coefficients are then computed as follows:
+        def _chebTprime(self, j, x):
+                # T'_j(x)= j*sinh(j*acosh(x))/sqrt(x^2-1)
+                return j * np.sinh(j * self._acosh(x)) / np.sqrt(x * x - 1)
 
-            b[j] = T''_j(w0) / (T'_j(w0))^2,  for j >= 2  (with b[0] and b[1] set equal to b[2])
-            a[j] = 1 - b[j]*T_j(w0)      for j = 0,...,s
+        def _chebTdoubleprime(self, j, x):
+                # T''_j(x)= j^2*cosh(j*acosh(x))/(x^2-1) - j*x*sinh(j*acosh(x))/( (x^2-1)**(3/2) )
+                return (j ** 2 * np.cosh(j * self._acosh(x)) / (x * x - 1)
+                        - j * x * np.sinh(j * self._acosh(x)) / ((x * x - 1) ** 1.5))
 
-            For j = 2:
-                mu[2] = 2*w0,  nu[2] = -1.
-            For j >= 3:
-                mu[j] = 2*b[j]*w0 / b[j-1],
-                nu[j] = -b[j] / b[j-2].
+        def _compute_coefficients(self):
+                """
+                Compute the coefficients for the second–order RKC method.
+                We compute arrays b, u, v, ũ (ut), γ̃ (gt) for j = 0,..., N.
+                (The index 0 is unused.)
 
-            Let w1 = T'_s(w0)/T''_s(w0) (assumed nonzero), then
-                kappa[2] = 2*w1,
-                for j >= 3: kappa[j] = 2*b[j]*w1 / b[j-1].
-            For the first stage, a common choice is kappa[1] = 1.
+                The formulas (for 2 ≤ j ≤ s, extended here to j=1,...,N) are:
 
-        (This is one possible formulation; in practice, minor variations exist.)
-        """
-        if s < 2:
-                raise ValueError("Number of stages s must be at least 2.")
+                    ω₀ = 1 + η/s²,
+                    ω₁ = T'_s(ω₀) / T''_s(ω₀),
 
-        device = device or torch.device('cpu')
+                    Choose b₀ = b₁ = b₂ = 1.
+                    For j ≥ 3, set
+                      b[j] = 1 / (T''_j(ω₀) * (T'_j(ω₀))²).
 
-        # Set w0 = 1 + epsilon / s^2
-        w0 = 1.0 + epsilon / (s ** 2)
-        # Allocate tensors for Chebyshev polynomials T, Tprime, Tpp for j = 0,..., s.
-        T = torch.zeros(s + 1, dtype=dtype, device=device)
-        Tprime = torch.zeros(s + 1, dtype=dtype, device=device)
-        Tpp = torch.zeros(s + 1, dtype=dtype, device=device)
+                    For j = 1:
+                      ũ₁ = b₁·ω₁.
+                    For j ≥ 2:
+                      u[j] = 2 ω₀ (b[j]/b[j-1]),
+                      v[j] = - (b[j]/b[j-2]),
+                      ũ[j] = 2 ω₁ (b[j]/b[j-1]),
+                      γ̃[j] = - (1 - b[j-1]*T_{j-1}(ω₀)) * ũ[j].
 
-        # Initialization
-        T[0] = 1.0
-        T[1] = w0
-        Tprime[0] = 0.0
-        Tprime[1] = 1.0
-        Tpp[0] = 0.0
-        Tpp[1] = 0.0
+                In addition, we compute the stage node values c[j] by the recurrence
+                    c₀ = 0,  c₁ = ũ₁,
+                    c[j] = u[j]*c[j-1] + v[j]*c[j-2] + ũ[j] + γ̃[j],   for j ≥ 2.
+                """
+                N = self.N
+                s = self.s
+                eta = self.eta
 
-        # Compute Chebyshev polynomials and derivatives for j = 2,..., s
-        for j in range(2, s + 1):
-                T[j] = 2.0 * w0 * T[j - 1] - T[j - 2]
-                Tprime[j] = 2.0 * T[j - 1] + 2.0 * w0 * Tprime[j - 1] - Tprime[j - 2]
-                Tpp[j] = 4.0 * Tprime[j - 1] + 2.0 * w0 * Tpp[j - 1] - Tpp[j - 2]
+                # ω₀ and ω₁ (note: ω₀ is based on the classical stage number s)
+                self.omega0 = 1 + eta / (s ** 2)
+                self.omega1 = self._chebTprime(s, self.omega0) / self._chebTdoubleprime(s, self.omega0)
 
-        # Allocate coefficient tensors (indices 0..s; not all entries are used)
-        b = torch.zeros(s + 1, dtype=dtype, device=device)
-        a = torch.zeros(s + 1, dtype=dtype, device=device)
-        c = torch.zeros(s + 1, dtype=dtype, device=device)
-        mu = torch.zeros(s + 1, dtype=dtype, device=device)
-        nu = torch.zeros(s + 1, dtype=dtype, device=device)
-        kappa = torch.zeros(s + 1, dtype=dtype, device=device)
+                # Allocate arrays (indices 0 .. N); index 0 is unused.
+                self.b = np.zeros(N + 1)
+                self.u = np.zeros(N + 1)
+                self.v = np.zeros(N + 1)
+                self.ut = np.zeros(N + 1)
+                self.gt = np.zeros(N + 1)
+                self.c = np.zeros(N + 1)  # stage nodes for evaluating f
 
-        # Compute b_j for j >= 2: b[j] = Tpp[j] / (Tprime[j]^2)
-        for j in range(2, s + 1):
-                b[j] = Tpp[j] / (Tprime[j] ** 2)
+                # Set b[0], b[1], b[2]
+                self.b[0] = 1.0
+                self.b[1] = 1.0
+                self.b[2] = 1.0
 
-        # Set b[0] and b[1] equal to b[2] to avoid division by zero issues later.
-        b[0] = b[2]
-        b[1] = b[2]
+                # For j >= 3, compute b[j] via the Chebyshev formulas.
+                for j in range(3, N + 1):
+                        Tprime = self._chebTprime(j, self.omega0)
+                        Tdd = self._chebTdoubleprime(j, self.omega0)
+                        self.b[j] = 1.0 / (Tdd * (Tprime ** 2))
 
-        # Compute a_j = 1 - b[j]*T[j] for j = 0,..., s
-        for j in range(0, s + 1):
-                a[j] = 1.0 - b[j] * T[j]
+                # For j = 1, set ũ₁ = b₁·ω₁.
+                self.ut[1] = self.b[1] * self.omega1
+                # For j >= 2, compute u[j], v[j], ũ[j], and γ̃[j].
+                for j in range(2, N + 1):
+                        self.u[j] = 2 * self.omega0 * (self.b[j] / self.b[j - 1])
+                        self.v[j] = - (self.b[j] / self.b[j - 2])
+                        self.ut[j] = 2 * self.omega1 * (self.b[j] / self.b[j - 1])
+                        self.gt[j] = - (1 - self.b[j - 1] * self._chebT(j - 1, self.omega0)) * self.ut[j]
 
-        # Compute mu and nu coefficients.
-        # For j = 2:
-        mu[2] = 2.0 * w0
-        nu[2] = -1.0
-        # For j = 3,..., s:
-        for j in range(3, s + 1):
-                mu[j] = 2.0 * b[j] * w0 / b[j - 1]
-                nu[j] = - b[j] / b[j - 2]
+                # Compute the stage nodes c[j]:
+                self.c[0] = 0.0
+                self.c[1] = self.ut[1]
+                for j in range(2, N + 1):
+                        self.c[j] = (self.u[j] * self.c[j - 1] +
+                                     self.v[j] * self.c[j - 2] +
+                                     self.ut[j] + self.gt[j])
 
-        # Compute w1 = Tprime[s] / Tpp[s] (assume Tpp[s] is nonzero)
-        if Tpp[s] == 0:
-                raise ValueError("Tpp[s] is zero; cannot compute w1.")
-        w1 = Tprime[s] / Tpp[s]
+        def _compute_cd_sequences(self):
+                """
+                Compute sequences c_j and d_j used for determining the parameters x₁ and x₂.
+                Here, we use the recurrences:
+                    C₀ = 0,  C₁ = ũ₁,
+                    C[j] = u[j]*C[j-1] + v[j]*C[j-2] + ũ[j] + γ̃[j],   for j ≥ 2,
 
-        # Compute kappa coefficients.
-        # A common choice is to set kappa[1] = 1.
-        kappa[1] = b[1] * w1
-        # For j = 2:
-        kappa[2] = 2.0 * w1
-        # For j = 3,..., s:
-        for j in range(3, s + 1):
-                kappa[j] = 2.0 * b[j] * w1 / b[j - 1]
+                    D₀ = 0,  D₁ = 0,
+                    D[j] = u[j]*D[j-1] + v[j]*D[j-2] + ũ[j]*C[j-1],   for j ≥ 2.
+                Returns:
+                    C, D : NumPy arrays of length N+1.
+                """
+                N = self.N
+                C = np.zeros(N + 1)
+                D = np.zeros(N + 1)
+                C[0] = 0.0
+                C[1] = self.ut[1]
+                D[0] = 0.0
+                D[1] = 0.0
+                for j in range(2, N + 1):
+                        C[j] = self.u[j] * C[j - 1] + self.v[j] * C[j - 2] + self.ut[j] + self.gt[j]
+                        D[j] = self.u[j] * D[j - 1] + self.v[j] * D[j - 2] + self.ut[j] * C[j - 1]
+                return C, D
 
-        c[0] = 0.0
-        c[1] = b[1] * w1
-        for j in range(2, s + 1):
-                c[j] = (T[j] - 1) / (T[-1] - 1)
-        print(c)
-        # Return the computed coefficients.
-        return {
-                "a": a,  # a_j, j = 0,..., s
-                "mu": mu,  # mu_j for j>=2 (mu[0] and mu[1] are not used)
-                "nu": nu,  # nu_j for j>=2 (nu[0] and nu[1] are not used)
-                "kappa": kappa,  # kappa_j for j>=1 (kappa[0] is not used)
-                "c": c,
-                # Also returning these for debugging/inspection if needed:
-                "_": None,
-                "T": T,
-                "Tprime": Tprime,
-                "Tpp": Tpp,
-                "w0": w0,
-                "b": b,
-                "w1": w1
-        }
+        def _compute_hat(self, seq, j):
+                """
+                Compute the weighted (hat) value for index j from sequence seq:
+                    hat_seq = sum_{l=0}^{j-1} theta*(1-theta)^l * seq[j-l]
+                """
+                hat_val = 0.0
+                for l in range(j):
+                        hat_val += self.theta * (1 - self.theta) ** l * seq[j - l]
+                return hat_val
 
+        def _compute_x1_x2(self):
+                """
+                Compute the parameters x₁ and x₂ ensuring second order accuracy.
+                Using:
+                    x₁ = (0.5·hat_C(N) - hat_D(N)) / (hat_C(N)*hat_D(N-1) - hat_C(N-1)*hat_D(N)),
+                    x₂ = (1 - x₁·hat_C(N-1)) / hat_C(N),
+                where N = s+shat.
+                """
+                C, D = self._compute_cd_sequences()
+                # N = self.N
+                # hatC_Nm1 = self._compute_hat(C, N - 1)
+                # hatC_N = self._compute_hat(C, N)
+                # hatD_Nm1 = self._compute_hat(D, N - 1)
+                # hatD_N = self._compute_hat(D, N)
+                # numerator = 0.5 * hatC_N - hatD_N
+                # denominator = hatC_N * hatD_Nm1 - hatC_Nm1 * hatD_N
+                # x1 = numerator / denominator
+                # x2 = (1 - x1 * hatC_Nm1) / hatC_N
 
+                N = self.N
+                hatC_Nm1 = self._compute_hat(C, N - 1)
+                hatC_N = self._compute_hat(C, N)
+                numerator = (1-hatC_N)
+                denominator = hatC_Nm1 - hatC_N
+                x1 = numerator / denominator
+                x2 = 1-x1
 
+                return x1, x2
 
-def rkc_step(f, t, U, h, s, coeffs, device=None, dtype=torch.float32):
-        """
-        Perform one integration step using the second-order Runge-Kutta-Chebyshev (RKC) method.
+        def step(self, t, y, h):
+                """
+                Take one time step from (t, y) with step size h using the second order IMPRKC method.
 
-        Parameters:
-            f (callable): Function f(t, U) returning dU/dt.
-            t (float or torch scalar): Current time.
-            U (torch.Tensor): Current solution (can be vector or tensor).
-            h (float): Time step size.
-            s (int): Number of stages (>= 2).
-            device: torch.device (defaults to CPU if None).
-            dtype: torch data type (default: torch.float32).
+                The method computes stage values:
+                  K₀ = y,      ˆK₀ = y,
+                  K₁ = y + ũ₁·h·F₀,  ˆK₁ = α K₁ + (1-α)ˆK₀,
+                  for j = 2,..., N:
+                     Kⱼ = uⱼ Kⱼ₋₁ + vⱼ Kⱼ₋₂ + (1 - uⱼ - vⱼ) y + ũⱼ·h·Fⱼ₋₁ + γ̃ⱼ·h·F₀,
+                     ˆKⱼ = α Kⱼ + (1-α)ˆKⱼ₋₁,
+                  and then
+                     yₙ₊₁ = (1 - x₁ - x₂) y + x₁ˆK_{N-1} + x₂ˆK_N.
 
-        Returns:
-            torch.Tensor: The solution at time t+h (i.e. U_{n+1}).
+                Here, F₀ = f(t, y) and Fⱼ = f(t + cⱼ·h, Kⱼ) for j>=1.
+                """
+                N = self.N
+                shat = self.shat
+                alpha = 1.0 / (shat + 1)
+                beta = 1 - alpha
 
-        The recurrence used is:
+                # Stage storage: K[j] and ˆK[j]
+                K = [None] * (N + 1)
+                Khat = [None] * (N + 1)
 
-            U_0 = U.
-            f_0 = f(t, U_0).
-            U_1 = U_0 + kappa[1]*h*f_0.
-            For j = 2,..., s:
-                U_j = U_0 + mu[j]*(U_{j-1} - U_0)
-                            + nu[j]*(U_{j-2} - U_0)
-                            + kappa[j]*h*( f(t + c[j-1]*h, U_{j-1}) - a[j-1]*f_0 ).
+                # Stage 0.
+                K[0] = y.copy()
+                Khat[0] = y.copy()
+                F0 = self.f(t, y)
 
-        Here, the coefficients (a, mu, nu, kappa) are computed from Chebyshev recurrences,
-        and the nodes c (with c[0]=0 and c[s]=1) are taken as
-            c[j] = 0.5*(1 - cos(pi*j/s)),
-        which are the Chebyshev nodes scaled to [0,1].
-        """
-        device = device or torch.device("cpu")
+                # Stage 1.
+                K[1] = y + self.ut[1] * h * F0
+                Khat[1] = alpha * K[1] + beta * Khat[0]
 
-        # Get RKC coefficients from our helper function.
-        a = coeffs["a"]  # shape: (s+1,)
-        mu = coeffs["mu"]  # shape: (s+1,), mu[0] and mu[1] not used
-        nu = coeffs["nu"]  # shape: (s+1,), nu[0] and nu[1] not used
-        kappa = coeffs["kappa"]  # shape: (s+1,), kappa[0] is not used
+                # For stages j = 2,..., N.
+                for j in range(2, N + 1):
+                        # Evaluate f at stage: use t + c[j-1]*h and K[j-1]
+                        t_stage = t + self.c[j - 1] * h
+                        Fjm1 = self.f(t_stage, K[j - 1])
+                        K[j] = (self.u[j] * K[j - 1] + self.v[j] * K[j - 2] +
+                                (1 - self.u[j] - self.v[j]) * y +
+                                self.ut[j] * h * Fjm1 +
+                                self.gt[j] * h * F0)
+                        Khat[j] = alpha * K[j] + beta * Khat[j - 1]
 
-        # Compute Chebyshev nodes on [0,1] for stage time shifts.
-        # Here we use: c[j] = 0.5*(1 - cos(pi * j/s)), for j = 0,..., s.
-        j_arr = torch.arange(0, s + 1, dtype=dtype, device=device)
-        # c = 0.5 * (1 - torch.cos(torch.pi * j_arr / s))
-        # print(f'{c = }')
-        c = coeffs["c"]
+                # Compute parameters x₁ and x₂.
+                x1, x2 = self._compute_x1_x2()
+                print(f'{x1 = }, {x2 = }')
+                # Final update.
+                y_next = (1 - x1 - x2) * y + x1 * Khat[N - 1] + x2 * Khat[N]
+                t_next = t + h
+                return t_next, y_next
 
-        # Stage 0: starting value.
-        U0 = U
-        f0 = f(t, U0)
-
-        # Stage 1: an Euler-like step.
-        U1 = U0 + kappa[1] * h * f0
-        # Evaluate f at t + c[1]*h, U1.
-
-        # Initialize previous stage values.
-        U_prev2 = U0  # corresponds to U_{j-2}
-        U_prev = U1  # corresponds to U_{j-1}
-
-        # Loop over stages j = 2,..., s.
-        for j in range(2, s + 1):
-                # For the recurrence, evaluate f at shifted time for the previous stage.
-                t_eval = t + c[j - 1] * h
-                f_eval = f(t_eval, U_prev)
-                # RKC recurrence:
-                Uj = U0 + mu[j] * (U_prev - U0) + nu[j] * (U_prev2 - U0) \
-                     + kappa[j] * h * (f_eval - a[j - 1] * f0)
-
-                # Update previous stage values for next iteration.
-                U_prev2 = U_prev
-                U_prev = Uj
-        y_next = Uj
-
-        #h = 0.1
-        # Assume y and f are defined
-
-        # # Precomputed coefficients for s=5 (would be computed as above in real code)
-        # kappa1 = 0.0313
-        # mu2 = 2.004
-        # nu2 = -1.0
-        # kappa2 = 0.2519
-        # a1 = 0.00784#0.7505
-        # mu3 = 2.364
-        # nu3 = -1.1797
-        # kappa3 = 0.2972
-        # a2 = 0.7490
-        # mu4 = 2.0999
-        # nu4 = -1.2361
-        # kappa4 = 0.2639
-        # a3 = 0.70095
-        # mu5 = 2.0351
-        # nu5 = -1.0641
-        # kappa5 = 0.2558
-        # a4 = 0.68230
-        # # Stage 0
-        # Y0 = U
-        # F0 = f(t, Y0)
-        # # Stage 1
-        # Y1 = Y0 + kappa1 * h * F0
-        # F1 = f(t + 0 * h, Y1)  # c1 would be kappa1 in this formulation
-        # # Stage 2
-        # Y2 = Y0 + mu2 * (Y1 - Y0) + nu2 * (Y0 - Y0) + kappa2 * h * (F1 - a1 * F0)
-        # F2 = f(t + 0 * h, Y2)
-        # # Stage 3
-        # Y3 = Y0 + mu3 * (Y2 - Y0) + nu3 * (Y1 - Y0) + kappa3 * h * (F2 - a2 * F0)
-        # F3 = f(t + 0 * h, Y3)
-        # # Stage 4
-        # Y4 = Y0 + mu4 * (Y3 - Y0) + nu4 * (Y2 - Y0) + kappa4 * h * (F3 - a3 * F0)
-        # F4 = f(t + 0 * h, Y4)
-        # # Stage 5
-        # Y5 = Y0 + mu5 * (Y4 - Y0) + nu5 * (Y3 - Y0) + kappa5 * h * (F4 - a4 * F0)
-        # # Y5 is the result after one step of size h
-        # y_next = Y5
-
-        # At the end of the loop, U_prev is U_s, the solution at t+h.
-        return y_next
+        def solve(self, t0, T, y0, h):
+                """
+                Solve the ODE from time t0 to T with initial value y0 using fixed step size h.
+                Returns:
+                    t_vals : 1D NumPy array of time points.
+                    y_vals : 2D NumPy array; each row is the solution at a time point.
+                """
+                t = t0
+                y = y0.copy()
+                t_vals = [t]
+                y_vals = [y.copy()]
+                while t < T:
+                        t, y = self.step(t, y, h)
+                        t_vals.append(t)
+                        y_vals.append(y.copy())
+                return np.array(t_vals), np.array(y_vals)
 
 
-# Example usage:
+# ---------------------
+# Simple Test Case
+# ---------------------
 if __name__ == "__main__":
         from matplotlib import pyplot as plt
 
-        # Define a sample ODE: dU/dt = -lambda * U, for a stiff decay.
-        lambda_val = -100.0
+        # Test ODE: y' = -λ y, with λ = 1, so the exact solution is y(t)=y0*exp(-t)
+        coef = -50
+        def f(t, y):
+                return coef * y
 
 
-        def f(t, U):
-                return lambda_val * U
-
-
-        # Initial condition, time, and step size.
-        U0 = torch.tensor([1.0], dtype=torch.float32)
+        # Set initial condition and time interval.
+        y0 = np.array([1.0])
         t0 = 0.0
-        h = 0.015  # step size; with RKC, h can be larger than the explicit Euler limit for stiff problems
-        s = 5  # number of stages
+        T = 1
+        h = 0.01
 
+        # Choose classical stage number s and shat (extra stage)
+        s = 9
+        shat = 1
 
-        coeffs = rkc_coefficients(s, epsilon=2/13)
+        # Create the solver instance.
+        solver = IMPRKCSolver(f, s, shat, eta=2 / 13)
 
-        # Take one RKC step.
-        Us = []
-        for i in range(100):
-                t = t0 + i * h
-                Us.append(U0)
-                U0 = rkc_step(f, t, U0, h, s, coeffs=coeffs)
+        # Solve the ODE.
+        t_vals, y_vals = solver.solve(t0, T, y0, h)
 
-                print(t)
+        # Print final value and compare to exact solution.
+        y_exact = y0 * np.exp(coef * t_vals)
 
-        plt.plot(Us)
+        print("Final t =", t_vals[-1])
+        print("Computed y =", y_vals[-1])
+        print("Exact y    =", y_exact[-1])
 
-        U0 = torch.tensor([1.0], dtype=torch.float32)
-        ts = torch.range(0, 100) * h
-        true_Us = torch.exp(lambda_val * ts)
-        plt.plot(true_Us, 'r--')
-
+        plt.plot(t_vals, y_vals)
+        plt.plot(t_vals, y_exact.squeeze())
         plt.show()

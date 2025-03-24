@@ -295,9 +295,13 @@ def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
         # Filter the face-based values for the triangles inside the region.
         new_facecolors = values[i][in_region]
 
+        if i == 2:
+            vmin, vmax = None, None
+        else:
+            vmin, vmax = None, None
         # Plot using the new triangulation and corresponding facecolors.
         tc = ax.tripcolor(new_triang, facecolors=new_facecolors, edgecolors='none',
-                          cmap='viridis', shading='flat')
+                          cmap='viridis', shading='flat', vmin=vmin, vmax=vmax)
         fig.colorbar(tc, ax=ax)
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)

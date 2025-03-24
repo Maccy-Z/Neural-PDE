@@ -7,7 +7,7 @@ import math
 from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges, plot_interp
 from pde.time_fvm.fvm_mesh import FVMMesh
 from pde.time_fvm.edge_process import FVMEdgeInfo, create_selection_matrix
-from pde.time_fvm.t_solvers import FVMCells, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Butcher #, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4
+from pde.time_fvm.t_solvers import FVMCells, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Butcher, Adams4PC #, IMPRKCSolver #, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4
 from pde.time_fvm.config_fvm import ConfigFVM
 
 def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
@@ -370,16 +370,16 @@ class FVMEquation:
         self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges, mesh.areas)
 
         # Physical parameters
-        self.c2 = cfg.c ** 2     # Speed of sound squared
+        self.c = cfg.c      # Speed of sound squared
 
         self.rho_advect = AdvectDensity(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.P_force = PressureForce(E_props, self.c2, V_dims=[0, 1], p_dim=2, device=device)
+        self.P_force = PressureForce(E_props, self.c**2, V_dims=[0, 1], p_dim=2, device=device)
         self.U_advect = AdvectVector(E_props, V_dims=[0, 1], rho_dim=2, device=device)
         self.U_visc = Viscosity(E_props, mesh.areas, flux_mat=self.flux_mat, cfg=cfg, V_dims=[0, 1], device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
 
 
-        self.t_solver = RK3_SSP4(self.cells, cfg.dt, cfg.n_iter, self)
+        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
 
         c_print("Done FVMEquation", color="bright_magenta")
 
@@ -480,7 +480,7 @@ class FVMEquation:
         fluxes += self.rho_advect.edge_fluxes()
 
         # MUSCL term
-        fluxes += self.KT_diff.edge_fluxes(math.sqrt(self.c2))
+        fluxes += self.KT_diff.edge_fluxes(self.c)
 
         divergence = self._flux_to_div(fluxes)
         divergence += self.U_visc.divergence(primatives, self.cfg.dt)

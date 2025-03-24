@@ -1,10 +1,14 @@
-import torch
+from collections import deque
 
+a = deque(maxlen=4)
 
-A = torch.tensor([[1., 2], [3, 4]]).to_sparse_coo().requires_grad_(True)
-b = torch.tensor([1., 2])
+a.append(1)
+a.append(2)
+a.append(3)
+a.append(4)
 
-y = torch.matmul(A, b)
-
-print(y.grad_fn.next_functions)
+print(a[-1])
+print(a[-2])
+a.append(5)
+print(a)
 
