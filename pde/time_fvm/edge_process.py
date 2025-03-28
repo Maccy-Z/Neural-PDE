@@ -411,6 +411,7 @@ def lift_sparse_matrix(A_old, n_comp):
     A_new = torch.sparse_coo_tensor(new_indices, new_vals, size=new_size, device=device)
     return A_new
 
+
 class FarfieldBC:
     def __init__(self, cfg: ConfigFVM, farfield_mask, rho_far):
         self.cfg = cfg
@@ -488,6 +489,8 @@ class FVMEdgeInfo:
     # Shared
     edge_len: torch.Tensor  # shape = (n_edges, 1)
     normals: torch.Tensor  # shape = (n_edges, 2)
+    V_insertion_matrix: torch.Tensor  # shape = (n_edges*n_component, n_edges*2)
+
     # edge_to_tri_comb: torch.Tensor  # shape = (n_edges, 2)
     # Main mesh
     n_edges_m: int
@@ -511,6 +514,7 @@ class FVMEdgeInfo:
     neigh_combine: torch.Tensor # shape = (n_cell, 2). Used for masking neighbors of cell incl boundary edges, in format [Us, U_face_bc]
 
     # Temporary Variables
+    dUf_dUc: tuple[torch.Tensor, torch.Tensor] # shape = [N_component * n_edges, N_component * n_cells]. Jacobian of face w.r.t. cell
     grad_faces_n: torch.Tensor  # shape = (n_edges, N_component)  n . grad(u) on faces
     # U_face: torch.Tensor  # shape = (n_edges, 2, N_component)  Face values, on both sides of the face
     # Primitive face variables
@@ -558,13 +562,18 @@ class FVMEdgeInfo:
         self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_component, [0, 1], device=device).to_sparse_csr()
         c_print(f'V_insertion_matrix done', color="magenta")
 
-
-        del self.edge_dists_bc, self.cell_dist, self.edge_to_tri_main, self.dirich_val, self.neumann_val, #self.edge_to_tri_bc
-        del self.dirich_mask, self.neumann_mask
-        torch.cuda.empty_cache()
+        self.dUf_dUc = self._build_dUf_dUc()
 
         c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
+    def clear_temp(self):
+        del self.edge_dists_bc, self.cell_dist, self.edge_to_tri_main, self.dirich_val, self.neumann_val
+        del self.dirich_mask, self.neumann_mask
+        del self.A_face_grad, self.b_face_grad
+        del self.dUf_dUc
+
+        torch.cuda.empty_cache()
+        c_print(f'Deleted temp variables', color="magenta")
 
     def _build_spm_face_grads(self):
         n_edges = self.edge_to_tri_main.shape[0]  # number of faces (edges)
@@ -687,6 +696,65 @@ class FVMEdgeInfo:
         # For Neumann entries, add the offset computed from the edge distance.
         # Here, we select the proper component value from self.neumann_val using comp_idx.
         self.b_bc[neum_mask] = self.neumann_val[comp_idx[neum_mask]] / self.edge_dists_bc.flatten()[neum_mask]
+        #
+        # """ Regrouping """
+        # flat_rows = self.tri_to_edge * 2 + self.tri_edge_signs
+        # cols = torch.arange(3*self.n_cells, device=self.device)
+        # # All nonzero values are 1.0:
+        # vals = torch.ones_like(flat_rows, dtype=torch.float32)
+        # # Build the sparse selection matrix: shape (n_edges*2, n_cell_entries)
+        # self.S_cells = torch.sparse_coo_tensor(
+        #     torch.stack([flat_rows, cols]),
+        #     vals,
+        #     size=(self.n_edges * 2, 3*self.n_cells)
+        # ).to_sparse_csr()
+
+
+    def _build_dUf_dUc(self):
+        """ Build sparse matrix for dU_f/dU_c - gradient of face val w.r.t. cell values.
+            U_cell = [interleave(mom_x | mom_y | rho)], shape = [3*n_cell]
+            U_face = A(U_cell)              shape = [3*n_edges, 2], second dim is Left / Right side of face.
+            d(U_f_i, L/R)/d(U_c_j) = :
+                                0 if cell_j doesnt have face_i  - Or computing wrong mom_x, mom_y, rho component.
+                                1 if face_i is on cell_j and cell_j is on L/R side.
+            Returns.shape = 2 * [3*n_edges, 3*n_cells]
+        """
+
+        n_edges, n_cells = self.n_edges, self.n_cells
+        rows_left = []
+        cols_left = []
+        rows_right = []
+        cols_right = []
+        # Loop over each edge and each component
+        for e, adj_cell in self.mesh.edge_to_tri.items():
+            if adj_cell.numel() == 2:  # Only interior edges have gradient
+                for comp in range(3):
+                    i = 3 * e + comp
+                    # Left side: contribution from the left cell.
+                    rows_left.append(i)
+                    cols_left.append(3 * int(adj_cell[0].item()) + comp)
+                    # Right side: contribution from the right cell.
+                    rows_right.append(i)
+                    cols_right.append(3 * int(adj_cell[1].item()) + comp)
+
+        # Convert indices to tensors.
+        rows_left = torch.tensor(rows_left, dtype=torch.long)
+        cols_left = torch.tensor(cols_left, dtype=torch.long)
+        rows_right = torch.tensor(rows_right, dtype=torch.long)
+        cols_right = torch.tensor(cols_right, dtype=torch.long)
+
+        # Create the constant skeleton sparse matrices (values are 1).
+        indices_left = torch.stack([rows_left, cols_left], dim=0)
+        indices_right = torch.stack([rows_right, cols_right], dim=0)
+        ones_left = torch.ones(rows_left.size(0))
+        ones_right = torch.ones(rows_right.size(0))
+
+        dUfL_dUc = torch.sparse_coo_tensor(indices_left, ones_left, size=(3 * n_edges, 3 * n_cells), dtype=torch.int16)
+        dUfR_dUc = torch.sparse_coo_tensor(indices_right, ones_right, size=(3 * n_edges, 3 * n_cells), dtype=torch.int16)
+
+        #dUfL_dUc, dUfR_dUc = dUfL_dUc.to_sparse_csr(), dUfR_dUc.to_sparse_csr()
+        dUfL_dUc, dUfR_dUc = dUfL_dUc.cuda(non_blocking=True), dUfR_dUc.cuda(non_blocking=True)
+        return dUfL_dUc, dUfR_dUc
 
 
     def _init_bc(self, bc_tags: dict[int, Edge]):
@@ -741,6 +809,7 @@ class FVMEdgeInfo:
         # self.inv_wall_mat = torch.inverse(wall_matrix).to(self.device)
         # self.wall_vects = wall_vects.to(self.device)
 
+
     @torch.compile()
     def precompute_shared(self, Us):
         """ Precompute shared values that are used multiple times later.
@@ -750,17 +819,6 @@ class FVMEdgeInfo:
         Us_cell_face = torch.cat([Us, U_face_bc])        # shape = [n_cells + n_edges_bc, n_component]
         cell_grads = self._cell_grads(Us_cell_face) # shape = [n_cells, 2, n_component]
         # self.grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_component]
-
-        # # Bulk viscosity term: Compute divergence using lstsq gradient, interpolate to faces and limit.
-        # div_V = cell_grads[:, 0, 0] + cell_grads[:, 1, 1]
-        # div_V = - div_V.unsqueeze(-1)
-        # div_V_bc = div_V[self.edge_to_tri_bc]#torch.zeros((self.n_edges_bc, 1), device=self.device)
-        # div_V_cell_bc = torch.cat([div_V, div_V_bc], dim=0)  # shape = [n_cells + n_edges_bc, 1]
-        # div_V_grads = self._cell_grads(div_V_cell_bc)
-        #
-        # Us = torch.cat([Us, div_V], dim=1)      # shape = [n_cells, n_component+1]
-        # U_face_bc = torch.cat([U_face_bc, div_V_bc], dim=1)      # shape = [n_edges_bc, n_component+1]
-        # cell_grads = torch.cat([cell_grads, div_V_grads], dim=2)        # shape = [n_cells + n_edges_bc, n_component+1]
 
         # Compute limited face values,
         Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # shape = [n_cells, 3, n_component]
@@ -772,10 +830,16 @@ class FVMEdgeInfo:
         div_V = div_V.repeat_interleave(3).unsqueeze(-1)            # shape = [3*n_cells, 1]
         Us_face = torch.cat([Us_face.view(3*self.n_cells, self.n_component), div_V], dim=-1)        # shape = [3*n_cells, n_component+1]
 
+
+        # # Us_face.shape = [n_cells, 3, n_component]
+        # U_face_flat = torch.mm(self.S_cells, Us_face.view(3*self.n_cells, 3))
+        # U_face_all = U_face_flat.view(self.n_edges, 2, self.n_component)
+
         # Project to left and right face values - (Very slow step so vectorise over all components)
-        U_face_all = torch.empty((self.n_edges, 2, self.n_component+1), device=self.device)
-        U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face #Us_face.view(3*self.n_cells, -1)
+        U_face_all = torch.zeros((self.n_edges, 2, self.n_component+1), device=self.device)
+        U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face.view(3*self.n_cells, -1)
         U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)      # Boundary conditions are fixed as is.
+
 
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]

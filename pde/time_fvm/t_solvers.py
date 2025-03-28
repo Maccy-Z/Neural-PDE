@@ -6,6 +6,7 @@ from codetiming import Timer
 from matplotlib import pyplot as plt
 import torch.profiler
 from collections import deque
+import math
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ class TSolver(ABC):
     def _solve(self):
         E_props = self.eq.E_props
 
-        plot_i = int(2 / self.dt)
+        plot_i = int(0.2 / self.dt)
         Eks, Eps, ts, TVs = [], [], [], []
 
         for i in range(self.n_steps):
@@ -117,7 +118,8 @@ class TSolver(ABC):
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
-                # exit("DONE PLOTTING")
+                # if t>0.2:
+                #     exit("DONE PLOTTING")
 
         Eks, Eps = torch.tensor(Eks), torch.tensor(Eps)
         E = Eks + Eps
@@ -128,7 +130,8 @@ class TSolver(ABC):
         plt.show()
 
 
-    @torch.inference_mode()
+
+    #@torch.inference_mode()
     def solve(self):
         run = True
         if run:
@@ -199,18 +202,224 @@ class TSolver(ABC):
         return U_i_1
 
 
+# class Euler(TSolver):
+#     def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
+#         super().__init__(cells, dt, n_steps, eq=equation)
+#         self.eq = equation
+#
+#     def _step(self, t):
+#         """U^{i+1} = U^i + dt * f(U^i)"""
+#
+#         dUdt, _ = self.eq.forward(self.cells.get_values()[0], t=t)
+#         U_i_1 = self.cells.state + self.dt * dUdt
+#
+#         return U_i_1
+
 class Euler(TSolver):
     def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq = equation
 
     def _step(self, t):
-        """U^{i+1} = U^i + dt * f(U^i)"""
+        """
+            f(U) = J U + N(U)
+            U^{i+1} = U^i + dt * [J U^{i+1} + N(U^i)]
+            [I - dt * J] U^{i+1} = U^i + dt * N(U^i)
+        """
+        prims, U_i = self.cells.get_values()
+        dUdt, (J, diag_mask) = self.eq.forward(prims, t=t)
 
-        dUdt = self.eq.forward(self.cells.get_values()[0], t=t)
-        U_i_1 = self.cells.state + self.dt * dUdt
+        n = J.shape[0]
 
-        return U_i_1
+        U_i_f = U_i.flatten()
+        L_U_i_f = J @ U_i_f
+        N_i = dUdt.flatten() - L_U_i_f
+
+        # A = I - self.dt * J
+        J_val = - self.dt * J.values()
+        J_val[diag_mask] += 1
+        A = torch.sparse_csr_tensor(J.crow_indices(), J.col_indices(), J_val, (n, n))
+
+        b = U_i_f + self.dt * N_i
+        #
+        U_i_1 = self._spsolve(A, b)
+        # U_i_1 = U_i_f + self.dt * (L_U_i_f + N_i)
+        # U_i_1 = U_i + self.dt * dUdt
+        return U_i_1.view(-1, 3)
+
+    def _spsolve(self, A, b):
+        import cupy as cp
+        import cupyx.scipy.sparse as cusparse
+        from pde.solvers.gmres import gmres
+        import cupyx.scipy.sparse.linalg as cuslinalg
+
+        cp_crow_indices = cp.from_dlpack(A.crow_indices())
+        cp_col_indices = cp.from_dlpack(A.col_indices())
+        cp_values = cp.from_dlpack(A.values())
+
+        # Build a CuPy CSR matrix
+        A = cusparse.csr_matrix((cp_values, cp_col_indices, cp_crow_indices), shape=A.shape)
+        b = cp.from_dlpack(b)
+
+        # x = cuslinalg.spsolve(A, b)
+        x, info = gmres(A, b, maxiter=4, restart=4)
+
+        # print(info)
+        x = torch.from_dlpack(x)
+
+        assert not torch.isnan(x).any()
+        return x
+
+
+class IMEX(TSolver):
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
+        super().__init__(cells, dt, n_steps, eq=equation)
+        self.eq = equation
+
+        # Explicit terms
+        self.A_hat = torch.tensor([
+            [0.0, 0,],
+            [1, 0.0, ]
+        ], dtype=torch.float32)
+
+        self.b_hat = torch.tensor([1/2, 1/2], dtype=torch.float32)
+        self.c_hat = torch.tensor([0.0, 1], dtype=torch.float32)
+        # Implicit terms
+        gamma = 1 - 1 / math.sqrt(2)
+        self.A = torch.tensor([
+            [gamma, 0,],
+            [1-2*gamma, gamma,]
+        ], dtype=torch.float32)
+
+        self.b = torch.tensor([gamma, 1-gamma], dtype=torch.float32)
+        self.c = torch.tensor([1/2, 1/2], dtype=torch.float32)
+
+        # """  IMEX-SSP3(3,3,2) """
+        # # Explicit terms
+        # self.A_hat = torch.tensor([
+        #     [0.0, 0, 0],
+        #     [1., 0, 0],
+        #     [1/4, 1/4, 0],
+        # ], dtype=torch.float32)
+        #
+        # self.b_hat = torch.tensor([1/6, 1/6, 2/3], dtype=torch.float32)
+        # self.c_hat = torch.tensor([0.0, 1, 1/2], dtype=torch.float32)
+        # # Implicit terms
+        # gamma = 1 - 1 / math.sqrt(2)
+        # self.A = torch.tensor([
+        #     [gamma, 0, 0.],
+        #     [1 - 2 * gamma, gamma, 0],
+        #     [1/2 - gamma, 0, gamma],
+        # ], dtype=torch.float32)
+        #
+        # self.b = torch.tensor([1/6, 1/6, 2/3], dtype=torch.float32)
+        # self.c = torch.tensor([gamma, 1-gamma, 1/2], dtype=torch.float32)
+
+        """ IMEX-SSP2(3,2,2) """
+        # # Explicit terms
+        # self.A_hat = torch.tensor([
+        #     [0.0, 0, 0],
+        #     [0, 0, 0],
+        #     [0, 1, 0],
+        # ], dtype=torch.float32)
+        #
+        # self.b_hat = torch.tensor([0, 1/2, 1/2], dtype=torch.float32)
+        # self.c_hat = torch.tensor([0.0, 0, 1], dtype=torch.float32)
+        # # Implicit terms
+        # self.A = torch.tensor([
+        #     [1/2, 0, 0.],
+        #     [-1/2, 1/2, 0],
+        #     [0, 1/2, 1/2],
+        # ], dtype=torch.float32)
+        #
+        # self.b = torch.tensor([0, 1/2, 1/2], dtype=torch.float32)
+        # self.c = torch.tensor([1/2, 0, 1], dtype=torch.float32)
+
+    def _get_parts(self, U, t):
+        """ Forward equation, and get N and J """
+        dUdt, (J, diag_mask) = self._forward(U, t)
+
+        G_U_f = J @ U.flatten()
+        N = dUdt.flatten() - G_U_f
+
+        return N, G_U_f, J, diag_mask
+
+    def _get_jacobian(self, U, t):
+        """ Forward equation, and get N and J """
+        J, diag_mask = self.eq.get_jacobian(self.cells.convert_state_to_value(U)[0], t)
+
+        return J, diag_mask
+
+    def _step(self, t):
+        """
+            f(U) = J U + N(U)
+            U_i = U_0 + dt * [sum_j hat(a)_ij N(u_j) + sum_j a_ij (J@u_j)]
+        """
+        n = self.eq.E_props.n_cells * self.eq.E_props.n_component
+        stages = self.A.shape[0]
+
+        U_0 = self.cells.state
+
+        Ns = torch.zeros([stages, n], device=self.eq.device)
+        Gs = torch.zeros([stages, n], device=self.eq.device)
+
+        J, diag_mask = self._get_jacobian(U_0, t)
+        U0_f = U_0.flatten()
+
+        for i in range(stages):
+
+            # Explicit right side
+            RHS = U0_f
+            for j in range(i):
+                RHS = RHS + self.dt * (self.A_hat[i, j] * Ns[j] + self.A[i, j] * Gs[j])
+            # Implicit left contribution: I - dt * J
+            I_m_dtJ = - self.dt * self.A[i, i] * J.values()
+            # I_m_dtJ = torch.zeros_like(J.values())
+            I_m_dtJ[diag_mask] += 1
+            I_m_dtJ = torch.sparse_csr_tensor(J.crow_indices(), J.col_indices(), I_m_dtJ, (n, n))
+            # Solve (I - dt * J) U_{i+1} = RHS(U_i)
+            # print(f'{i}, {torch.any(torch.isnan(RHS))}')
+            U_i_1 = self._spsolve(I_m_dtJ, RHS)
+            # Update buffers with new values
+            N_i, G_i, J, diag_mask = self._get_parts(U_i_1.view(-1, 3), t + self.c[i]*self.dt)
+            Ns[i] = N_i
+            Gs[i] = G_i
+
+        # b = U + self.dt * N
+
+        # U_i_1 = U_i_f + self.dt * (L_U_i_f + N_i)
+        # U_i_1 = U_i + self.dt * dUdt
+        U_next = U0_f
+        for i in range(stages):
+            U_next = U_next + self.dt * (self.b_hat[i] * Ns[i] + self.b[i] * Gs[i])
+
+        return U_next.view(-1, 3)
+
+    def _spsolve(self, A, b):
+        import cupy as cp
+        import cupyx.scipy.sparse as cusparse
+        from pde.solvers.gmres import gmres
+        import cupyx.scipy.sparse.linalg as cuslinalg
+
+        cp_crow_indices = cp.from_dlpack(A.crow_indices())
+        cp_col_indices = cp.from_dlpack(A.col_indices())
+        cp_values = cp.from_dlpack(A.values())
+
+        # Build a CuPy CSR matrix
+        A = cusparse.csr_matrix((cp_values, cp_col_indices, cp_crow_indices), shape=A.shape)
+        b = cp.from_dlpack(b)
+
+        # x = cuslinalg.spsolve(A, b)
+        x, info = gmres(A, b, maxiter=10, restart=10)
+
+        # print(info)
+        x = torch.from_dlpack(x)
+
+        assert not torch.isnan(x).any()
+        return x
+
+    def _forward(self, U, t):
+        return self.eq.forward(self.cells.convert_state_to_value(U)[0], t)
 
 
 class ExplMidpoint(TSolver):
@@ -603,9 +812,6 @@ class Butcher(TSolver):
                 increment = 0
             else:
                 # Compute the increment for y using previous stages
-                # increment = torch.zeros_like(state_0)
-                # for j in range(i):
-                #     increment += self.A[i, j] * k[j]
                 increment = (self.A[i, :i].unsqueeze(-1) * k[:i].view(i, -1)).sum(dim=0)
                 increment = increment.view(state_0.shape)
             # Evaluate the derivative at the stage time and state
