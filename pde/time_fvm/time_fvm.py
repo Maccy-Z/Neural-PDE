@@ -7,7 +7,7 @@ import math
 from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges, plot_interp
 from pde.time_fvm.fvm_mesh import FVMMesh
 from pde.time_fvm.edge_process import FVMEdgeInfo, create_selection_matrix
-from pde.time_fvm.t_solvers import FVMCells, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Butcher, Adams4PC, IMEX #, IMPRKCSolver #, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4
+from pde.time_fvm.t_solvers import FVMCells, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Butcher, Adams4PC, IMEX, IMEX_Euler , Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4
 from pde.time_fvm.config_fvm import ConfigFVM
 from pde.time_fvm.sparse_utils import SparseReshapeMM
 
@@ -66,16 +66,6 @@ class FVMEdgeFunc(ABC):
         """
         pass
 
-    # @abstractmethod
-    # def _main_fluxes(self, Us):
-    #     pass
-    #
-    # @abstractmethod
-    # def _bc_fluxes_(self, Us):
-    #     pass
-
-
-
 
 
 class Adevction(FVMEdgeFunc):
@@ -95,7 +85,7 @@ class Adevction(FVMEdgeFunc):
         self.V_dims = V_dims
         self.rho_dim = rho_dim
 
-        self._build_jacobian()
+        self._build_jacobian(diag=True)
 
     def edge_fluxes(self):
         """ rho * U @ V.T @ n = rho V * phi
@@ -177,7 +167,7 @@ class Adevction(FVMEdgeFunc):
         return M
 
 
-    def _build_jacobian(self):
+    def _build_jacobian(self, diag):
         """
             U_cell = [interleave(mom_x | mom_y | rho)], shape = [3*n_cell]
             U_face = A(U_cell)              shape = [3*n_edges, 2], second dim is Left / Right side of face.
@@ -212,7 +202,7 @@ class Adevction(FVMEdgeFunc):
 
         bc_cells = self.E_props.edge_to_tri_bc
         bc_cells = torch.cat([3*bc_cells, 3*bc_cells+1, 3 * bc_cells + 2])
-        self.M_holder = SparseReshapeMM(M, 3 * n_cells, diag=False, device=self.device, zero_rows=bc_cells)
+        self.M_holder = SparseReshapeMM(M, 3 * n_cells, diag=diag, device=self.device, zero_rows=bc_cells)
 
 
     def calc_jacobian(self):
@@ -224,16 +214,7 @@ class Adevction(FVMEdgeFunc):
         # New method
         Jac = self.M_holder.multiply(phi_vec)
 
-
-        # J_new = J_new.to_dense().cpu()
-        # mask = torch.eye(J_new.shape[0], device=J_new.device, dtype=torch.bool)
-        # J_new[~mask] = 0
-        # J_new = J_new.to_sparse_coo().cuda()
-        #J_new[:, edge_cells] = 0
-        # J_new = J_new.to_sparse_coo()
-
         return Jac
-
 
 
 class Viscosity(FVMEdgeFunc):
@@ -358,7 +339,7 @@ class PressureForce(FVMEdgeFunc):
     p_dim: int
     V_dims: list[int]
 
-    def __init__(self, E_props: FVMEdgeInfo, c2, p_dim: int, V_dims: list[int], device="cpu"):
+    def __init__(self, E_props: FVMEdgeInfo, flux_mat, c2, p_dim: int, V_dims: list[int], device="cpu"):
         self.device = device
         self.E_props = E_props
         self.c2 = c2
@@ -366,6 +347,75 @@ class PressureForce(FVMEdgeFunc):
         self.p_dim = p_dim
         self.V_dims = V_dims
         self.proj_mat = E_props.V_insertion_matrix
+        self.flux_mat = flux_mat
+
+
+        self._build_jacobian(zero_bc=True, diag_only=True)
+
+    def _build_jacobian(self, zero_bc, diag_only):
+        E_props = self.E_props
+        normals = self.E_props.normals.squeeze()             # shape = [n_edges, 2]
+
+        dUfL_dUc, dUfR_duC = E_props.dUf_dUc
+        dUfm_dUc = 1/2 * (dUfL_dUc + dUfR_duC)
+
+        dUfm_dUc = dUfm_dUc.coalesce()
+
+        # Compute J = dGf_dUc
+        J_cols, J_rows, J_vals = [], [], []
+        n_edges, n_cells = E_props.n_edges, E_props.n_cells
+        for i in range(3*n_edges):
+            i_hat = i // 3
+            if i % 3 == 2:      # Pressure only affects Vx and Vy componenets
+                continue
+
+            dUf_row_dUcj = dUfm_dUc[3 * i_hat + 2].coalesce()
+
+            cols = dUf_row_dUcj.indices()[0]
+            rows = torch.ones_like(cols) * i
+
+            J_cols.append(cols)
+            J_rows.append(rows)
+            if i % 3 == 0:      # x component
+                val = normals[i_hat, 0] * dUf_row_dUcj.values()
+                J_vals.append(val)
+            if i % 3 == 1:
+                val = normals[i_hat, 1] * dUf_row_dUcj.values()
+                J_vals.append(val)
+
+        J_cols = torch.cat(J_cols)
+        J_rows = torch.cat(J_rows)
+        new_indices = torch.stack([J_rows, J_cols], dim=0)
+        new_values = torch.cat(J_vals)
+        dGf_dUc = torch.sparse_coo_tensor(new_indices, new_values, size=[3*n_edges, 3*n_cells]).to(self.device)
+        J = self.flux_mat.to_sparse_coo() @ dGf_dUc
+
+        # Zero out boundary cells
+        if zero_bc:
+            bc_cells = self.E_props.edge_to_tri_bc
+            bc_cells = torch.cat([3*bc_cells, 3*bc_cells+1, 3 * bc_cells + 2])
+            p_jac_idx, p_jac_values = J.indices(), J.values()
+            rows = p_jac_idx[0]
+            bc_mask = torch.isin(rows, bc_cells)
+
+            p_jac_idx = p_jac_idx[:, ~bc_mask]
+            p_jac_values = p_jac_values[~bc_mask]
+            J = torch.sparse_coo_tensor(p_jac_idx, p_jac_values, size=J.shape).coalesce()
+
+        # Only keep diagonal elements
+        if diag_only:
+            p_jac_idx, p_jac_values = J.indices(), J.values()
+
+            rows, cols = p_jac_idx[0], p_jac_idx[1]
+            diag_mask = (rows == cols)
+
+            p_jac_idx = p_jac_idx[:, diag_mask]
+            p_jac_values = p_jac_values[diag_mask]
+            J = torch.sparse_coo_tensor(p_jac_idx, p_jac_values, size=J.shape)
+
+        self.Jacobian = J.coalesce()
+
+        # print()
 
     def edge_fluxes(self):
         # fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
@@ -407,8 +457,8 @@ class KTDiffusion(FVMEdgeFunc):
         Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
 
         a = torch.empty((self.E_props.n_edges, 3), device=self.device)
-        # a[:, :2] = self.v_factor * c       # Velocity speed
-        a[:, :2] = c       # Velocity speed
+        a[:, :2] = self.v_factor * c       # Velocity speed
+        # a[:, :2] = c       # Velocity speed
         a[:, 2] = c                        # Pressure speed
         a += Vs_max
 
@@ -445,8 +495,7 @@ class FVMEquation:
         # Physical parameters
         self.c = cfg.c      # Speed of sound squared
 
-        # self.rho_advect = AdvectDensity(E_props, V_dims=[0, 1], rho_dim=2, device=device)
-        self.P_force = PressureForce(E_props, self.c**2, V_dims=[0, 1], p_dim=2, device=device)
+        self.P_force = PressureForce(E_props, flux_mat=self.flux_mat, c2=self.c**2, V_dims=[0, 1], p_dim=2, device=device)
         self.U_advect = Adevction(E_props, flux_mat=self.flux_mat, V_dims=[0, 1], rho_dim=2, device=device)
         self.U_visc = Viscosity(E_props, mesh.areas, flux_mat=self.flux_mat, cfg=cfg, V_dims=[0, 1], device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
@@ -556,17 +605,21 @@ class FVMEquation:
         # Viscosity is directly from divergence
         divergence += self.U_visc.divergence(primatives, self.cfg.dt)
 
-        jacobian = self.U_advect.calc_jacobian()
+       # jacobian = self.U_advect.calc_jacobian()
 
-        return divergence, jacobian
+        return divergence # , jacobian
 
-    def get_jacobian(self, primatives, t=0):
+    def get_jacobian(self, prims=None, t=0):
         E_props = self.E_props
-        E_props.precompute_shared(primatives)
+        if t == 0:
+            E_props.precompute_shared(prims)
 
-        jacobian = self.U_advect.calc_jacobian()
-
-        return jacobian
+        advec_jac, diag_mask = self.U_advect.calc_jacobian()
+        p_jac = self.P_force.Jacobian
+        jacobian = advec_jac.to_sparse_coo() + p_jac
+        # print(jacobian)
+        jacobian = jacobian.coalesce()
+        return jacobian, None
 
 
     def plot_flux(self, fluxes, title="Fluxes", show_index=False, lims=None, Xlims=None):

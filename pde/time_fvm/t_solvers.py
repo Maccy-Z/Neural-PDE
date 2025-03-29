@@ -202,20 +202,21 @@ class TSolver(ABC):
         return U_i_1
 
 
-# class Euler(TSolver):
-#     def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-#         super().__init__(cells, dt, n_steps, eq=equation)
-#         self.eq = equation
-#
-#     def _step(self, t):
-#         """U^{i+1} = U^i + dt * f(U^i)"""
-#
-#         dUdt, _ = self.eq.forward(self.cells.get_values()[0], t=t)
-#         U_i_1 = self.cells.state + self.dt * dUdt
-#
-#         return U_i_1
-
 class Euler(TSolver):
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
+        super().__init__(cells, dt, n_steps, eq=equation)
+        self.eq = equation
+
+    def _step(self, t):
+        """U^{i+1} = U^i + dt * f(U^i)"""
+
+        dUdt, _ = self.eq.forward(self.cells.get_values()[0], t=t)
+        U_i_1 = self.cells.state + self.dt * dUdt
+
+        return U_i_1
+
+
+class IMEX_Euler(TSolver):
     def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq = equation
@@ -227,7 +228,8 @@ class Euler(TSolver):
             [I - dt * J] U^{i+1} = U^i + dt * N(U^i)
         """
         prims, U_i = self.cells.get_values()
-        dUdt, (J, diag_mask) = self.eq.forward(prims, t=t)
+        dUdt = self.eq.forward(prims, t=t)
+        (J, diag_mask) = self.eq.get_jacobian()
 
         n = J.shape[0]
 
@@ -236,9 +238,15 @@ class Euler(TSolver):
         N_i = dUdt.flatten() - L_U_i_f
 
         # A = I - self.dt * J
-        J_val = - self.dt * J.values()
-        J_val[diag_mask] += 1
-        A = torch.sparse_csr_tensor(J.crow_indices(), J.col_indices(), J_val, (n, n))
+        # J_val = - self.dt * J.values()
+        # J_val[diag_mask] += 1
+        # A = torch.sparse_csr_tensor(J.crow_indices(), J.col_indices(), J_val, (n, n))
+
+        indices = torch.arange(n).unsqueeze(0).repeat(2, 1)  # shape: [2, N]
+        values = torch.ones(n)
+        I = torch.sparse_coo_tensor(indices, values, (n, n)).coalesce().cuda()
+        A = I - self.dt * J
+        A = A.to_sparse_csr()
 
         b = U_i_f + self.dt * N_i
         #
@@ -251,7 +259,6 @@ class Euler(TSolver):
         import cupy as cp
         import cupyx.scipy.sparse as cusparse
         from pde.solvers.gmres import gmres
-        import cupyx.scipy.sparse.linalg as cuslinalg
 
         cp_crow_indices = cp.from_dlpack(A.crow_indices())
         cp_col_indices = cp.from_dlpack(A.col_indices())
@@ -276,23 +283,24 @@ class IMEX(TSolver):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq = equation
 
-        # Explicit terms
-        self.A_hat = torch.tensor([
-            [0.0, 0,],
-            [1, 0.0, ]
-        ], dtype=torch.float32)
-
-        self.b_hat = torch.tensor([1/2, 1/2], dtype=torch.float32)
-        self.c_hat = torch.tensor([0.0, 1], dtype=torch.float32)
-        # Implicit terms
-        gamma = 1 - 1 / math.sqrt(2)
-        self.A = torch.tensor([
-            [gamma, 0,],
-            [1-2*gamma, gamma,]
-        ], dtype=torch.float32)
-
-        self.b = torch.tensor([gamma, 1-gamma], dtype=torch.float32)
-        self.c = torch.tensor([1/2, 1/2], dtype=torch.float32)
+        # """ IMEX-(2, 2, 2)"""
+        # # Explicit terms
+        # self.A_hat = torch.tensor([
+        #     [0.0, 0,],
+        #     [1, 0.0, ]
+        # ], dtype=torch.float32)
+        #
+        # self.b_hat = torch.tensor([1/2, 1/2], dtype=torch.float32)
+        # self.c_hat = torch.tensor([0.0, 1], dtype=torch.float32)
+        # # Implicit terms
+        # gamma = 1 - 1 / math.sqrt(2)
+        # self.A = torch.tensor([
+        #     [gamma, 0,],
+        #     [1-2*gamma, gamma,]
+        # ], dtype=torch.float32)
+        #
+        # self.b = torch.tensor([gamma, 1-gamma], dtype=torch.float32)
+        # self.c = torch.tensor([1/2, 1/2], dtype=torch.float32)
 
         # """  IMEX-SSP3(3,3,2) """
         # # Explicit terms
@@ -315,7 +323,7 @@ class IMEX(TSolver):
         # self.b = torch.tensor([1/6, 1/6, 2/3], dtype=torch.float32)
         # self.c = torch.tensor([gamma, 1-gamma, 1/2], dtype=torch.float32)
 
-        """ IMEX-SSP2(3,2,2) """
+        # """ IMEX-SSP2(3,2,2) """
         # # Explicit terms
         # self.A_hat = torch.tensor([
         #     [0.0, 0, 0],
@@ -333,20 +341,46 @@ class IMEX(TSolver):
         # ], dtype=torch.float32)
         #
         # self.b = torch.tensor([0, 1/2, 1/2], dtype=torch.float32)
-        # self.c = torch.tensor([1/2, 0, 1], dtype=torch.float32)
+        # self.c = torch.tensor([1/2, 0.01, 1], dtype=torch.float32)
+
+        """ IMEX-SSP2(2,3,2) """
+        # Explicit terms
+        self.A_hat = torch.tensor([
+            [0.0, 0, 0],
+            [0.711664700366941, 0, 0],
+            [0.077338168947683, 0.917273367886007, 0],
+        ], dtype=torch.float32)
+
+        self.b_hat = torch.tensor([	0.398930808264688, 0.345755244189623, 0.255313947545689], dtype=torch.float32)
+        self.c_hat = torch.tensor([0.0, 0, 1], dtype=torch.float32)
+        # Implicit terms
+        self.A = torch.tensor([
+            [0, 0, 0.],
+            [0.353842865099275, 0.353842865099275, 0],
+            [0.398930808264689,	0.345755244189622,	0.255313947545689],
+        ], dtype=torch.float32)
+
+        self.b = torch.tensor([	0.398930808264688,	0.345755244189623,	0.255313947545689], dtype=torch.float32)
+        self.c = torch.tensor([0, 0.707685730198550, 1], dtype=torch.float32)
 
     def _get_parts(self, U, t):
         """ Forward equation, and get N and J """
-        dUdt, (J, diag_mask) = self._forward(U, t)
+        dUdt = self._forward(U, t)
+        J, diag_mask = self._get_jacobian(U=U, t=t)
 
         G_U_f = J @ U.flatten()
         N = dUdt.flatten() - G_U_f
 
         return N, G_U_f, J, diag_mask
 
-    def _get_jacobian(self, U, t):
-        """ Forward equation, and get N and J """
-        J, diag_mask = self.eq.get_jacobian(self.cells.convert_state_to_value(U)[0], t)
+    def _get_jacobian(self, U=None, t=None):
+        """ Get """
+        if t == 0:
+            prims = self.cells.convert_state_to_value(U)[0]
+        else:
+            prims=None
+
+        J, diag_mask = self.eq.get_jacobian(prims=prims, t=t)
 
         return J, diag_mask
 
@@ -355,6 +389,8 @@ class IMEX(TSolver):
             f(U) = J U + N(U)
             U_i = U_0 + dt * [sum_j hat(a)_ij N(u_j) + sum_j a_ij (J@u_j)]
         """
+        print()
+
         n = self.eq.E_props.n_cells * self.eq.E_props.n_component
         stages = self.A.shape[0]
 
@@ -373,13 +409,29 @@ class IMEX(TSolver):
             for j in range(i):
                 RHS = RHS + self.dt * (self.A_hat[i, j] * Ns[j] + self.A[i, j] * Gs[j])
             # Implicit left contribution: I - dt * J
-            I_m_dtJ = - self.dt * self.A[i, i] * J.values()
-            # I_m_dtJ = torch.zeros_like(J.values())
-            I_m_dtJ[diag_mask] += 1
-            I_m_dtJ = torch.sparse_csr_tensor(J.crow_indices(), J.col_indices(), I_m_dtJ, (n, n))
-            # Solve (I - dt * J) U_{i+1} = RHS(U_i)
+
+
+            # # Solve (I - dt * A J) U_{i+1} = RHS(U_i)
+            # indices = torch.arange(n, device="cuda").unsqueeze(0).repeat(2, 1)  # shape: [2, N]
+            # values = torch.ones(n, device="cuda")
+            # I = torch.sparse_coo_tensor(indices, values, (n, n)).coalesce()
+            # I_m_dtJ = I - self.dt * self.A[i, i]  * J
+            # I_m_dtJ = I_m_dtJ.to_sparse_csr()
+            # U_i_1 = self._spsolve(I_m_dtJ, RHS)
+
+            # Diagonal solve (I - dt * A J) U_{i+1} = RHS(U_i)
+            J_diag = J.values()
+            I_m_dtJ = 1 - self.dt * self.A[i, i] * J_diag
+            U_i_1 = RHS / I_m_dtJ
+
+            # print(test.abs().max())
+            # print(RHS.abs().max() )
+            # I_m_dtJ = - self.dt * self.A[i, i] * J.values()
+            # # I_m_dtJ = torch.zeros_like(J.values())
+            # I_m_dtJ[diag_mask] += 1
+            # I_m_dtJ = torch.sparse_csr_tensor(J.crow_indices(), J.col_indices(), I_m_dtJ, (n, n))
+
             # print(f'{i}, {torch.any(torch.isnan(RHS))}')
-            U_i_1 = self._spsolve(I_m_dtJ, RHS)
             # Update buffers with new values
             N_i, G_i, J, diag_mask = self._get_parts(U_i_1.view(-1, 3), t + self.c[i]*self.dt)
             Ns[i] = N_i
@@ -399,7 +451,6 @@ class IMEX(TSolver):
         import cupy as cp
         import cupyx.scipy.sparse as cusparse
         from pde.solvers.gmres import gmres
-        import cupyx.scipy.sparse.linalg as cuslinalg
 
         cp_crow_indices = cp.from_dlpack(A.crow_indices())
         cp_col_indices = cp.from_dlpack(A.col_indices())
