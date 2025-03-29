@@ -408,7 +408,13 @@ def lift_sparse_matrix(A_old, n_comp):
     new_indices = torch.stack([new_rows, new_cols], dim=0)  # shape: (2, nnz * n_comp)
     new_size = (M * n_comp, N * n_comp)
 
-    A_new = torch.sparse_coo_tensor(new_indices, new_vals, size=new_size, device=device)
+    # For now, we don't need rho entries.
+    rho_mask = (new_indices[0] % 3 == 2)
+    new_indices = new_indices[:, ~rho_mask]
+    new_vals = new_vals[~rho_mask]
+
+    A_new = torch.sparse_coo_tensor(new_indices, new_vals, size=new_size, device=device).coalesce()
+
     return A_new
 
 
@@ -428,12 +434,12 @@ class FarfieldBC:
         if self.exit_cfg.mode == "decay":
             self.tau = self.cfg.dt / self.exit_cfg.decay_tau
 
-            self._set_bc_U_face = self.__decay
+            self.set_bc_U_face = self.__decay
         elif self.exit_cfg.mode == "farfield":
-            self._set_bc_U_face = self.__farfield
+            self.set_bc_U_face = self.__farfield
         elif self.exit_cfg.mode == "active":
             self.beta = 1 - self.cfg.dt / self.exit_cfg.beta_tau
-            self._set_bc_U_face = self.__active
+            self.set_bc_U_face = self.__active
 
 
     def __decay(self, U_face, Us_bc_cells):
@@ -517,7 +523,7 @@ class FVMEdgeInfo:
     # div_V: torch.Tensor  # shape = (n_edges)  Divergence of V
     Vs_faces: torch.Tensor  # shape = (n_edges, 2, 2)  Face values
     rho_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Face values
-    div_V_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Divergence of V_faces
+    div_V_faces: torch.Tensor  # shape = (n_edges, 2)  Divergence of V_faces
     mom_faces: torch.Tensor     # shape = (n_edges, 2, 2)  Face values
     phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
 
@@ -644,9 +650,6 @@ class FVMEdgeInfo:
         b_grad[dirich_rows] = self.dirich_val / self.edge_dists_bc[dirich_edge_idx, 0]
         # Handle Neumann entries:
         b_grad[neum_rows_all] = self.neumann_val[neum_comp]
-
-        self.A_face_grad_bc = A_grad_bc
-        self.b_face_grad_bc = b_grad
 
         # print("Starting combine_edge_operators")
         self.A_face_grad, self.b_face_grad = combine_edge_operators(A_face_grad_main, A_grad_bc, b_grad, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_component, self.device)
@@ -827,11 +830,7 @@ class FVMEdgeInfo:
         Us_face = torch.cat([Us_face.view(3*self.n_cells, self.n_component), div_V], dim=-1)        # shape = [3*n_cells, n_component+1]
 
 
-        # # Us_face.shape = [n_cells, 3, n_component]
-        # U_face_flat = torch.mm(self.S_cells, Us_face.view(3*self.n_cells, 3))
-        # U_face_all = U_face_flat.view(self.n_edges, 2, self.n_component)
-
-        # Project to left and right face values - (Very slow step so vectorise over all components)
+        # Project to left and right face values - (slow step so vectorise over all components)
         U_face_all = torch.empty((self.n_edges, 2, self.n_component+1), device=self.device)
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face # .view(3*self.n_cells, -1)
         U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)      # Boundary conditions are fixed as is.
@@ -839,7 +838,7 @@ class FVMEdgeInfo:
 
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
-        self.div_V_faces = U_face_all[:, :, [3]]  # shape = [n_edges, edges=2, dims=1]
+        self.div_V_faces = U_face_all[:, :, 3]  # shape = [n_edges, edges=2]
         self.mom_faces = self.Vs_faces * self.rho_faces  # shape = [n_edges, edges=2, dims=2]
 
         self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1) # shape = [n_edges, edges=2, ]
@@ -930,57 +929,11 @@ class FVMEdgeInfo:
         # Reshape back to (n_edges_bc, n_component)
         U_face = U_face_flat.view(self.n_edges_bc, self.n_component)
 
-        #print(f'{self.mesh.areas.shape}, {self.exit_cell2edge.shape }, {Us.shape = }')
+
         # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
         if self.use_farfield :
-            self.farfield_calc._set_bc_U_face(U_face, Us[self.exit_cell2edge])
+            self.farfield_calc.set_bc_U_face(U_face, Us[self.exit_cell2edge])
 
-            # rho_far = self.farfield_rho
-            # v_far = self.cfg.v_far
-            #
-            # Us_bc_cells = Us[self.exit_cell2edge]
-            # vx_interior = Us_bc_cells[:, 0]
-            #
-            # if self.cfg.exit_mode == "decay":
-            #
-            #     if self.bc_states is None:
-            #         self.bc_states = Us_bc_cells
-            #
-            #     dUdt = (Us_bc_cells - self.bc_states) / self.cfg.dt
-            #     self.bc_states = Us_bc_cells
-            #
-            #     dUdt = dUdt.norm(dim=1)
-            #     # if dUdt > 0.25:
-            #     #     self.S = dUdt
-            #     # else:
-            #     #     tau = self.cfg.dt/1
-            #     #     self.S = (1-tau) * self.S + tau * dUdt
-            #     self.S = torch.where(dUdt>0.25,
-            #                          dUdt,
-            #                             (1-self.cfg.dt/1) * self.S + self.cfg.dt/1 * dUdt
-            #                          )
-            #
-            #     beta2 = (5*self.S-0.1).clamp(min=0, max=1)
-            #     print(beta2)
-            #     self.dUdts.append(dUdt.mean())
-            #     beta = 1 - self.bc_exit_length * self.cfg.decay_rate
-            #
-            #     rho_interior = Us_bc_cells[:, 2]
-            #     U_face[self.farfield_mask] = beta2 * rho_far * torch.exp(vx_interior - v_far) + (1-beta2) * (beta * rho_interior + (1-beta) * rho_far)
-            #
-            #     # beta = 1 - self.bc_exit_length * self.cfg.decay_rate
-            #     # rho_interior = Us_bc_cells[:, 2]
-            #     # inflow_mask = (vx_interior < 0)
-            #     #
-            #     # farfield_P = rho_interior * torch.exp(vx_interior - v_far)
-            #     # U_face[self.farfield_mask] = torch.where(inflow_mask,
-            #     #                                          rho_interior * torch.exp(vx_interior),
-            #     #                                          (beta * rho_interior + (1-beta) * rho_far),
-            #     #                                          )
-            #
-            #     # U_face[self.farfield_mask] = (~inflow_mask) * (beta * rho_interior + (1-beta) * rho_far) + inflow_mask * rho_interior * torch.exp(vx_interior)# - v_far)
-            # elif self.cfg.exit_mode == "farfield":
-            #     U_face[self.farfield_mask] = rho_far * torch.exp(vx_interior - v_far)
 
         return  U_face
 

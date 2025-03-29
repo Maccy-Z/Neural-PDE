@@ -28,15 +28,17 @@ class FVMCells:
     def get_values(self):
         return self.convert_state_to_value(self.state)
 
+    # @torch.compile()
     def convert_state_to_value(self, state):
-        # TODO: TEMPORARY
-        momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
+        # momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
+        # v_x, v_y = momentum_x / density, momentum_y / density
+        #
+        # primatives = torch.stack([v_x, v_y, density], dim=1)
 
-        # density = torch.clamp(density, 0.01, 1e6)
-        v_x, v_y = momentum_x / density, momentum_y / density
-
-        primatives = torch.stack([v_x, v_y, density], dim=1)
-
+        momentum, density = state[:, :2], state[:,2]
+        density = density.unsqueeze(-1)
+        V = momentum / density
+        primatives = torch.cat([V, density], dim=-1)
         return primatives, state
 
     def save(self, name="state.pt"):
@@ -129,7 +131,7 @@ class TSolver(ABC):
 
 
 
-    #@torch.inference_mode()
+    @torch.inference_mode()
     def solve(self):
         run = True
         if run:
