@@ -15,7 +15,7 @@ class ConfigFarfield:
 class ConfigFVM:
 
     # solver parameters
-    dt: float = 0.005
+    dt: float = 0.008
     n_iter: int = 20001
 
     # mesh parameters
@@ -25,7 +25,7 @@ class ConfigFVM:
 
     # Physical parameters
     viscosity: float = 1e-5
-    visc_bulk: float = 1e-5
+    visc_bulk: float = 5e-4
     c: float = 1.
     # Stability parameters
     v_factor: float = 0.1     # Modification for velocity KT scheme

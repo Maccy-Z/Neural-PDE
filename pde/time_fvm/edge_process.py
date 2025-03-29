@@ -421,7 +421,7 @@ class FarfieldBC:
         self.rho_far = 1
         self.v_far = cfg.v_far
 
-        self.bc_states = rho_far
+        self.factor = rho_far
         self.dUdts = []
         self.S = 0
 
@@ -438,28 +438,24 @@ class FarfieldBC:
 
     def __decay(self, U_face, Us_bc_cells):
         """" Combine two methods to decay boundary:
-                U_decay = (self.beta * rho_interior + (1 - self.beta) * self.rho_far)
-                U_charachteristic = rho_interior * torch.exp(vx_interior - self.v_far)
+                U_charachteristic = f * rho_interior * torch.exp(vx_interior - self.v_far)
+
+                f estimates the natural farfield value rho* exp(-v_far)
 
             Interpolate using moving state f(S):
                 S = (1-tau) * S + tau  * dUdt
                 U_face = f(S) * U_charachteristic + (1 - f(S)) * U_decay
 
         """
-
-        cfg = self.exit_cfg
-
         vx_interior = Us_bc_cells[:, 0]
-        # rho_interior = Us_bc_cells[:, 2]
 
-        # Calculate dUdt
-        U_farfield = self.bc_states * self.rho_far * torch.exp(vx_interior - self.v_far)
+        U_farfield = self.factor * self.rho_far * torch.exp(vx_interior - self.v_far)
 
-        d_factor = (self.rho_far - U_farfield) + 0.02 * self.tau * (1-self.bc_states)
-        self.bc_states =self.bc_states + self.tau * d_factor
+        d_factor = (self.rho_far - U_farfield) + 0.02 * self.tau * (1 - self.factor)
+        self.factor = self.factor + self.tau * d_factor
 
         U_face[self.farfield_mask] =  U_farfield
-        # self.dUdts.append(self.bc_states)
+
 
     def __farfield(self, U_face, Us_bc_cells):
         vx_interior = Us_bc_cells[:, 0]
@@ -522,7 +518,7 @@ class FVMEdgeInfo:
     Vs_faces: torch.Tensor  # shape = (n_edges, 2, 2)  Face values
     rho_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Face values
     div_V_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Divergence of V_faces
-    Us_face_sign: torch.Tensor  # shape = (n_edges, 2)  Allowed sign of diffusion term
+    mom_faces: torch.Tensor     # shape = (n_edges, 2, 2)  Face values
     phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
 
 
@@ -562,7 +558,7 @@ class FVMEdgeInfo:
         self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_component, [0, 1], device=device).to_sparse_csr()
         c_print(f'V_insertion_matrix done', color="magenta")
 
-        self.dUf_dUc = self._build_dUf_dUc()
+        #self.dUf_dUc = self._build_dUf_dUc()
 
         c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
@@ -570,7 +566,7 @@ class FVMEdgeInfo:
         del self.edge_dists_bc, self.cell_dist, self.edge_to_tri_main, self.dirich_val, self.neumann_val
         del self.dirich_mask, self.neumann_mask
         del self.A_face_grad, self.b_face_grad
-        del self.dUf_dUc
+        #del self.dUf_dUc
 
         torch.cuda.empty_cache()
         c_print(f'Deleted temp variables', color="magenta")
@@ -836,28 +832,28 @@ class FVMEdgeInfo:
         # U_face_all = U_face_flat.view(self.n_edges, 2, self.n_component)
 
         # Project to left and right face values - (Very slow step so vectorise over all components)
-        U_face_all = torch.zeros((self.n_edges, 2, self.n_component+1), device=self.device)
-        U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face.view(3*self.n_cells, -1)
+        U_face_all = torch.empty((self.n_edges, 2, self.n_component+1), device=self.device)
+        U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face # .view(3*self.n_cells, -1)
         U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)      # Boundary conditions are fixed as is.
 
 
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
         self.div_V_faces = U_face_all[:, :, [3]]  # shape = [n_edges, edges=2, dims=1]
+        self.mom_faces = self.Vs_faces * self.rho_faces  # shape = [n_edges, edges=2, dims=2]
 
         self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1) # shape = [n_edges, edges=2, ]
 
 
     def _phi(self, r):
         # VENKATAKRISHNAN
-        eps = 0.01*1e-4
-        _r = r**2 + r + eps
-        phi = (_r + r) / (_r + 2)
-        # assert not torch.any(torch.isnan(phi)), f'Nan in Venkatkrishnan phi'
-        #phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
+        # eps = 0.01*1e-4
+        # _r = r**2 + r + eps
+        # phi = (_r + r) / (_r + 2)
+        # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
 
         # BJ
-        # phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
+        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
         #
         # Cell wide clamping
         phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]
