@@ -15,8 +15,8 @@ class ConfigFarfield:
 class ConfigFVM:
 
     # solver parameters
-    dt: float = 0.008
-    n_iter: int = 20001
+    dt: float = 0.004
+    n_iter: int = 5001
 
     # mesh parameters
     min_A: float = 0.5e-4

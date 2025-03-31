@@ -8,7 +8,7 @@ from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edge
 from pde.time_fvm.fvm_mesh import FVMMesh
 from pde.time_fvm.edge_process import FVMEdgeInfo, create_selection_matrix
 from pde.time_fvm.t_solvers import FVMCells
-from pde.time_fvm.integrators import Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Butcher, Adams4PC, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4
+from pde.time_fvm.integrators import Magazenkov, LeapfrogAss, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Adams4PC, Butcher, Butcher_adapt, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4, Leapfrog2
 from pde.time_fvm.config_fvm import ConfigFVM
 from pde.time_fvm.sparse_utils import SparseReshapeMM
 
@@ -427,13 +427,6 @@ class KTDiffusion(FVMEdgeFunc):
         Vs = Vs_face.norm(dim=-1)            # shape = [n_edges, edges=2]
         Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
 
-        # a = torch.empty((self.E_props.n_edges, 3), device=self.device)
-        # a[:, :2] = self.v_factor * c       # Velocity speed
-        # # a[:, :2] = c       # Velocity speed
-        # a[:, 2] = c                        # Pressure speed
-        # a += Vs_max
-        # a = a / 2
-
         a = torch.tensor([[self.v_factor * c, self.v_factor * c, c]], device=self.device)
         a = a.repeat(self.E_props.n_edges, 1) + Vs_max  # shape = [n_edges, 3]
 
@@ -476,7 +469,7 @@ class FVMEquation:
         self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
 
 
-        self.t_solver = RK3_SSP4(self.cells, cfg.dt, cfg.n_iter, self)
+        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)#, equation="RK3_SSP4")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
