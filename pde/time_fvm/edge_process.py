@@ -577,6 +577,7 @@ class FVMEdgeInfo:
         torch.cuda.empty_cache()
         c_print(f'Deleted temp variables', color="magenta")
 
+
     def _build_spm_face_grads(self):
         n_edges = self.edge_to_tri_main.shape[0]  # number of faces (edges)
         n_cells = self.n_cells
@@ -795,20 +796,6 @@ class FVMEdgeInfo:
             self.exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask[:, 2]]
             self.farfield_calc = FarfieldBC(self.cfg, self.farfield_mask, farfield_rho)
 
-
-        """ Inviscid Euler wall"""
-        # self.euler_w_mask = torch.tensor(euler_w_mask, device=self.device)
-        # wall_normals = self.normals[self.bc_edge_mask][self.euler_w_mask]
-        #
-        # wall_normals = wall_normals/torch.norm(wall_normals, dim=1, keepdim=True)
-        # wall_vects = torch.stack([-wall_normals[:, 1], wall_normals[:, 0]], dim=1)  # shape: [n_edges, 2]
-        #
-        # wall_matrix = torch.stack([wall_normals, wall_vects], dim=1)  # shape: [n_edges, 2, 2]
-        # # print(wall_matrix)
-        # self.inv_wall_mat = torch.inverse(wall_matrix).to(self.device)
-        # self.wall_vects = wall_vects.to(self.device)
-
-
     @torch.compile()
     def precompute_shared(self, Us):
         """ Precompute shared values that are used multiple times later.
@@ -829,10 +816,9 @@ class FVMEdgeInfo:
         div_V = div_V.repeat_interleave(3).unsqueeze(-1)            # shape = [3*n_cells, 1]
         Us_face = torch.cat([Us_face.view(3*self.n_cells, self.n_component), div_V], dim=-1)        # shape = [3*n_cells, n_component+1]
 
-
         # Project to left and right face values - (slow step so vectorise over all components)
         U_face_all = torch.empty((self.n_edges, 2, self.n_component+1), device=self.device)
-        U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face # .view(3*self.n_cells, -1)
+        U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face
         U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)      # Boundary conditions are fixed as is.
 
 

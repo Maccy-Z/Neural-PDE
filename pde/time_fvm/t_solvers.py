@@ -4,11 +4,12 @@ import torch
 from abc import ABC, abstractmethod
 from codetiming import Timer
 from matplotlib import pyplot as plt
-import torch.profiler
+import time
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from time_fvm import FVMEquation
+
 
 class FVMCells:
     state: torch.Tensor  # shape = (n_cells, N_component)
@@ -30,11 +31,6 @@ class FVMCells:
 
     # @torch.compile()
     def convert_state_to_value(self, state):
-        # momentum_x, momentum_y, density = state[:, 0], state[:, 1], state[:, 2]
-        # v_x, v_y = momentum_x / density, momentum_y / density
-        #
-        # primatives = torch.stack([v_x, v_y, density], dim=1)
-
         momentum, density = state[:, :2], state[:,2]
         density = density.unsqueeze(-1)
         V = momentum / density
@@ -68,37 +64,36 @@ class TSolver(ABC):
         self.n_steps = n_steps
         self.cells = cells
         self.eq: FVMEquation = eq
+        self.print_i = 100
 
     def _solve(self):
         E_props = self.eq.E_props
 
-        plot_i = int(2 / self.dt)
-        # Eks, Eps, ts, TVs = [], [], [], []
+        plot_i = int(5 / self.dt)
         dts = []
 
+        st_time = time.time()
         t = 0
         for i in range(self.n_steps):
             t += self.dt
-            with Timer(text=f"{i=}, {t=:.5g} Time: {{:.4g}}"):
-                new_Us= self._step(t)
-                self.cells.update_cells(new_Us)
 
+            new_Us= self._step(t)
+            self.cells.update_cells(new_Us)
             dts.append(self.dt)
 
-            print(f'{self.dt = :.3g}')
-            # # Track total energy
-            # primatives = self.cells.get_values()[0]
-            # A = self.eq.mesh.areas.cuda()
-            # Ek = (primatives[:, 0] ** 2 + primatives[:, 1] ** 2) * A
-            # Ep = torch.log(primatives[:, 2]/0.1) * A
-            # Eks.append(Ek.sum().cpu()), Eps.append(Ep.sum().cpu()), ts.append(t)
+            if i % self.print_i == 0:
+                irl_time = (time.time() - st_time)/self.print_i
+                avg_dt = sum(dts[-self.print_i:]) / len(dts[-self.print_i:])
+                avg_dt = avg_dt.item()
+                c_print(f'{i = }, {t = :.4g}, {avg_dt = :.3g}, {irl_time = :.3g}', color="bright_green")
+                st_time = time.time()
 
             # if t == 35:
             #     with open("save_state.pt", "wb") as f:
             #         torch.save(self.cells.state, f)
             #     exit(7)
 
-            if i % plot_i == 0 and t>15.:
+            if i % plot_i == 0 and t>0:
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
@@ -119,18 +114,11 @@ class TSolver(ABC):
         dts = torch.stack(dts).cpu()
         kernel_size = 10
         kernel = torch.ones(1, 1, kernel_size) / kernel_size
-        dts_smooth = torch.nn.functional.conv1d(dts.unsqueeze(0).unsqueeze(0), kernel, padding=kernel_size // 2)[0][0]
-        print(f'{dts[200:].mean() = }')
+        dts_smooth = torch.nn.functional.conv1d(dts.unsqueeze(0).unsqueeze(0), kernel, padding="valid")[0][0]
+        print(f'{dts[500:].mean() = }')
         plt.plot(dts)
         plt.plot(dts_smooth)
         plt.show()
-        # Eks, Eps = torch.tensor(Eks), torch.tensor(Eps)
-        # E = Eks + Eps
-        # plt.plot(ts, Eks, label="Kinetic Energy")
-        # plt.plot(ts, Eps, label="Potential Energy")
-        # plt.plot(ts, E, label="Total Energy")
-        # plt.legend()
-        # plt.show()
 
 
 
@@ -144,6 +132,8 @@ class TSolver(ABC):
 
 
     def _solve_profile(self):
+        import torch.profiler
+
         for _ in range(5):
             new_Us = self._step(0)
             self.cells.update_cells(new_Us)

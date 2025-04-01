@@ -28,7 +28,7 @@ class ConfigFVM:
     visc_bulk: float = 5e-4
     c: float = 1.
     # Stability parameters
-    v_factor: float = 0.1     # Modification for velocity KT scheme
+    v_factor: float = 0.5     # Modification for velocity KT scheme
     bulk_visc_lim: float = 0.25
 
     # Exit parameters

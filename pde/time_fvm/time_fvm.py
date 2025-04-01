@@ -85,9 +85,9 @@ class Adevction(FVMEdgeFunc):
         self.V_dims = V_dims
         self.rho_dim = rho_dim
 
-        #self._build_jacobian(diag=True)
+        # self._build_jacobian(diag=False)
 
-    # @torch.compile()
+    #@torch.compile()
     def edge_fluxes(self):
         """ rho * U @ V.T @ n = rho V * phi
             f_x = rho V_x * phi
@@ -314,73 +314,72 @@ class PressureForce(FVMEdgeFunc):
         self.proj_mat = E_props.V_insertion_matrix
         self.flux_mat = flux_mat
 
+        # self._build_jacobian(zero_bc=True, diag_only=False)
 
-    #     #self._build_jacobian(zero_bc=True, diag_only=True)
-    #
-    # def _build_jacobian(self, zero_bc, diag_only):
-    #     E_props = self.E_props
-    #     normals = self.E_props.normals.squeeze()             # shape = [n_edges, 2]
-    #
-    #     dUfL_dUc, dUfR_duC = E_props.dUf_dUc
-    #     dUfm_dUc = 1/2 * (dUfL_dUc + dUfR_duC)
-    #
-    #     dUfm_dUc = dUfm_dUc.coalesce()
-    #
-    #     # Compute J = dGf_dUc
-    #     J_cols, J_rows, J_vals = [], [], []
-    #     n_edges, n_cells = E_props.n_edges, E_props.n_cells
-    #     for i in range(3*n_edges):
-    #         i_hat = i // 3
-    #         if i % 3 == 2:      # Pressure only affects Vx and Vy componenets
-    #             continue
-    #
-    #         dUf_row_dUcj = dUfm_dUc[3 * i_hat + 2].coalesce()
-    #
-    #         cols = dUf_row_dUcj.indices()[0]
-    #         rows = torch.ones_like(cols) * i
-    #
-    #         J_cols.append(cols)
-    #         J_rows.append(rows)
-    #         if i % 3 == 0:      # x component
-    #             val = normals[i_hat, 0] * dUf_row_dUcj.values()
-    #             J_vals.append(val)
-    #         if i % 3 == 1:
-    #             val = normals[i_hat, 1] * dUf_row_dUcj.values()
-    #             J_vals.append(val)
-    #
-    #     J_cols = torch.cat(J_cols)
-    #     J_rows = torch.cat(J_rows)
-    #     new_indices = torch.stack([J_rows, J_cols], dim=0)
-    #     new_values = torch.cat(J_vals)
-    #     dGf_dUc = torch.sparse_coo_tensor(new_indices, new_values, size=[3*n_edges, 3*n_cells]).to(self.device)
-    #     J = self.flux_mat.to_sparse_coo() @ dGf_dUc
-    #
-    #     # Zero out boundary cells
-    #     if zero_bc:
-    #         bc_cells = self.E_props.edge_to_tri_bc
-    #         bc_cells = torch.cat([3*bc_cells, 3*bc_cells+1, 3 * bc_cells + 2])
-    #         p_jac_idx, p_jac_values = J.indices(), J.values()
-    #         rows = p_jac_idx[0]
-    #         bc_mask = torch.isin(rows, bc_cells)
-    #
-    #         p_jac_idx = p_jac_idx[:, ~bc_mask]
-    #         p_jac_values = p_jac_values[~bc_mask]
-    #         J = torch.sparse_coo_tensor(p_jac_idx, p_jac_values, size=J.shape).coalesce()
-    #
-    #     # Only keep diagonal elements
-    #     if diag_only:
-    #         p_jac_idx, p_jac_values = J.indices(), J.values()
-    #
-    #         rows, cols = p_jac_idx[0], p_jac_idx[1]
-    #         diag_mask = (rows == cols)
-    #
-    #         p_jac_idx = p_jac_idx[:, diag_mask]
-    #         p_jac_values = p_jac_values[diag_mask]
-    #         J = torch.sparse_coo_tensor(p_jac_idx, p_jac_values, size=J.shape)
-    #
-    #     self.Jacobian = J.coalesce()
-    #
-    #     # print()
+    def _build_jacobian(self, zero_bc, diag_only):
+        E_props = self.E_props
+        normals = self.E_props.normals.squeeze()             # shape = [n_edges, 2]
+
+        dUfL_dUc, dUfR_duC = E_props.dUf_dUc
+        dUfm_dUc = 1/2 * (dUfL_dUc + dUfR_duC)
+
+        dUfm_dUc = dUfm_dUc.coalesce()
+
+        # Compute J = dGf_dUc
+        J_cols, J_rows, J_vals = [], [], []
+        n_edges, n_cells = E_props.n_edges, E_props.n_cells
+        for i in range(3*n_edges):
+            i_hat = i // 3
+            if i % 3 == 2:      # Pressure only affects Vx and Vy componenets
+                continue
+
+            dUf_row_dUcj = dUfm_dUc[3 * i_hat + 2].coalesce()
+
+            cols = dUf_row_dUcj.indices()[0]
+            rows = torch.ones_like(cols) * i
+
+            J_cols.append(cols)
+            J_rows.append(rows)
+            if i % 3 == 0:      # x component
+                val = normals[i_hat, 0] * dUf_row_dUcj.values()
+                J_vals.append(val)
+            if i % 3 == 1:
+                val = normals[i_hat, 1] * dUf_row_dUcj.values()
+                J_vals.append(val)
+
+        J_cols = torch.cat(J_cols)
+        J_rows = torch.cat(J_rows)
+        new_indices = torch.stack([J_rows, J_cols], dim=0)
+        new_values = torch.cat(J_vals)
+        dGf_dUc = torch.sparse_coo_tensor(new_indices, new_values, size=[3*n_edges, 3*n_cells]).to(self.device)
+        J = self.flux_mat.to_sparse_coo() @ dGf_dUc
+
+        # Zero out boundary cells
+        if zero_bc:
+            bc_cells = self.E_props.edge_to_tri_bc
+            bc_cells = torch.cat([3*bc_cells, 3*bc_cells+1, 3 * bc_cells + 2])
+            p_jac_idx, p_jac_values = J.indices(), J.values()
+            rows = p_jac_idx[0]
+            bc_mask = torch.isin(rows, bc_cells)
+
+            p_jac_idx = p_jac_idx[:, ~bc_mask]
+            p_jac_values = p_jac_values[~bc_mask]
+            J = torch.sparse_coo_tensor(p_jac_idx, p_jac_values, size=J.shape).coalesce()
+
+        # Only keep diagonal elements
+        if diag_only:
+            p_jac_idx, p_jac_values = J.indices(), J.values()
+
+            rows, cols = p_jac_idx[0], p_jac_idx[1]
+            diag_mask = (rows == cols)
+
+            p_jac_idx = p_jac_idx[:, diag_mask]
+            p_jac_values = p_jac_values[diag_mask]
+            J = torch.sparse_coo_tensor(p_jac_idx, p_jac_values, size=J.shape)
+
+        self.Jacobian = J.coalesce()
+
+        # print()
 
     def edge_fluxes(self):
 
@@ -468,8 +467,7 @@ class FVMEquation:
         self.U_visc = Viscosity(E_props, mesh.areas, flux_mat=self.flux_mat, cfg=cfg, V_dims=[0, 1], device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
 
-
-        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)#, equation="RK3_SSP4")
+        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)#, name="RK3_SSP5")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
