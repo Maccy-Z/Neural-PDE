@@ -419,25 +419,23 @@ def lift_sparse_matrix(A_old, n_comp):
 
 
 class FarfieldBC:
-    def __init__(self, cfg: ConfigFVM, farfield_mask, rho_far):
+    def __init__(self, cfg: ConfigFVM, farfield_mask):
         self.cfg = cfg
         self.exit_cfg = cfg.exit_cfg
 
         self.farfield_mask = farfield_mask
-        self.rho_far = 1
-        self.v_far = cfg.v_far
+        self.v_far = self.exit_cfg.v_far
+        self.rho_far = self.exit_cfg.rho_far
 
-        self.factor = rho_far
-        self.dUdts = []
-        self.S = 0
+        self.factor = 1
 
         if self.exit_cfg.mode == "decay":
             self.tau = self.cfg.dt / self.exit_cfg.decay_tau
-
+            self.decay_beta = self.exit_cfg.decay_beta
             self.set_bc_U_face = self.__decay
         elif self.exit_cfg.mode == "farfield":
             self.set_bc_U_face = self.__farfield
-        elif self.exit_cfg.mode == "active":
+        elif self.exit_cfg.mode == "interior":
             self.beta = 1 - self.cfg.dt / self.exit_cfg.beta_tau
             self.set_bc_U_face = self.__active
 
@@ -455,18 +453,19 @@ class FarfieldBC:
         """
         vx_interior = Us_bc_cells[:, 0]
 
-        U_farfield = self.factor * self.rho_far * torch.exp(vx_interior - self.v_far)
+        rho_bc = self.factor * self.rho_far * torch.exp(vx_interior - self.v_far)
 
-        d_factor = (self.rho_far - U_farfield) + 0.02 * self.tau * (1 - self.factor)
+        d_factor = (self.rho_far - rho_bc) + self.decay_beta * (1 - self.factor)
         self.factor = self.factor + self.tau * d_factor
 
-        U_face[self.farfield_mask] =  U_farfield
+        # rho_bc = rho_bc.clamp(min=0.3, max=1.4)
+        U_face[self.farfield_mask] =  rho_bc
 
 
     def __farfield(self, U_face, Us_bc_cells):
         vx_interior = Us_bc_cells[:, 0]
-
-        U_face[self.farfield_mask] = self.rho_far * torch.exp(vx_interior - self.v_far)
+        rho_bc = self.rho_far * torch.exp(vx_interior - self.v_far)
+        U_face[self.farfield_mask] = rho_bc
 
     def __active(self, U_face, Us_bc_cells):
         vx_interior = Us_bc_cells[:, 0]
@@ -776,13 +775,9 @@ class FVMEdgeInfo:
 
             farfield_mask.append(e_type.farfield())
 
-            if e_type.rho_far is not None:
-                self.use_farfield = True
-                farfield_rho = e_type.rho_far
-
-
         self.dirich_mask, self.neumann_mask = torch.tensor(dirich_mask, device=self.device), torch.tensor(neumann_mask, device=self.device)
         self.farfield_mask = torch.tensor(farfield_mask, device=self.device)  # All farfield must be the same
+        self.use_farfield = torch.any(self.farfield_mask).item()
 
         dirich_val, neumann_val = torch.tensor(dirich_val, dtype=torch.float32, device=self.device), torch.tensor(neumann_val, dtype=torch.float32, device=self.device)
         self.dirich_val = dirich_val[self.dirich_mask]
@@ -794,7 +789,7 @@ class FVMEdgeInfo:
 
         if self.use_farfield:
             self.exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask[:, 2]]
-            self.farfield_calc = FarfieldBC(self.cfg, self.farfield_mask, farfield_rho)
+            self.farfield_calc = FarfieldBC(self.cfg, self.farfield_mask)
 
     @torch.compile()
     def precompute_shared(self, Us):
@@ -914,7 +909,6 @@ class FVMEdgeInfo:
         U_face_flat = torch.mv(self.A_bc, Us_flat) + self.b_bc      # shape = [n_edges_bc * n_component]
         # Reshape back to (n_edges_bc, n_component)
         U_face = U_face_flat.view(self.n_edges_bc, self.n_component)
-
 
         # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
         if self.use_farfield :

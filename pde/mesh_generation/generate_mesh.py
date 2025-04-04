@@ -37,7 +37,7 @@ def _create_mesh_thread(holes, points, p_marks, segments, seg_marks, mesh_props,
     mesh_info.set_facets(segments, facet_markers=seg_marks)
 
     # Create the mesh
-    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg))
+    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg), min_angle=25)
 
     return_val.append(mesh)
 
@@ -165,60 +165,6 @@ def generate_box_points_spacing(xmax, ymax, spacing=1.0):
     return box_points, idxs
 
 
-def gen_mesh_time(xmin, xmax, ymin, ymax, areas=None):
-    if areas is None:
-        min_area = 5.e-3
-        max_area = 10e-3
-    else:
-        min_area, max_area = areas
-
-    circle_center = (0.5, 0.4)
-    circle_radius = 0.5
-
-    bound_ln = np.sqrt(min_area)
-    # print(lnscale)
-
-    mesh_props = MeshProps(min_area, max_area, lengthscale=0.5)
-
-    coords = [
-                Line([xmin, ymin], [xmax, ymin], True, name="Wall"),     # Bottom
-                Line([xmin, ymax], [xmax, ymax], True, name="Wall"),     # Top
-                Line([xmin, ymin], [xmin, ymax], True, name="Left"),    # Left
-                Line([xmax, ymax], [xmax, ymin], True, name="Right"),   # Right
-              # Circle((1.0, 0.5), circle_radius, lnscale, True, name="Right"),
-
-    ]
-    mesh, marker_tags = create_mesh(coords, mesh_props)
-    point_props, markers, _ = extract_mesh_data(mesh)
-
-    points, _ = point_props
-    p_markers, _ = markers
-
-    # Extra layer
-    points = points + 2 * bound_ln
-    box_points, box_tags = generate_box_points_spacing(xmax + 2*bound_ln, ymax + 2*bound_ln, bound_ln)
-    bc_points, bc_tags = generate_box_points_spacing(xmax + 4*bound_ln, ymax + 4*bound_ln, bound_ln)
-    box_points = box_points + bound_ln
-    p_tags = [marker_tags[0] for _ in p_markers]
-    box_tags = [marker_tags[0] for _ in box_tags]
-    points = np.vstack((points, box_points, bc_points))
-    p_tags = p_tags + box_tags + bc_tags
-
-    # # Set corner tags very carefully
-    # corners = [[xmin, xmin], [xmin, ymax], [xmax, ymax], [xmax, ymin]]
-    # wall_tag = dict_key_by_value(marker_tags, "Wall")
-    # for i, (point, tag) in enumerate(zip(points, p_markers, strict=True)):
-    #     if np.any(np.all(np.isclose(corners, point), axis=1)):
-    #         p_markers[i] = wall_tag        # Corresponds to wall
-    # for i, (point, tag) in enumerate(zip(points, p_markers, strict=True)):
-    #     if point[0] < xmin + X and tag not in [wall_tag, wall_tag + 1, left_tag]:
-    #         p_markers[i] = dict_key_by_value(marker_tags, "Left_extra")
-
-    #p_tags = [marker_tags[int(i)] for i in p_markers]
-
-    return points, p_tags
-
-
 def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas, cell_lnscale=2):
 
     min_area, max_area = areas
@@ -226,14 +172,16 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas, cell_lnscale=2):
     triscale = np.sqrt(2 * min_area)
     lims = [xmin, ymin], [xmax, ymax]
 
+    # print(f'{triscale = }')
+    # exit(7)
     coords = [
-                Line([[xmin, ymin], [xmax, ymin]], False, name="Wall"),     # Bottom
+                Line([[xmin, ymin], [xmax, ymin]], True, name="Wall"),     # Bottom
                 Line([[xmin, ymax], [xmax, ymax]], False, name="Wall"),     # Top
                 Line([[xmin, ymin], [xmin, ymax]], False, name="Left"),    # Left
                 Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
                 Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Refinement wall
-                Circle((0.75, 0.7), 0.15, triscale, hole=True, dist_req=True, name="NavierWall"),
-                # Ellipse((0.5, 0.5), 0.075, 0.0, np.pi/3, triscale, lims=lims, hole=True, dist_req=True, name="NavierWall"),
+                #Circle((0.75, 0.7), 0.15, triscale, hole=True, dist_req=True, name="NavierWall"),
+                Ellipse((1, 1.5), 1.5, 0.6, 0, triscale, lims=lims, hole=True, dist_req=True, name="NavierWall"),
 
     ]
 

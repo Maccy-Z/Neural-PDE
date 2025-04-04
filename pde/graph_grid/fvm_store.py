@@ -17,7 +17,6 @@ class Edge:
     edge_type: list[EdgeBCTypes]
     U: list[float] = None
     dUdn: list[float] = None
-    rho_far: float = None
     euler_wall: bool = False
 
     def __post_init__(self):
@@ -29,9 +28,6 @@ class Edge:
             if EdgeBCTypes.Neuman in e:
                 assert dudn is not None, "Neumann BC requires a gradient."
                 assert u is None, "Neumann BC does not require a value."
-
-            if EdgeBCTypes.Farfield in e:
-                assert self.rho_far is not None, "Farfield BC requires a rho_far value."
 
         # Replace Nones in U and dUdn with const
         self.U = [float('NaN') if u is None else u for u in self.U]

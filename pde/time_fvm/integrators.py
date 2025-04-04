@@ -580,7 +580,7 @@ class RK3_SSP4(TSolver, Adaptive):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq: FVMEquation = equation
 
-        self._adapt_init(order=4, atol=3e-5, rtol=3e-5, alphas=(0.8, 0.98), dt_min=0.004)
+        self._adapt_init(order=4, atol=2e-5, rtol=2e-5, alphas=(0.8, 0.98), dt_min=0.004)
 
     def _step(self, t):
         """ U_a = 1/2 * U_i + 1/2 * [U_i + dt * f(U_i)]
@@ -966,7 +966,7 @@ class Butcher_adapt(TSolver, Adaptive):
         self.c = tables.b
         self.stages = self.b.shape[0]
 
-        self._adapt_init(order=4, atol=1e-5, rtol=1e-5, alphas=(0.8, 0.99), dt_min=self.dt*0.66)
+        self._adapt_init(order=4, atol=1e-5, rtol=1e-5, alphas=(0.8, 0.995), dt_min=self.dt*0.66)
         self.k = torch.zeros((self.stages, *self.cells.state.shape), device=self.A.device)
 
     def _step(self, t) -> torch.Tensor:

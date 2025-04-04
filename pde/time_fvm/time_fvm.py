@@ -287,11 +287,12 @@ class Viscosity(FVMEdgeFunc):
             # flux_bulk = div_u_edge * E_props.normals        # shape = [n_edges, 2]
             div_bulk = torch.mv(self.A_visc_bulk, div_V_edge)
             div_bulk = div_bulk.view(-1, 3)         # shape = [n_cells, 3]
-            bulk_norm = div_bulk.norm(dim=-1)
 
-            clip_val = self.clip_val
-            div_limit = torch.where(bulk_norm > clip_val, clip_val/bulk_norm, 1).unsqueeze(-1)
-            div_bulk = div_bulk * div_limit
+            # # Clipping bulk viscosity
+            # bulk_norm = div_bulk.norm(dim=-1)
+            # clip_val = self.clip_val
+            # div_limit = torch.where(bulk_norm > clip_val, clip_val/bulk_norm, 1).unsqueeze(-1)
+            # div_bulk = div_bulk * div_limit
         else:
             div_bulk = 0
         return div_visc + div_bulk
@@ -467,10 +468,12 @@ class FVMEquation:
         self.U_visc = Viscosity(E_props, mesh.areas, flux_mat=self.flux_mat, cfg=cfg, V_dims=[0, 1], device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
 
-        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)#, name="RK3_SSP5")
+        #self.t_solver = RK3_SSP4(self.cells, cfg.dt, cfg.n_iter, self)#, name="RK3_SSP5")
+        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
+
 
     def solve(self):
         self.t_solver.solve()
@@ -519,6 +522,7 @@ class FVMEquation:
         flux_mat = torch.sparse_coo_tensor(flux_indices, flux_values, size=flux_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
 
         return flux_mat
+
 
     def _flux_to_div(self, fluxes):
         """ Compute cell divergence using fluxes.

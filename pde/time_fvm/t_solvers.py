@@ -67,9 +67,12 @@ class TSolver(ABC):
         self.print_i = 100
 
     def _solve(self):
+        self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_i = int(5 / self.dt)
+        plot_t = 0.25
+        next_plot_t = plot_t
+
         dts = []
 
         st_time = time.time()
@@ -77,7 +80,7 @@ class TSolver(ABC):
         for i in range(self.n_steps):
             t += self.dt
 
-            new_Us= self._step(t)
+            new_Us = self._step(t)
             self.cells.update_cells(new_Us)
             dts.append(self.dt)
 
@@ -93,7 +96,8 @@ class TSolver(ABC):
             #         torch.save(self.cells.state, f)
             #     exit(7)
 
-            if i % plot_i == 0 and t>0:
+            if t > next_plot_t:
+                next_plot_t += plot_t
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
