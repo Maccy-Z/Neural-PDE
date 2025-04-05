@@ -15,7 +15,7 @@ def mesh_graph(cfg: ConfigFVM, new):
     if new:
         c_print(f'Creating new mesh', "green")
         xmin, xmax = 0.0, 2
-        ymin, ymax = 0.0, 2
+        ymin, ymax = 0.0, 1.4
         mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[cfg.min_A, cfg.max_A], cell_lnscale=cfg.lnscale)
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
