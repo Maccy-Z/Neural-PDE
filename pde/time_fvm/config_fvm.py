@@ -31,6 +31,7 @@ class ConfigFVM:
     viscosity: float = 1e-5
     visc_bulk: float = 1e-5
     c: float = 1.
+    C_v: float = 1.4
     # Stability parameters
     v_factor: float = 1     # Modification for velocity KT scheme
     bulk_visc_lim: float = 0.25

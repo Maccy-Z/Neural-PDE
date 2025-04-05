@@ -11,7 +11,7 @@ from pde.graph_grid.graph_utils import plot_edges
 from pde.time_fvm.config_fvm import ConfigFVM
 
 def mesh_graph(cfg: ConfigFVM, new):
-    N_comp = 3
+    N_comp = 4
     if new:
         c_print(f'Creating new mesh', "green")
         xmin, xmax = 0.0, 2
@@ -37,18 +37,19 @@ def mesh_graph(cfg: ConfigFVM, new):
     bc_tags = {}
     for bc_idx, (e_tag, e_vert) in enumerate(zip(edge_tag, bound_edgs, strict=True)):
         if e_tag == "Wall":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0., 0, None], [None, None, 0])   #(E.WALL, 0)
+            raise NotImplementedError
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0])   #(E.WALL, 0)
         elif e_tag == "NavierWall":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [0., 0, None], [None, None, 0])   #(E.WALL, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [0., 0, None, 278], [None, None, 0, None])   #(E.WALL, 0)
 
         elif e_tag == "Left":
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
             v_in = 0.6 if (0.025 < (y0+y1)/2 < 0.4) else 0
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman], [v_in, 0, None], [None, None, 0]) #(E.INLET, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [v_in, 0, None, 278], [None, None, 0, None]) #(E.INLET, 0)
         elif e_tag == "Right":
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield], [None, None, None], [0, 0, None]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
+            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield, E.Neuman], [None, None, None, None], [0, 0, None, 0]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 
@@ -56,7 +57,7 @@ def mesh_graph(cfg: ConfigFVM, new):
 
     return Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp
 
-def init_conds(centroids, load_state=False):
+def init_conds(centroids, cfg: ConfigFVM, load_state):
 
     if load_state:
         with open("save_state.pt", "rb") as f:
@@ -64,14 +65,19 @@ def init_conds(centroids, load_state=False):
     else:
         x, y = centroids[:, 0], centroids[:, 1]
 
-        us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 3)
+        us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 4)
         us_init[:, 0] = 0.1 #(0.4<y) * (y<0.8) * 0.1
         us_init[:, 1] = 0
         us_init[:, 2] = 1  # + ((x>1) * (x < 2)) * 0.01
+        us_init[:, 3] = 100
 
+        # Energy: C_v * T + 0.5 * (u^2 + v^2)
+        E = cfg.C_v * us_init[:, 3] + 0.5 * (us_init[:, 0] ** 2 + us_init[:, 1] ** 2)
+        us_init[:, 3] = E * us_init[:, 2]  # Energy density
         # Convert to momentum
         us_init[:, 0] = us_init[:, 0] * us_init[:, 2]
         us_init[:, 1] = us_init[:, 1] * us_init[:, 2]
+
 
     return us_init
 
@@ -99,7 +105,7 @@ def main():
     print(f'{mesh.areas.min() = }')
 
     centroids = mesh.centroids.clone()
-    us_init = init_conds(centroids, load_state)
+    us_init = init_conds(centroids, cfg, load_state)
     solver = FVMEquation(cfg, mesh, N_comp, bc_tags, us_init=us_init, device="cuda")
     solver.solve()
 

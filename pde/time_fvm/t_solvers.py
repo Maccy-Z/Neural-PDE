@@ -21,6 +21,7 @@ class FVMCells:
             assert init_val.shape == (n_cells, n_component), f'Incorrect us init shape {init_val.shape = }'
             self.state = init_val.to(device)
 
+
     def update_cells(self, state_new):
         """ Update cell values """
         #assert not torch.any(torch.isnan(state_new)), "Error in state_new"
@@ -31,10 +32,12 @@ class FVMCells:
 
     # @torch.compile()
     def convert_state_to_value(self, state):
-        momentum, density = state[:, :2], state[:,2]
+        momentum, density, E_density = state[:, :2], state[:,2], state[:,3]
         density = density.unsqueeze(-1)
+        E_density = E_density.unsqueeze(-1)
         V = momentum / density
-        primatives = torch.cat([V, density], dim=-1)
+        primatives = torch.cat([V, density, E_density], dim=-1)
+
         return primatives, state
 
     def save(self, name="state.pt"):
@@ -70,7 +73,7 @@ class TSolver(ABC):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_t = 0.25
+        plot_t = 0.5
         next_plot_t = plot_t
 
         dts = []
@@ -84,6 +87,7 @@ class TSolver(ABC):
             self.cells.update_cells(new_Us)
             dts.append(self.dt)
 
+            assert not torch.any(torch.isnan(self.cells.state))
             if i % self.print_i == 0:
                 irl_time = (time.time() - st_time)/self.print_i
                 avg_dt = sum(dts[-self.print_i:]) / len(dts[-self.print_i:])

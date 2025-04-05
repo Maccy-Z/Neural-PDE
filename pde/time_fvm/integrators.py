@@ -966,7 +966,7 @@ class Butcher_adapt(TSolver, Adaptive):
         self.c = tables.b
         self.stages = self.b.shape[0]
 
-        self._adapt_init(order=4, atol=1e-5, rtol=1e-5, alphas=(0.8, 0.995), dt_min=self.dt*0.66)
+        self._adapt_init(order=4, atol=3e-4, rtol=3e-4, alphas=(0.8, 0.995), dt_min=self.dt*0.66)
         self.k = torch.zeros((self.stages, *self.cells.state.shape), device=self.A.device)
 
     def _step(self, t) -> torch.Tensor:
@@ -992,10 +992,12 @@ class Butcher_adapt(TSolver, Adaptive):
             self.k[i] = k_i
 
         # Combine stages to compute next state
-        U_next_high = state_0 + torch.sum(self.b * self.k, dim=0)
-        U_next_low = state_0 + torch.sum(self.b2 * self.k, dim=0)
+        dU_high = torch.sum(self.b * self.k, dim=0)
+        dU_low = torch.sum(self.b2 * self.k, dim=0)
+        U_next_high = state_0 + dU_high
+        U_next_low = state_0 + dU_low
 
-        self.update_stepsize(U_next_high, U_next_low)
+        self.update_stepsize(dU_high[:, :3], dU_low[:, :3])
         return U_next_high
 
 

@@ -408,10 +408,10 @@ def lift_sparse_matrix(A_old, n_comp):
     new_indices = torch.stack([new_rows, new_cols], dim=0)  # shape: (2, nnz * n_comp)
     new_size = (M * n_comp, N * n_comp)
 
-    # For now, we don't need rho entries.
-    rho_mask = (new_indices[0] % 3 == 2)
-    new_indices = new_indices[:, ~rho_mask]
-    new_vals = new_vals[~rho_mask]
+    # # For now, we don't need rho entries.
+    # rho_mask = (new_indices[0] % 3 == 2)
+    # new_indices = new_indices[:, ~rho_mask]
+    # new_vals = new_vals[~rho_mask]
 
     A_new = torch.sparse_coo_tensor(new_indices, new_vals, size=new_size, device=device).coalesce()
 
@@ -437,7 +437,7 @@ class FarfieldBC:
             self.set_bc_U_face = self.__farfield
         elif self.exit_cfg.mode == "interior":
             self.beta = 1 - self.cfg.dt / self.exit_cfg.beta_tau
-            self.set_bc_U_face = self.__active
+            self.set_bc_U_face = self.__interior
 
 
     def __decay(self, U_face, Us_bc_cells):
@@ -467,7 +467,7 @@ class FarfieldBC:
         rho_bc = self.rho_far * torch.exp(vx_interior - self.v_far)
         U_face[self.farfield_mask] = rho_bc
 
-    def __active(self, U_face, Us_bc_cells):
+    def __interior(self, U_face, Us_bc_cells):
         vx_interior = Us_bc_cells[:, 0]
         rho_interior = Us_bc_cells[:, 2]
 
@@ -485,7 +485,7 @@ class FVMEdgeInfo:
     device: str
     n_edges: int
     n_cells: int
-    n_component: int
+    n_comp: int
 
     # Shared
     edge_len: torch.Tensor  # shape = (n_edges, 1)
@@ -511,17 +511,18 @@ class FVMEdgeInfo:
 
     # Gradients
     G_mats: list[torch.Tensor]  # shape = [2](n_cells, n_cells)  Gradient matrix for every cell
-    edge_dists_bc: torch.Tensor  # shape = (n_bc_edges, 3)     Distance between cell centroids, for every edge_bc
+    edge_dists_bc: torch.Tensor  # shape = (n_bc_edges, n_comp)     Distance between cell centroids, for every edge_bc
     neigh_combine: torch.Tensor # shape = (n_cell, 2). Used for masking neighbors of cell incl boundary edges, in format [Us, U_face_bc]
 
     # Temporary Variables
-    dUf_dUc: tuple[torch.Tensor, torch.Tensor] # shape = [N_component * n_edges, N_component * n_cells]. Jacobian of face w.r.t. cell
-    grad_faces_n: torch.Tensor  # shape = (n_edges, N_component)  n . grad(u) on faces
-    # U_face: torch.Tensor  # shape = (n_edges, 2, N_component)  Face values, on both sides of the face
+    dUf_dUc: tuple[torch.Tensor, torch.Tensor] # shape = [n_comp * n_edges, n_comp * n_cells]. Jacobian of face w.r.t. cell
+    grad_faces_n: torch.Tensor  # shape = (n_edges, n_comp)  n . grad(u) on faces
+    # U_face: torch.Tensor  # shape = (n_edges, 2, n_comp)  Face values, on both sides of the face
     # Primitive face variables
     # div_V: torch.Tensor  # shape = (n_edges)  Divergence of V
     Vs_faces: torch.Tensor  # shape = (n_edges, 2, 2)  Face values
     rho_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Face values
+    Q_faces: torch.Tensor # shape = (n_edges, 2, 1)  Face values
     div_V_faces: torch.Tensor  # shape = (n_edges, 2)  Divergence of V_faces
     mom_faces: torch.Tensor     # shape = (n_edges, 2, 2)  Face values
     phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
@@ -533,7 +534,7 @@ class FVMEdgeInfo:
         self.mesh = mesh
         self.n_edges = mesh.n_edges
         self.n_cells = mesh.n_cells
-        self.n_component = n_comp
+        self.n_comp = n_comp
 
         self.edge_to_tri_main = mesh.edge_to_tri_main.to(device)
         self.cent_to_edge_disp = mesh.cent_to_edge_disp.to(device).unsqueeze(-1)
@@ -544,7 +545,7 @@ class FVMEdgeInfo:
         self.bc_edge_mask = mesh.bc_edge_mask.to(device)
 
         (cell_disps, edge_dists_bc, G_mats, neigh_combine, edge_to_tri_comb) = mesh.cell_grad_stuff
-        self.edge_dists_bc = edge_dists_bc.to(device).unsqueeze(-1).expand(-1, self.n_component)
+        self.edge_dists_bc = edge_dists_bc.to(device).unsqueeze(-1).expand(-1, self.n_comp)
         self.G_mats = torch.cat([G_mats[0], G_mats[1]], dim=0).to_sparse_csr().to(device)
 
         self.neigh_combine = neigh_combine.to(device)
@@ -560,7 +561,7 @@ class FVMEdgeInfo:
         self._build_spm_face_grads()
         c_print(f'_build_spm_face_grads done', color="magenta")
 
-        self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_component, [0, 1], device=device).to_sparse_csr()
+        self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_comp, [0, 1], device=device).to_sparse_csr()
         c_print(f'V_insertion_matrix done', color="magenta")
 
         #self.dUf_dUc = self._build_dUf_dUc()
@@ -581,7 +582,7 @@ class FVMEdgeInfo:
         n_edges = self.edge_to_tri_main.shape[0]  # number of faces (edges)
         n_cells = self.n_cells
         n_bc = self.n_edges_bc  # number of boundary edges
-        n_comp = self.n_component  # number of components
+        n_comp = self.n_comp  # number of components
 
         """ Main faces"""
         # For each face, we have two contributions.
@@ -608,7 +609,7 @@ class FVMEdgeInfo:
             vals,
             size=(n_edges, n_cells))
 
-        A_face_grad_main = lift_sparse_matrix(A_face, self.n_component)
+        A_face_grad_main = lift_sparse_matrix(A_face, self.n_comp)
 
         """ Boundary faces """
         # --- Prepare flattened indices for boundary rows ---
@@ -652,7 +653,7 @@ class FVMEdgeInfo:
         b_grad[neum_rows_all] = self.neumann_val[neum_comp]
 
         # print("Starting combine_edge_operators")
-        self.A_face_grad, self.b_face_grad = combine_edge_operators(A_face_grad_main, A_grad_bc, b_grad, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_component, self.device)
+        self.A_face_grad, self.b_face_grad = combine_edge_operators(A_face_grad_main, A_grad_bc, b_grad, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_comp, self.device)
 
 
     def _build_spm_face_vals(self):
@@ -660,7 +661,7 @@ class FVMEdgeInfo:
 
         device = self.device
         n_bc = self.n_edges_bc  # number of boundary edges
-        n_comp = self.n_component
+        n_comp = self.n_comp
         n_cells = self.n_cells
 
         # Total number of flattened BC rows.
@@ -727,7 +728,7 @@ class FVMEdgeInfo:
         # Loop over each edge and each component
         for e, adj_cell in self.mesh.edge_to_tri.items():
             if adj_cell.numel() == 2:  # Only interior edges have gradient
-                for comp in range(3):
+                for comp in range(self.n_comp):
                     i = 3 * e + comp
                     # Left side: contribution from the left cell.
                     rows_left.append(i)
@@ -791,7 +792,7 @@ class FVMEdgeInfo:
             self.exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask[:, 2]]
             self.farfield_calc = FarfieldBC(self.cfg, self.farfield_mask)
 
-    @torch.compile()
+    #@torch.compile()
     def precompute_shared(self, Us):
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """
@@ -809,17 +810,17 @@ class FVMEdgeInfo:
         div_V_bc = div_V[self.edge_to_tri_bc].unsqueeze(-1)
         U_face_bc = torch.cat([U_face_bc, div_V_bc], dim=1)      # shape = [n_edges_bc, n_comp+1]
         div_V = div_V.repeat_interleave(3).unsqueeze(-1)            # shape = [3*n_cells, 1]
-        Us_face = torch.cat([Us_face.view(3*self.n_cells, self.n_component), div_V], dim=-1)        # shape = [3*n_cells, n_comp+1]
+        Us_face = torch.cat([Us_face.view(3 * self.n_cells, self.n_comp), div_V], dim=-1)        # shape = [3*n_cells, n_comp+1]
 
         # Project to left and right face values - (slow step so vectorise over all components)
-        U_face_all = torch.empty((self.n_edges, 2, self.n_component+1), device=self.device)
+        U_face_all = torch.empty((self.n_edges, 2, self.n_comp + 1), device=self.device)
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face
         U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)      # Boundary conditions are fixed as is.
 
-
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
-        self.div_V_faces = U_face_all[:, :, 3]  # shape = [n_edges, edges=2]
+        self.Q_faces = U_face_all[:, :, [3]]     # shape = [n_edges, edges=2, dims=1]
+        self.div_V_faces = U_face_all[:, :, -1]  # shape = [n_edges, edges=2]
         self.mom_faces = self.Vs_faces * self.rho_faces  # shape = [n_edges, edges=2, dims=2]
 
         self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1) # shape = [n_edges, edges=2, ]
@@ -830,13 +831,13 @@ class FVMEdgeInfo:
         # eps = 0.01*1e-4
         # _r = r**2 + r + eps
         # phi = (_r + r) / (_r + 2)
-        # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_component]
+        # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_comp]
 
         # BJ
-        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_component]
-        #
+        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_comp]
+
         # Cell wide clamping
-        phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_component]
+        phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp]
 
         # Component wide clamping
         #phi = torch.min(phi, dim=2, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp=1]
@@ -848,24 +849,23 @@ class FVMEdgeInfo:
         """ Limited B-J scheme for cell to face interpolation.
 
         """
-        U_cent = Us.unsqueeze(1)        # shape = [n_cells, 1, n_component]
-        Us_cell_face = torch.cat([Us, U_face_bc])        # shape = [n_cells + n_edges_bc, n_component]
-        Us_neigh = Us_cell_face[self.neigh_combine]  # shape = [n_cells, neigh=3, n_component]
+        U_cent = Us.unsqueeze(1)        # shape = [n_cells, 1, n_comp]
+        Us_cell_face = torch.cat([Us, U_face_bc])        # shape = [n_cells + n_edges_bc, n_comp]
+        Us_neigh = Us_cell_face[self.neigh_combine]  # shape = [n_cells, neigh=3, n_comp]
 
         # Uncorrected update
-        grads = cell_grads.unsqueeze(1)     # shape = [n_cells, 1, dims=2, n_component]
-        dU = (grads * self.cent_to_edge_disp).sum(dim=2)  # shape = [n_cells, neigh=3, n_component]
+        grads = cell_grads.unsqueeze(1)     # shape = [n_cells, 1, dims=2, n_comp]
+        dU = (grads * self.cent_to_edge_disp).sum(dim=2)  # shape = [n_cells, neigh=3, n_comp]
 
         # Select limiting neighbor values and compute gradient limiter
         U_cent_neigh = torch.cat([U_cent, Us_neigh], dim=1)
-        U_upper = torch.max(U_cent_neigh) - U_cent      # shape = [n_cells, neigh=3, n_component]
-        U_lower = torch.min(U_cent_neigh) - U_cent
+        U_upper = torch.max(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent      # shape = [n_cells, neigh=3, n_comp]
+        U_lower = torch.min(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent
 
         numerator = torch.where(dU > 0, U_upper, U_lower)
         dU = torch.where(dU.abs() < 1e-8, 1e-8, dU)
-        phi_lim = self._phi(numerator / dU)           # shape = [n_cells, neigh=3, n_component]
-
-        Us_face = U_cent + phi_lim * dU      # shape = [n_cells, neigh=3, n_component]
+        phi_lim = self._phi(numerator / dU)           # shape = [n_cells, neigh=3, n_comp]
+        Us_face = U_cent + phi_lim * dU      # shape = [n_cells, neigh=3, n_comp]
 
         # # Project to left and right face values
         # U_face_all = torch.empty((self.n_edges, 2, n_component), device=self.device)
@@ -883,8 +883,8 @@ class FVMEdgeInfo:
 
     def _bc_face_vals(self, Us):
         """ Boundary face values.
-            Us.shape = [n_cells, n_component]
-            return.shape: [n_edges_bc, n_component]
+            Us.shape = [n_cells, n_comp]
+            return.shape: [n_edges_bc, n_comp]
 
          """
         # U_face = torch.empty((self.n_edges_bc, self.n_component), device=self.device)
@@ -908,7 +908,7 @@ class FVMEdgeInfo:
         # Final U_face in flattened form.a
         U_face_flat = torch.mv(self.A_bc, Us_flat) + self.b_bc      # shape = [n_edges_bc * n_component]
         # Reshape back to (n_edges_bc, n_component)
-        U_face = U_face_flat.view(self.n_edges_bc, self.n_component)
+        U_face = U_face_flat.view(self.n_edges_bc, self.n_comp)
 
         # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
         if self.use_farfield :
@@ -985,7 +985,7 @@ class FVMEdgeInfo:
         """ SPARSE"""
         Us_flat = Us.flatten()
         dUdn_face_flat = torch.mv(self.A_face_grad, Us_flat) + self.b_face_grad
-        dUdn_face = dUdn_face_flat.view(self.n_edges, self.n_component)
+        dUdn_face = dUdn_face_flat.view(self.n_edges, self.n_comp)
 
         return dUdn_face
 

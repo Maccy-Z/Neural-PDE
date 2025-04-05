@@ -95,131 +95,130 @@ class Adevction(FVMEdgeFunc):
             f_rho = rho * phi
         """
         E_props = self.E_props
+        # V_faces = E_props.Vs_faces      # shape = [n_edges, edges=2, n_comp=2]
         rho_faces = E_props.rho_faces # shape = [n_edges, edges=2, n_comp=1]
-        # V_faces = E_props.Vs_faces  # shape = [n_edges, edges=2, n_comp=2]
+        Q_faces = E_props.Q_faces       # shape = [n_edges, edges=2, n_comp=1]
         phi = E_props.phi           # Linear interpolation of convection vector = (v_faces dot normal). shape = [n_edges, edges=2]
         mom_f = E_props.mom_faces
-        # mom_f = rho_faces * V_faces         # shape = [n_edges, edges=2, n_comp=2]
 
-        Us_f = torch.cat([mom_f, rho_faces], dim=-1)  # shape = [n_edges, edges=2, n_comp=3]
+        # Temperature: Q = rho * q, q = C_v * T + 0.5 * |U|^2 -> T = (Q/rho - 0.5 * |U|^2) / (C_v)
+        # Pressure: P = rho * R * T
+
+        Us_f = torch.cat([mom_f, rho_faces, Q_faces], dim=-1)  # shape = [n_edges, edges=2, n_comp=3]
         advec_flux = Us_f * phi.unsqueeze(-1)           # shape = [n_edges, edges=2, n_comp=3]
         advec_flux = advec_flux.mean(dim=1)              # shape = [n_edges, n_comp=3]
-        advec_flux = advec_flux.flatten()
+        #advec_flux = advec_flux.flatten()
 
-        # Us_f = Us_f.permute(0, 2, 1).reshape(-1, 2)        # shape = [n_comp*n_edges, edges=2]
-        # phi_f = phi.repeat_interleave(3, dim=0)     # shape = [3*n_edges, edges=2]
-
-        # advec_flux = Us_f * phi_f               # shape = [3*n_edges, edges=2]
-        # advec_flux = advec_flux.mean(dim=-1)        # shape = [3*n_edges]
-
+        # zeros = torch.zeros((self.E_props.n_edges, 1), device=self.device)
+        # advec_flux = torch.cat([advec_flux, zeros], dim=-1)     # shape = [n_edges, n_comp=4]
         return advec_flux
 
 
-    def _build_F_A(self, A):
-        """ Construct matrix M_lik = F_li @ A_ik for each edge i. Done in a way ready for reshaping.
-            F is the flux matrix, A is the gradient matrix.
-
-            A.shape = [3*n_edges, 3*n_cells]
-            F.shape = [3*n_cells, 3*n_edges]
-
-            return.shape = [3*n_cells * 3*n_cells, 3*n_edges]
-        """
-        E_props = self.E_props
-        n_edges, n_cells = E_props.n_edges, E_props.n_cells
-        F = self.flux_mat.to_sparse()#.cpu()
-
-        F_indices = F._indices()  # shape: (2, nnz_F): [l_indices; i_indices]
-        F_values = F._values()  # shape: (nnz_F,)
-        A_indices = A._indices()  # shape: (2, nnz_G): [i_indices; k_indices]
-        A_values = A._values()  # shape: (nnz_G,)
-
-        # # Number of nonzero elements:
-        # nnz_F = F_indices.shape[1]
-        # nnz_G = A_indices.shape[1]
-
-        # Broadcast F_indices[1] (i indices) and G0_indices[0] (i indices) to compare:
-        f_i = F_indices[1].unsqueeze(1)  # shape: (nnz_F, 1)
-        g_i = A_indices[0].unsqueeze(0)  # shape: (1, nnz_G)
-        match_mask = (f_i == g_i)  # shape: (nnz_F, nnz_G)
-
-        # Get the indices of the matching pairs. Do on CPU since GPU has size limit
-        match_mask = match_mask.cpu()
-        f_match_idx, g_match_idx = torch.nonzero(match_mask, as_tuple=True)
-        f_match_idx, g_match_idx = f_match_idx.to(self.device), g_match_idx.to(self.device)
-
-        # For each matching pair, get:
-        # - l from F (row index of F)
-        # - i from F (column index of F, also matching the row index of G0)
-        # - k from G0 (column index of G0)
-        # - corresponding values f_val and g_val
-        l_vals = F_indices[0][f_match_idx]  # shape: (num_matches,)
-        i_vals = F_indices[1][f_match_idx]  # shape: (num_matches,)
-        f_vals = F_values[f_match_idx]  # shape: (num_matches,)
-        k_vals = A_indices[1][g_match_idx]  # shape: (num_matches,)
-        g_vals = A_values[g_match_idx]  # shape: (num_matches,)
-
-        # Now compute the flattened row indices for M:
-        # Here, we assume the flattened row is defined as: new_row = l * (3*n_cells) + k
-        new_rows = l_vals * (3 * n_cells) + k_vals  # shape: (num_matches,)
-        new_cols = i_vals  # shape: (num_matches,)
-        new_vals = f_vals * g_vals  # shape: (num_matches,)
-
-        # Build the sparse matrix M (of shape (L*K, i), here K is 3*n_cells)
-        M_shape = ((3*n_cells )* (3 * n_cells), 3*n_edges)
-        M_indices = torch.stack([new_rows, new_cols])
-        M = torch.sparse_coo_tensor(M_indices, new_vals, M_shape)
-
-        return M
-
-
-    def _build_jacobian(self, diag):
-        """
-            U_cell = [interleave(mom_x | mom_y | rho)], shape = [3*n_cell]
-            U_face = A(U_cell)              shape = [3*n_edges, 2], second dim is Left / Right side of face.
-            d(U_f_i, L/R)/d(U_c_j) = :
-                                0 if cell_j doesnt have face_i  - Or computing wrong mom_x, mom_y, rho component.
-                                1 if face_i is on cell_j and cell_j is on L/R side.
-            For jacobian:
-                advec = sum_j 1/2 Uf_ij phi_ij
-                dadvec/dUc_k = 1/2 sum_j phi_ij dUf_ij/dUc_k
-                             = 1/2 sum_j phi_ij J_ijk
-                             -> A_L @ phi_iL | A_L @ phi_iR
-            Divergence:
-                D = F @ advec
-                dD/dUc_k = F @ dadvec/dUc_k
-                         = F @ A_L @ phi_iL | F @ A_L @ phi_iR
-                         = M @ [phi_iL | phi_iR]
-        """
-        E_props = self.E_props
-        n_edges, n_cells = E_props.n_edges, E_props.n_cells
-        A_left, A_right = self.E_props.dUf_dUc
-
-        """ Method 2: Sparse matrix precompute """
-        M_L = self._build_F_A(A_left)
-        M_R = self._build_F_A(A_right)
-        # Join M = [M_L | M_R]
-        M_R_indices = M_R._indices().clone()
-        M_R_indices[1:] += 3*n_edges
-        M_indices = torch.cat([M_L._indices(), M_R_indices], dim=1)
-        new_values = torch.cat([M_L._values(), M_R._values()]) / 2
-        new_shape = (3*n_cells*3*n_cells, 6*n_edges)
-        M = torch.sparse_coo_tensor(M_indices, new_values, new_shape).coalesce()
-
-        bc_cells = self.E_props.edge_to_tri_bc
-        bc_cells = torch.cat([3*bc_cells, 3*bc_cells+1, 3 * bc_cells + 2])
-        self.M_holder = SparseReshapeMM(M, 3 * n_cells, diag=diag, device=self.device, zero_rows=bc_cells)
-
-
-    def calc_jacobian(self):
-        E_props = self.E_props
-        phi = E_props.phi
-        phi_f = phi.repeat_interleave(3, dim=0)  # shape = [3*n_edges, edges=2]
-        phi_vec = torch.cat([phi_f[:, 0], phi_f[:, 1]])  # shhape = [6*n_edges]
-
-        # New method
-        Jac = self.M_holder.multiply(phi_vec)
-
-        return Jac
+    # def _build_F_A(self, A):
+    #     """ Construct matrix M_lik = F_li @ A_ik for each edge i. Done in a way ready for reshaping.
+    #         F is the flux matrix, A is the gradient matrix.
+    #
+    #         A.shape = [3*n_edges, 3*n_cells]
+    #         F.shape = [3*n_cells, 3*n_edges]
+    #
+    #         return.shape = [3*n_cells * 3*n_cells, 3*n_edges]
+    #     """
+    #     E_props = self.E_props
+    #     n_edges, n_cells = E_props.n_edges, E_props.n_cells
+    #     F = self.flux_mat.to_sparse()#.cpu()
+    #
+    #     F_indices = F._indices()  # shape: (2, nnz_F): [l_indices; i_indices]
+    #     F_values = F._values()  # shape: (nnz_F,)
+    #     A_indices = A._indices()  # shape: (2, nnz_G): [i_indices; k_indices]
+    #     A_values = A._values()  # shape: (nnz_G,)
+    #
+    #     # # Number of nonzero elements:
+    #     # nnz_F = F_indices.shape[1]
+    #     # nnz_G = A_indices.shape[1]
+    #
+    #     # Broadcast F_indices[1] (i indices) and G0_indices[0] (i indices) to compare:
+    #     f_i = F_indices[1].unsqueeze(1)  # shape: (nnz_F, 1)
+    #     g_i = A_indices[0].unsqueeze(0)  # shape: (1, nnz_G)
+    #     match_mask = (f_i == g_i)  # shape: (nnz_F, nnz_G)
+    #
+    #     # Get the indices of the matching pairs. Do on CPU since GPU has size limit
+    #     match_mask = match_mask.cpu()
+    #     f_match_idx, g_match_idx = torch.nonzero(match_mask, as_tuple=True)
+    #     f_match_idx, g_match_idx = f_match_idx.to(self.device), g_match_idx.to(self.device)
+    #
+    #     # For each matching pair, get:
+    #     # - l from F (row index of F)
+    #     # - i from F (column index of F, also matching the row index of G0)
+    #     # - k from G0 (column index of G0)
+    #     # - corresponding values f_val and g_val
+    #     l_vals = F_indices[0][f_match_idx]  # shape: (num_matches,)
+    #     i_vals = F_indices[1][f_match_idx]  # shape: (num_matches,)
+    #     f_vals = F_values[f_match_idx]  # shape: (num_matches,)
+    #     k_vals = A_indices[1][g_match_idx]  # shape: (num_matches,)
+    #     g_vals = A_values[g_match_idx]  # shape: (num_matches,)
+    #
+    #     # Now compute the flattened row indices for M:
+    #     # Here, we assume the flattened row is defined as: new_row = l * (3*n_cells) + k
+    #     new_rows = l_vals * (3 * n_cells) + k_vals  # shape: (num_matches,)
+    #     new_cols = i_vals  # shape: (num_matches,)
+    #     new_vals = f_vals * g_vals  # shape: (num_matches,)
+    #
+    #     # Build the sparse matrix M (of shape (L*K, i), here K is 3*n_cells)
+    #     M_shape = ((3*n_cells )* (3 * n_cells), 3*n_edges)
+    #     M_indices = torch.stack([new_rows, new_cols])
+    #     M = torch.sparse_coo_tensor(M_indices, new_vals, M_shape)
+    #
+    #     return M
+    #
+    #
+    # def _build_jacobian(self, diag):
+    #     """
+    #         U_cell = [interleave(mom_x | mom_y | rho)], shape = [3*n_cell]
+    #         U_face = A(U_cell)              shape = [3*n_edges, 2], second dim is Left / Right side of face.
+    #         d(U_f_i, L/R)/d(U_c_j) = :
+    #                             0 if cell_j doesnt have face_i  - Or computing wrong mom_x, mom_y, rho component.
+    #                             1 if face_i is on cell_j and cell_j is on L/R side.
+    #         For jacobian:
+    #             advec = sum_j 1/2 Uf_ij phi_ij
+    #             dadvec/dUc_k = 1/2 sum_j phi_ij dUf_ij/dUc_k
+    #                          = 1/2 sum_j phi_ij J_ijk
+    #                          -> A_L @ phi_iL | A_L @ phi_iR
+    #         Divergence:
+    #             D = F @ advec
+    #             dD/dUc_k = F @ dadvec/dUc_k
+    #                      = F @ A_L @ phi_iL | F @ A_L @ phi_iR
+    #                      = M @ [phi_iL | phi_iR]
+    #     """
+    #     E_props = self.E_props
+    #     n_edges, n_cells = E_props.n_edges, E_props.n_cells
+    #     A_left, A_right = self.E_props.dUf_dUc
+    #
+    #     """ Method 2: Sparse matrix precompute """
+    #     M_L = self._build_F_A(A_left)
+    #     M_R = self._build_F_A(A_right)
+    #     # Join M = [M_L | M_R]
+    #     M_R_indices = M_R._indices().clone()
+    #     M_R_indices[1:] += 3*n_edges
+    #     M_indices = torch.cat([M_L._indices(), M_R_indices], dim=1)
+    #     new_values = torch.cat([M_L._values(), M_R._values()]) / 2
+    #     new_shape = (3*n_cells*3*n_cells, 6*n_edges)
+    #     M = torch.sparse_coo_tensor(M_indices, new_values, new_shape).coalesce()
+    #
+    #     bc_cells = self.E_props.edge_to_tri_bc
+    #     bc_cells = torch.cat([3*bc_cells, 3*bc_cells+1, 3 * bc_cells + 2])
+    #     self.M_holder = SparseReshapeMM(M, 3 * n_cells, diag=diag, device=self.device, zero_rows=bc_cells)
+    #
+    #
+    # def calc_jacobian(self):
+    #     E_props = self.E_props
+    #     phi = E_props.phi
+    #     phi_f = phi.repeat_interleave(3, dim=0)  # shape = [3*n_edges, edges=2]
+    #     phi_vec = torch.cat([phi_f[:, 0], phi_f[:, 1]])  # shhape = [6*n_edges]
+    #
+    #     # New method
+    #     Jac = self.M_holder.multiply(phi_vec)
+    #
+    #     return Jac
 
 
 class Viscosity(FVMEdgeFunc):
@@ -245,7 +244,7 @@ class Viscosity(FVMEdgeFunc):
         edge_len_mu = E_props.edge_len * self.mu
         proj_mat = E_props.V_insertion_matrix # create_insertion_matrix(E_props.n_edges, E_props.n_component, [0, 1], device=device).to_sparse_csr()
 
-        n_edges, n_comp = E_props.n_edges, E_props.n_component
+        n_edges, n_comp = E_props.n_edges, E_props.n_comp
         edge_len_mu = edge_len_mu.repeat(1, 2)
         visc_mat = create_selection_matrix(n_blocks=n_edges, block_size=n_comp, selected_dims=V_dims, weights=-edge_len_mu).to_sparse_csr().cuda()
         proj_visc_mat = proj_mat @ visc_mat
@@ -278,7 +277,7 @@ class Viscosity(FVMEdgeFunc):
         Us_flat = Us.flatten()
         # div_visc = self.A_visc @ Us_flat + self.b_visc
         div_visc = torch.addmv(self.b_visc, self.A_visc, Us_flat)
-        div_visc = div_visc.view(-1, 3)         # shape = [n_cells, 3]
+        div_visc = div_visc.view(-1, E_props.n_comp)         # shape = [n_cells, n_comp]
 
         """ Bulk viscosity: gradient = dux/dx + duy/dy, least squares gradient. Use this to compute cell divergence. """
         if self.mu_b > 0:
@@ -286,7 +285,7 @@ class Viscosity(FVMEdgeFunc):
 
             # flux_bulk = div_u_edge * E_props.normals        # shape = [n_edges, 2]
             div_bulk = torch.mv(self.A_visc_bulk, div_V_edge)
-            div_bulk = div_bulk.view(-1, 3)         # shape = [n_cells, 3]
+            div_bulk = div_bulk.view(-1, E_props.n_comp)         # shape = [n_cells, n_comp]
 
             # # Clipping bulk viscosity
             # bulk_norm = div_bulk.norm(dim=-1)
@@ -391,9 +390,9 @@ class PressureForce(FVMEdgeFunc):
         rho_n = self.c2 * rho_faces * normals                 # shape = [n_edges, 2]
 
 
-        # fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_component, device=self.device)
-        # fluxes[:, :2] =rho_n
-        # fluxes_flat = fluxes.flatten()
+        fluxes = torch.zeros(self.E_props.n_edges, self.E_props.n_comp, device=self.device)
+        fluxes[:, :2] = rho_n
+        #fluxes_flat = fluxes.flatten()
 
         # fluxes_flat = torch.zeros(self.E_props.n_edges * self.E_props.n_component, device=self.device)
         # fluxes_flat[::3] = rho_n[:, 0]
@@ -402,8 +401,8 @@ class PressureForce(FVMEdgeFunc):
         # fluxes = torch.cat([rho_n, torch.zeros((self.E_props.n_edges, 1), device=self.device)] , dim=1)  # shape = [n_edges, 3]
         # fluxes_flat = fluxes.flatten()
 
-        fluxes_flat = self.proj_mat @ rho_n.flatten()
-        return fluxes_flat
+        #fluxes_flat = self.proj_mat @ rho_n.flatten()
+        return fluxes # _flat
 
 
 class KTDiffusion(FVMEdgeFunc):
@@ -415,24 +414,26 @@ class KTDiffusion(FVMEdgeFunc):
         self.v_factor = v_factor
         self.E_props = E_props
 
-    @torch.compile()
+    #@torch.compile()
     def edge_fluxes(self, c):
         rho_face = self.E_props.rho_faces
         Vs_face = self.E_props.Vs_faces      # shape = [n_edges, edges=2, n_comp=2]
+        Q_face = self.E_props.Q_faces   # shape = [n_edges, edges=2, n_comp=1]
         mom_face = self.E_props.mom_faces
 
-        Us = torch.cat([mom_face, rho_face], dim=2)  # shape = [n_edges, 2, 3]
+        zeros = torch.zeros(self.E_props.n_edges, 2, 1, device=self.device)
+        Us = torch.cat([mom_face, rho_face, Q_face], dim=2)  # shape = [n_edges, 2, n_comp]
 
         # Wavespeed is c + v_max. Clip velocity wavespeed to k*c + v_max
         Vs = Vs_face.norm(dim=-1)            # shape = [n_edges, edges=2]
         Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
 
-        a = torch.tensor([[self.v_factor * c, self.v_factor * c, c]], device=self.device)
-        a = a.repeat(self.E_props.n_edges, 1) + Vs_max  # shape = [n_edges, 3]
+        a = torch.tensor([[self.v_factor * c, self.v_factor * c, c, c]], device=self.device)
+        a = a.repeat(self.E_props.n_edges, 1) + Vs_max  # shape = [n_edges, n_comp]
 
-        fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * self.E_props.edge_len  # shape = [n_edges, n_comp=3]
-        fluxes_flat = fluxes.flatten()
-        return fluxes_flat
+        fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * self.E_props.edge_len  # shape = [n_edges, n_comp]
+        # fluxes_flat = fluxes.flatten()
+        return fluxes#_flat
 
 
 class FVMEquation:
@@ -536,6 +537,7 @@ class FVMEquation:
         # divergence = torch.sum(-self.tri_edge_sign * tri_fluxes, dim=1).squeeze() / self.areas.unsqueeze(-1)     # shape = [n_cells, N_component]
 
         # Matrix version
+        fluxes = fluxes.flatten()
         divergence_flat = torch.mv(self.flux_mat, fluxes)  # shape: (n_cells * n_component,)
         divergence = divergence_flat.view(-1, self.n_comp)  # shape: (n_cells, n_component)
         return divergence
@@ -543,7 +545,6 @@ class FVMEquation:
 
     def forward(self, primatives, t=0):
         """ primatives.shape = (n_cells, n_component) """
-
         E_props = self.E_props
         E_props.precompute_shared(primatives)
 
@@ -560,17 +561,6 @@ class FVMEquation:
 
         return divergence
 
-    # def get_jacobian(self, prims=None, t=0):
-    #     E_props = self.E_props
-    #     if t == 0:
-    #         E_props.precompute_shared(prims)
-    #
-    #     advec_jac, diag_mask = self.U_advect.calc_jacobian()
-    #     p_jac = self.P_force.Jacobian
-    #     jacobian = advec_jac.to_sparse_coo() + p_jac
-    #     # print(jacobian)
-    #     jacobian = jacobian.coalesce()
-    #     return jacobian, None
 
 
     def plot_flux(self, fluxes, title="Fluxes", show_index=False, lims=None, Xlims=None):

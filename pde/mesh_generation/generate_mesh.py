@@ -175,8 +175,8 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas, cell_lnscale=2):
     # print(f'{triscale = }')
     # exit(7)
     coords = [
-                Line([[xmin, ymin], [xmax, ymin]], True, name="Wall"),     # Bottom
-                Line([[xmin, ymax], [xmax, ymax]], False, name="Wall"),     # Top
+                Line([[xmin, ymin], [xmax, ymin]], True, name="NavierWall"),     # Bottom
+                Line([[xmin, ymax], [xmax, ymax]], False, name="NavierWall"),     # Top
                 Line([[xmin, ymin], [xmin, ymax]], False, name="Left"),    # Left
                 Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
                 Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Refinement wall
