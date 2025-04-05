@@ -796,20 +796,20 @@ class FVMEdgeInfo:
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """
 
-        U_face_bc = self._bc_face_vals(Us)      # shape = [n_edges_bc, n_component]
-        Us_cell_face = torch.cat([Us, U_face_bc])        # shape = [n_cells + n_edges_bc, n_component]
-        cell_grads = self._cell_grads(Us_cell_face) # shape = [n_cells, 2, n_component]
-        # self.grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_component]
+        U_face_bc = self._bc_face_vals(Us)      # shape = [n_edges_bc, n_comp]
+        Us_cell_face = torch.cat([Us, U_face_bc])        # shape = [n_cells + n_edges_bc, n_comp]
+        cell_grads = self._cell_grads(Us_cell_face) # shape = [n_cells, 2, n_comp]
+        # self.grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_comp]
 
         # Compute limited face values,
-        Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # shape = [n_cells, 3, n_component]
+        Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # shape = [n_cells, 3, n_comp]
 
         # Compute limited cell divergence and concat onto face values
         div_V = phi_lim[:, 0, 0] * cell_grads[:, 0, 0] +  phi_lim[:, 0, 1] * cell_grads[:, 1, 1]        # shape = [n_cells]
         div_V_bc = div_V[self.edge_to_tri_bc].unsqueeze(-1)
-        U_face_bc = torch.cat([U_face_bc, div_V_bc], dim=1)      # shape = [n_edges_bc, n_component+1]
+        U_face_bc = torch.cat([U_face_bc, div_V_bc], dim=1)      # shape = [n_edges_bc, n_comp+1]
         div_V = div_V.repeat_interleave(3).unsqueeze(-1)            # shape = [3*n_cells, 1]
-        Us_face = torch.cat([Us_face.view(3*self.n_cells, self.n_component), div_V], dim=-1)        # shape = [3*n_cells, n_component+1]
+        Us_face = torch.cat([Us_face.view(3*self.n_cells, self.n_component), div_V], dim=-1)        # shape = [3*n_cells, n_comp+1]
 
         # Project to left and right face values - (slow step so vectorise over all components)
         U_face_all = torch.empty((self.n_edges, 2, self.n_component+1), device=self.device)
