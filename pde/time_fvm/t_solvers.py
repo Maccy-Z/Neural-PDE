@@ -73,7 +73,7 @@ class TSolver(ABC):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_t = 0.5
+        plot_t = 2
         next_plot_t = plot_t
 
         dts = []
@@ -87,7 +87,7 @@ class TSolver(ABC):
             self.cells.update_cells(new_Us)
             dts.append(self.dt)
 
-            assert not torch.any(torch.isnan(self.cells.state))
+            #assert not torch.any(torch.isnan(self.cells.state))
             if i % self.print_i == 0:
                 irl_time = (time.time() - st_time)/self.print_i
                 avg_dt = sum(dts[-self.print_i:]) / len(dts[-self.print_i:])
@@ -95,29 +95,27 @@ class TSolver(ABC):
                 c_print(f'{i = }, {t = :.4g}, {avg_dt = :.3g}, {irl_time = :.3g}', color="bright_green")
                 st_time = time.time()
 
-            # if t == 35:
-            #     with open("save_state.pt", "wb") as f:
-            #         torch.save(self.cells.state, f)
-            #     exit(7)
-
             if t > next_plot_t:
-                next_plot_t += plot_t
+                next_plot_t = t + plot_t
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
-                Xlims = None # [[0.45, 0.52], [0.77, 0.84]]
-
-                # self.eq.plot_interp(E_props.cell_grads[:, 1, 0], title=f"Grad t={i * self.dt :.4g}", Xlims=Xlims)
-                # self.eq.plot_cells(div_KT[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True, Xlims=Xlims)
-                # self.eq.plot_flux(self.eq.div_V_face[:, 0], title=f"Vx t={i * self.dt :.4g}", show_index=False)
-                self.eq.plot_interp(primatives[:], title=f"Values at t={t :.4g}", Xlims=Xlims, )
-                # self.eq.plot_cells(primatives[:, 0], title=f"Values at t={i * self.dt :.4g}", show_index=True, Xlims=Xlims)
+                Xlims = [[1.0, 1.2], [1.2, 1.45]]
+                #
+                # self.eq.plot_flux(self.eq.E_props.Q_faces[:, :, 0], title=f"Vx t={i * self.dt :.4g}", Xlims=Xlims, show_index=True)
+                # self.eq.plot_cells(primatives[:, 3], title=f'Q at t={i * self.dt:.4g}', Xlims=Xlims, show_index=True)
+                self.eq.plot_interp(primatives[:], title=f"Values at t={t :.4g}", )
 
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
                 # if t>0.2:
                 #     exit("DONE PLOTTING")
+
+            # if t >= 180:
+            #     with open("save_state.pt", "wb") as f:
+            #         torch.save(self.cells.state, f)
+            #     exit(7)
 
         dts = torch.stack(dts).cpu()
         kernel_size = 10
@@ -199,9 +197,9 @@ class TSolver(ABC):
 
     def _euler_step(self, U, t):
         prim_a, _ = self.cells.convert_state_to_value(U)
-        U_i_1 = U + self.dt * self.eq.forward(prim_a, t)
+        U_i_1 = U + self.dt * self.eq.forward(prim_a, self.dt, t)
         return U_i_1
 
     def _forward_state(self, U, t):
         prim, _ = self.cells.convert_state_to_value(U)
-        return self.eq.forward(prim, t)
+        return self.eq.forward(prim, self.dt, t)

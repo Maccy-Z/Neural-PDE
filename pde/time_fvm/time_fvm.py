@@ -414,24 +414,31 @@ class KTDiffusion(FVMEdgeFunc):
         self.v_factor = v_factor
         self.E_props = E_props
 
-    #@torch.compile()
-    def edge_fluxes(self, c):
+
+    @torch.compile()
+    def edge_fluxes(self, c, dt):
         rho_face = self.E_props.rho_faces
         Vs_face = self.E_props.Vs_faces      # shape = [n_edges, edges=2, n_comp=2]
         Q_face = self.E_props.Q_faces   # shape = [n_edges, edges=2, n_comp=1]
         mom_face = self.E_props.mom_faces
 
-        zeros = torch.zeros(self.E_props.n_edges, 2, 1, device=self.device)
         Us = torch.cat([mom_face, rho_face, Q_face], dim=2)  # shape = [n_edges, 2, n_comp]
 
         # Wavespeed is c + v_max. Clip velocity wavespeed to k*c + v_max
         Vs = Vs_face.norm(dim=-1)            # shape = [n_edges, edges=2]
         Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
 
-        a = torch.tensor([[self.v_factor * c, self.v_factor * c, c, c]], device=self.device)
-        a = a.repeat(self.E_props.n_edges, 1) + Vs_max  # shape = [n_edges, n_comp]
+        # a = torch.tensor([[self.v_factor * c, self.v_factor * c, c, c]], device=self.device)
+        # a = a.repeat(self.E_props.n_edges, 1) + Vs_max  # shape = [n_edges, n_comp]
+        a = Vs_max + c
 
-        fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * self.E_props.edge_len  # shape = [n_edges, n_comp]
+        # Maximum diffusion distance is a * dt/2 < tri_height -> a < 2 * tri_height / dt
+        # Assume tri_height = 0.66 * edge_len / 2
+        #print(f'{dt = }')
+        edge_len = self.E_props.edge_len
+        a = a.clamp(max=0.5 * edge_len / dt)  # shape = [n_edges, 1]
+        fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * edge_len  # shape = [n_edges, n_comp]
+
         # fluxes_flat = fluxes.flatten()
         return fluxes#_flat
 
@@ -469,8 +476,8 @@ class FVMEquation:
         self.U_visc = Viscosity(E_props, mesh.areas, flux_mat=self.flux_mat, cfg=cfg, V_dims=[0, 1], device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
 
-        #self.t_solver = RK3_SSP4(self.cells, cfg.dt, cfg.n_iter, self)#, name="RK3_SSP5")
-        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
+        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
+        #self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
@@ -543,17 +550,17 @@ class FVMEquation:
         return divergence
 
 
-    def forward(self, primatives, t=0):
+    def forward(self, primatives, dt, t):
         """ primatives.shape = (n_cells, n_component) """
         E_props = self.E_props
-        E_props.precompute_shared(primatives)
+        E_props.precompute_shared(primatives, dt)
 
         # Advection term
         fluxes = self.U_advect.edge_fluxes()
         # Pressure term
         fluxes += self.P_force.edge_fluxes()
         # MUSCL term
-        fluxes += self.KT_diff.edge_fluxes(self.c)
+        fluxes += self.KT_diff.edge_fluxes(self.c, dt)
         # Compute divergence
         divergence = self._flux_to_div(fluxes)
         # Viscosity is directly from divergence

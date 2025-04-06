@@ -40,13 +40,13 @@ def mesh_graph(cfg: ConfigFVM, new):
             raise NotImplementedError
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0])   #(E.WALL, 0)
         elif e_tag == "NavierWall":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [0., 0, None, 278], [None, None, 0, None])   #(E.WALL, 0)
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0])   #(E.WALL, 0)
 
         elif e_tag == "Left":
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
-            v_in = 0.6 if (0.025 < (y0+y1)/2 < 0.4) else 0
+            v_in = 0.1 #if (0.025 < (y0+y1)/2 < 0.4) else 0
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [v_in, 0, None, 278], [None, None, 0, None]) #(E.INLET, 0)
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield, E.Neuman], [None, None, None, None], [0, 0, None, 0]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)

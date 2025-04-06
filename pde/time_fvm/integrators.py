@@ -580,7 +580,7 @@ class RK3_SSP4(TSolver, Adaptive):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq: FVMEquation = equation
 
-        self._adapt_init(order=4, atol=2e-5, rtol=2e-5, alphas=(0.8, 0.98), dt_min=0.004)
+        self._adapt_init(order=4, atol=2e-3, rtol=2e-3, alphas=(0.8, 0.99), dt_min=self.dt/2)
 
     def _step(self, t):
         """ U_a = 1/2 * U_i + 1/2 * [U_i + dt * f(U_i)]
@@ -602,7 +602,7 @@ class RK3_SSP4(TSolver, Adaptive):
         # U_{i+1} = 1/2 * U_c + 1/2 [U_c + dt * f(U_c)]
         U_i_1 = 1/2 * (U_c + self._euler_step(U_c, t=t+self.dt/2))
 
-        self.update_stepsize(U_i_1, U_b)
+        self.update_stepsize((U_i_1 - U_i)[:, :3], (U_b - U_i)[:, :3])
 
         return U_i_1
 
@@ -713,7 +713,7 @@ class Magazenkov(TSolver):
         return U_t_2
 
 
-class Adams2(TSolver):
+class Adams2(TSolver, Adaptive):
     """ Adams Bashforth 2 solver
         Non-Markov solver.
     """
@@ -721,13 +721,14 @@ class Adams2(TSolver):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq: FVMEquation = equation
 
-        self.prev_dUdt = deque(maxlen=1)
+        self.prev_dUdt = deque(maxlen=2)
+        self._adapt_init(order=4, atol=3e-6, rtol=3e-6, alphas=(0.9, 0.99))
 
     def _init_states(self, t):
         prim, _ = self.cells.get_values()
         dUdt_0 = self.eq.forward(prim, t)
 
-        for _ in range(1):
+        for _ in range(2):
             self.prev_dUdt.append(dUdt_0)
 
     def _step(self, t):
@@ -743,14 +744,15 @@ class Adams2(TSolver):
 
         dUdt_t = self.eq.forward(prim_t, t)
         dUdt_tm1 = self.prev_dUdt[-1]
-        # dUdt_tm2 = self.prev_dUdt[-2]
+        dUdt_tm2 = self.prev_dUdt[-2]
 
-        # U_t_1 = U_t + self.dt/12 * (23 * dUdt_t - 16 * dUdt_tm1 + 5 * dUdt_tm2)
-        U_t_1 = U_t + self.dt/2 * (3 * dUdt_t - dUdt_tm1)
-
+        U_1_high = U_t + self.dt/12 * (23 * dUdt_t - 16 * dUdt_tm1 + 5 * dUdt_tm2)
+        U_1_low = U_t + self.dt/2 * (3 * dUdt_t - dUdt_tm1)
+        # U_1_low = U_t + self.dt * dUdt_t
         self.prev_dUdt.append(dUdt_t)
+        self.update_stepsize(U_1_high, U_1_low)
 
-        return U_t_1
+        return U_1_high
 
 
 class Adams3PC(TSolver, Adaptive):
@@ -762,11 +764,11 @@ class Adams3PC(TSolver, Adaptive):
         self.eq: FVMEquation = equation
 
         self.prev_dUdt = deque(maxlen=2)
-        self._adapt_init(order=4, atol=5e-6, rtol=5e-6, alphas=(0.9, 0.995))
+        self._adapt_init(order=4, atol=2e-3, rtol=2e-3, alphas=(0.9, 0.99), dt_min=self.dt/2)
 
     def _init_states(self, t):
         prim, _ = self.cells.get_values()
-        dUdt_0 = self.eq.forward(prim, t)
+        dUdt_0 = self.eq.forward(prim, self.dt, t)
 
         for _ in range(2):
             self.prev_dUdt.append(dUdt_0)
@@ -783,7 +785,7 @@ class Adams3PC(TSolver, Adaptive):
 
         prim_t, U_0 = self.cells.get_values()
 
-        dUdt_0 = self.eq.forward(prim_t, t)
+        dUdt_0 = self.eq.forward(prim_t, self.dt, t)
         dUdt_m1 = self.prev_dUdt[-1]
         dUdt_m2 = self.prev_dUdt[-2]
 
@@ -796,11 +798,12 @@ class Adams3PC(TSolver, Adaptive):
 
         # U_{t+1} = U_t + dt/12 * [5 * f(U_a) + 8 * f(U_{t}) - 1 * f(U_{t-1})]
         dUdt_a = self._forward_state(U_a, t)
-        U_1_high =  U_0 + self.dt/12 * (5 * dUdt_a + 8 * dUdt_0 - dUdt_m1)
-        U_1_low = U_0 + self.dt/2 * (dUdt_a + dUdt_0)
+        dU_high = self.dt/12 * (5 * dUdt_a + 8 * dUdt_0 - dUdt_m1)
+        dU_low = self.dt/2 * (dUdt_a + dUdt_0)
+        U_1_high =  U_0 + dU_high
         self.prev_dUdt.append(dUdt_0)
 
-        self.update_stepsize(U_1_high, U_1_low)
+        self.update_stepsize(dU_high[:, :], dU_low[:, :])
 
         return U_1_high
 
@@ -814,11 +817,11 @@ class Adams4PC(TSolver, Adaptive):
         self.eq: FVMEquation = equation
 
         self.prev_dUdt = deque(maxlen=2)
-        self._adapt_init(order=4, atol=3e-6, rtol=3e-6, alphas=(0.9, 0.995))
+        self._adapt_init(order=4, atol=3e-3, rtol=3e-3, alphas=(0.9, 0.99), dt_min=self.dt/2)
 
     def _init_states(self, t):
         U_i = self.cells.state
-        dUdt = self.eq.forward(U_i, t)
+        dUdt = self.eq.forward(U_i, self.dt, t)
 
         for _ in range(2):
             self.prev_dUdt.append(dUdt)
@@ -833,24 +836,27 @@ class Adams4PC(TSolver, Adaptive):
 
         prim_t, U_0 = self.cells.get_values()
 
-        dUdt_0 = self.eq.forward(prim_t, t)
+        dUdt_0 = self.eq.forward(prim_t, self.dt, t)
         dUdt_m1 = self.prev_dUdt[-1]
         dUdt_m2 = self.prev_dUdt[-2]
 
         # Predictor step
         # U_ac = U_t + self.dt  * dUdt_t
-        # U_a = U_t + self.dt / 2 * (3 * dUdt_t - dUdt_tm1)
-        # U_ab = U_t + self.dt/12 * (23 * dUdt_t - 16 * dUdt_tm1 + 6 * dUdt_tm2)
+        #U_a = U_0 + self.dt / 2 * (3 * dUdt_0 - dUdt_m1)
+        #U_a = U_0 + self.dt/12 * (23 * dUdt_0 - 16 * dUdt_m1 + 6 * dUdt_m2)
         # U_a = 1/3 * U_a  + 1/3 * U_ab  + 1/3 * U_ac
         U_a = U_0 + self.dt / 36 * (53 * dUdt_0 - 22 * dUdt_m1 + 6 * dUdt_m2)
 
         # U_{t+1} = U_t + dt/24 * [9 * f(U_a) + 19 * f(U_{t}) - 5 * f(U_{t-1}) + f(U_{t-2})]
         dUdt_a = self._forward_state(U_a, t)
-        U_1_high =  U_0 + self.dt/24 * (9 * dUdt_a + 19 * dUdt_0 - 5 * dUdt_m1 + dUdt_m2)
-        U_1_low = U_0 + self.dt / 12 * (5 * dUdt_a + 8 * dUdt_0 - dUdt_m1)
+
+        dU_high = self.dt/24 * (9 * dUdt_a + 19 * dUdt_0 - 5 * dUdt_m1 + dUdt_m2)
+        dU_low = self.dt / 12 * (5 * dUdt_a + 8 * dUdt_0 - dUdt_m1)
+        U_1_high =  U_0 + dU_high
+        U_1_low = U_0 + dU_low
         self.prev_dUdt.append(dUdt_0)
 
-        self.update_stepsize(U_1_high, U_1_low)
+        self.update_stepsize(dU_high, dU_low)
         return U_1_high
 
 
@@ -966,7 +972,7 @@ class Butcher_adapt(TSolver, Adaptive):
         self.c = tables.b
         self.stages = self.b.shape[0]
 
-        self._adapt_init(order=4, atol=3e-4, rtol=3e-4, alphas=(0.8, 0.995), dt_min=self.dt*0.66)
+        self._adapt_init(order=4, atol=1e-3, rtol=1e-3, alphas=(0.8, 0.995), dt_min=self.dt*0.5)
         self.k = torch.zeros((self.stages, *self.cells.state.shape), device=self.A.device)
 
     def _step(self, t) -> torch.Tensor:
@@ -995,11 +1001,9 @@ class Butcher_adapt(TSolver, Adaptive):
         dU_high = torch.sum(self.b * self.k, dim=0)
         dU_low = torch.sum(self.b2 * self.k, dim=0)
         U_next_high = state_0 + dU_high
-        U_next_low = state_0 + dU_low
 
         self.update_stepsize(dU_high[:, :3], dU_low[:, :3])
         return U_next_high
-
 
 
 class Butcher(TSolver):
