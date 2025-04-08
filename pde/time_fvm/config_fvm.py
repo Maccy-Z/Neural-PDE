@@ -28,8 +28,8 @@ class ConfigFVM:
     lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 1e-5
-    visc_bulk: float = 1e-5
+    viscosity: float = 1e-4
+    visc_bulk: float = 10e-4
     c: float = 1.
     C_v: float = 1.4
     # Stability parameters

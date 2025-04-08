@@ -54,6 +54,7 @@ def mesh_graph(cfg: ConfigFVM, new):
             raise ValueError(f'Unknown edge tag {e_tag}')
 
     c_print(f'Number of mesh cells: {len(tri_idx)}', "green")
+    c_print(f'Number of mesh edges: {len(all_edgs)}', "green")
 
     return Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp
 
@@ -86,7 +87,7 @@ def main():
     import pickle
     torch.manual_seed(0)
     # setup_logging(debug=False)
-    new = True
+    new = False
     load_state = False
 
     cfg = ConfigFVM()
