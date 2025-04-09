@@ -482,22 +482,84 @@ class FarfieldBC:
     def set_bc_U_face(self, U_face, Us_bc_cells):
         raise NotImplementedError
 
+class SlopeLimiter:
+    def __init__(self, areas, cfg: ConfigFVM):
+        lim_p = cfg.lim_p
+        K = cfg.lim_K
+        areas = areas.view(-1, 1, 1)
+
+        self.eps_p = (K * areas ** 0.5) ** lim_p
+
+        if lim_p == 1:
+            self._limit = self.p1
+        elif lim_p == 2:
+            self._limit = self.p2
+        elif lim_p == 3:
+            self._limit = self.p3
+        elif lim_p == 4:
+            self._limit = self.p4
+        else:
+            raise NotImplementedError(f"Limiter of order {lim_p} is not implemented.")
+
+    def p1(self, delta, dU):
+        """ BJ limiter"""
+        dU = 2 * ((dU > 0).float() - 0.5) * (dU.abs() + 1e-8)
+        r = delta / dU  # shape = [n_cells, neigh=3, n_comp]
+        phi = torch.clamp(r, min=0., max=1)  # shape = [n_cells, neigh=3, n_comp]
+        return phi
+
+    def p2(self, delta, dU):
+        """ Venkatakrishnan limiter"""
+        phi = (delta ** 2 + self.eps_p + 2 * delta * dU) / (delta ** 2 + 2 * dU ** 2 + delta * dU + self.eps_p)
+        return phi
+
+    def p3(self, delta, dU):
+        """ 3rd order limiter - https://arc.aiaa.org/doi/epdf/10.2514/6.2022-1374"""
+        a = delta.abs()
+        b = dU.abs()
+
+        a_eps = a ** 3 + self.eps_p
+        S = 4 * b ** 2
+        phi = (a_eps + a * S) / (a_eps + b * (delta ** 2 + S))
+        phi = torch.where(a < 2 * b, phi, 1)
+        return phi
+
+    def p4(self, delta, dU):
+        """ 4th order limiter """
+        a = delta
+        b = dU
+        a_eps = a ** 4 + self.eps_p
+        S = 2 * b * (a ** 2 - 2 * b * (a - 2 * b))
+        phi = (a_eps + a * S) / (a_eps + b * (delta ** 3 + S))
+        return phi
+
+    def limit(self, delta, dU):
+        """ delta: maximum allowed values
+            dU: Predicted value from lstsq gradient
+        """
+        phi = self._limit(delta, dU)    # shape = [n_cells, neigh=3, n_comp]
+
+        # Cell wide clamping
+        phi = torch.min(phi, dim=1, keepdim=True).values  # shape = [n_cells, neigh=1, n_comp]
+
+        return phi
+
 
 class FVMEdgeInfo:
     device: str
     n_edges: int
     n_cells: int
     n_comp: int
+    slope_limiter: SlopeLimiter
 
     # Shared
     edge_len: torch.Tensor  # shape = (n_edges, 1)
     normals: torch.Tensor  # shape = (n_edges, 2)
     normals_hat: torch.Tensor  # shape = (n_edges, 2)
     #V_insertion_matrix: torch.Tensor  # shape = (n_edges*n_component, n_edges*2)
-
     # edge_to_tri_comb: torch.Tensor  # shape = (n_edges, 2)
+
     # Main mesh
-    #n_edges_m: int
     edge_to_tri_main: torch.Tensor  # shape = [n_edges_m, 2], ordered so triangle parallel to edge normal comes last, antiparallel first.
     cell_dist_proj: torch.Tensor  # shape = (n_edges_m)
     tri_edge_signs: torch.Tensor  # shape = (3 * n_cells)
@@ -509,6 +571,7 @@ class FVMEdgeInfo:
     bc_edge_mask: torch.Tensor  # shape = (n_edges)
     edge_to_tri_bc: torch.Tensor  # shape = (n_edges_bc)
     exit_cell2edge: torch.Tensor  # shape = (n_cells, 2)  # Exit edge for each cell
+    bc_edge_side: torch.Tensor  # shape = (n_edges_bc, 2)  # Side of the edge for each boundary edge
     use_farfield: bool
     farfield_calc: FarfieldBC
 
@@ -524,9 +587,11 @@ class FVMEdgeInfo:
     grad_V: torch.Tensor        # shape = (n_edges, {dx,dy}, {vx,vy})  Gradient at V_faces
     Vs_faces: torch.Tensor  # shape = (n_edges, 2, 2)  Face values
     rho_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Face values
-    Q_faces: torch.Tensor # shape = (n_edges, 2, 1)  Face values
+    T_faces: torch.Tensor # shape = (n_edges, 2, 1)  Face values
+    grad_T_n: torch.Tensor  # shape = (n_edges)         Face temperature gradient
     div_V_faces: torch.Tensor  # shape = (n_edges, 2)  Divergence of V_faces
     mom_faces: torch.Tensor     # shape = (n_edges, 2, 2)  Face values
+    Q_faces: torch.Tensor       # shape = (n_edges, 2, 1)  Face energy values
     phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
 
 
@@ -537,6 +602,10 @@ class FVMEdgeInfo:
         self.n_edges = mesh.n_edges
         self.n_cells = mesh.n_cells
         self.n_comp = n_comp
+        self.slope_limiter = SlopeLimiter(mesh.areas.to(device), cfg)
+
+
+        self.C_v = cfg.C_v
 
         self.edge_to_tri_main = mesh.edge_to_tri_main.to(device)
         self.cent_to_edge_disp = mesh.cent_to_edge_disp.to(device).unsqueeze(-1)
@@ -551,10 +620,10 @@ class FVMEdgeInfo:
         self.G_mats = torch.cat([G_mats[0], G_mats[1]], dim=0).to_sparse_csr().to(device)
 
         self.neigh_combine = neigh_combine.to(device)
+        self.cell_disps = cell_disps.to(device)
         self.normals = mesh.normals.to(device)
         normal_hat = self.normals / torch.norm(self.normals, dim=1, keepdim=True)
         self.normal_hat = normal_hat
-        self.cell_disps = cell_disps.to(device)
         cell_disps = torch.full((self.n_edges, 2), float("nan"), device=device)
         cell_disps[~self.bc_edge_mask] = self.cell_disps
         d_cos_theta = (normal_hat * cell_disps).sum(dim=1)
@@ -643,67 +712,95 @@ class FVMEdgeInfo:
         cell_grads = self._cell_grads(Us_cell_face) # shape = [n_cells, 2, n_comp]
         grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_comp]
 
+        self.cell_grads = cell_grads
+
         # Compute limited face values,
         Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # Us_face.shape = [n_cells, 3, n_comp], phi_lim.shape =  [n_cells, 1, n_comp]
         Us_face = Us_face.view(3 * self.n_cells, self.n_comp)
+        cell_grads = cell_grads * phi_lim
+        self.phi_lim = phi_lim
 
-        # Face gradients
-        grad_V_dn = grad_faces_n[:, [0, 1]]   # shape = [n_faces, 2]
-        grad_V = cell_grads[:, :, [0, 1]]       # shape = [n_cells, {x, y} , {vx, vy}]
-        grad_V_flat = grad_V.repeat_interleave(3, dim=0).view(3*self.n_cells, 4) # [dvx/dx, dvy/dx, dvx/dy, dvy/dy]
-        grad_V_bc = grad_V_flat[self.edge_to_tri_bc]
+        # Face gradients of velocity and temperature
+        grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
+        grad_F = cell_grads[:, :, [0, 1, 3]]       # shape = [n_cells, {x, y} , {vx, vy, T}]
+        grad_F_flat = grad_F.repeat_interleave(3, dim=0).view(3*self.n_cells, 6) # [dvx/dx, dvy/dx, dvx/dy, dvy/dy, dT/dx, dT/dy]
+        grad_F_bc = grad_F_flat[self.edge_to_tri_bc]
 
         # Limited cell divergence
-        div_V = phi_lim[:, 0, 0] * cell_grads[:, 0, 0] +  phi_lim[:, 0, 1] * cell_grads[:, 1, 1]        # shape = [n_cells]
+        div_V = cell_grads[:, 0, 0] + cell_grads[:, 1, 1]        # shape = [n_cells]
         div_V_bc = div_V[self.edge_to_tri_bc].unsqueeze(-1)
         div_V = div_V.repeat_interleave(3).unsqueeze(-1)            # shape = [3*n_cells, 1]
 
 
         # Prepare projection from cell to edges - (slow step so vectorise over all components)
-        cell_values = torch.cat([Us_face, div_V, grad_V_flat], dim=-1)        # shape = [3*n_cells, n_comp+1]
-        cell_values_bc = torch.cat([U_face_bc, div_V_bc, grad_V_bc], dim=1)      # shape = [n_edges_bc, n_comp+1]
+        cell_values = torch.cat([Us_face, div_V, grad_F_flat], dim=-1)        # shape = [3*n_cells, n_comp+1]
+        cell_values_bc = torch.cat([U_face_bc, div_V_bc, grad_F_bc], dim=1)      # shape = [n_edges_bc, n_comp+1]
 
         # Project to left and right face values
-        U_face_all = torch.empty((self.n_edges, 2, self.n_comp + 5), device=self.device)    # [momx, momy, rho, Q, div_V, face_grad X 4]
+        U_face_all = torch.empty((self.n_edges, 2, self.n_comp + 7), device=self.device)    # [momx, momy, rho, Q, div_V, face_grad X 4]
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = cell_values
         U_face_all[self.bc_edge_mask, self.bc_edge_side] = cell_values_bc
+        # U_face_all[self.bc_edge_mask, ~self.bc_edge_side] = cell_values_bc
 
         # Decompose components back
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, 2].unsqueeze(-1)  # shape = [n_edges, edges=2, dims=1]
-        self.Q_faces = U_face_all[:, :, 3].unsqueeze(-1)    # shape = [n_edges, edges=2, dims=1]
+        self.T_faces = U_face_all[:, :, 3].unsqueeze(-1)    # shape = [n_edges, edges=2, dims=1]
         self.div_V_faces = U_face_all[:, :, -1]  # shape = [n_edges, edges=2]
+
+        # Conserved quantities
         self.mom_faces = self.Vs_faces * self.rho_faces  # shape = [n_edges, edges=2, dims=2]
+        self.Q_faces = self.rho_faces * (1/2  * self.Vs_faces.norm(dim=-1, keepdim=True) ** 2 + self.C_v * self.T_faces)
         self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1) # shape = [n_edges, edges=2, ]
 
         # Non-orthogonal correction for face gradient. Assume lstsq gradient is mean of left and right cell.
-        grad_V_lstsq = U_face_all[:, :, 5:9].view(self.n_edges, 2, 4)   # shape = [n_edges, edges=2, dims=4]
-        grad_V_lstsq = grad_V_lstsq.mean(dim=1).view(self.n_edges, 2, 2)   # shape = [n_edges, {x, y}, {vx, vy}]
-        dVdn_correct = grad_V_dn - (grad_V_lstsq * self.X_orthog.unsqueeze(-1)).sum(dim=1)
+        grad_F_lstsq = U_face_all[:, :, 5:11].view(self.n_edges, 2, 6)   # shape = [n_edges, edges=2, components=6]
+        grad_F_lstsq = grad_F_lstsq.mean(dim=1).view(self.n_edges, 2, 3)   # shape = [n_edges, {x, y}, {vx, vy, T}]
+        dFdn_correct = grad_F_dn - (grad_F_lstsq * self.X_orthog.unsqueeze(-1)).sum(dim=1)      # shape = [n_edges, 3]
         # Replace normal part of gradient with face gradient
-        grad_V_dot_n = (grad_V_lstsq * self.normal_hat.unsqueeze(-1)).sum(dim=1, keepdim=True)       # shape = [n_edges, 1, 2]
-        grad_V_para = (dVdn_correct.unsqueeze(dim=1) - grad_V_dot_n) * self.normal_hat.unsqueeze(dim=-1)       # shape = [n_edges, 2, 2]
-        grad_V = grad_V_lstsq + grad_V_para             # shape = [n_edges, 2, 2]
-        self.grad_V = grad_V
+        grad_F_dot_n = (grad_F_lstsq * self.normal_hat.unsqueeze(-1)).sum(dim=1, keepdim=True)       # shape = [n_edges, 1, 3]
+        grad_F_para = (dFdn_correct.unsqueeze(dim=1) - grad_F_dot_n) * self.normal_hat.unsqueeze(dim=-1)       # shape = [n_edges, 2, 3]
+        grad_F = grad_F_lstsq + grad_F_para             # shape = [n_edges, 2, 3]
+        self.grad_V = grad_F[:, :, :2]
+        self.grad_T_n = dFdn_correct[:, 2]      # shape = [n_edges]
+        # self.grad_T_n = grad_faces_n[:, 3]
 
-
-    def _phi(self, r):
-        # VENKATAKRISHNAN
-        # eps = 0.01*1e-4
-        # _r = r**2 + r + eps
-        # phi = (_r + r) / (_r + 2)
-        # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_comp]
-
-        # BJ
-        phi = torch.clamp(r, min=0., max=1.)       # shape = [n_cells, neigh=3, n_comp]
-
-        # Cell wide clamping
-        phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp]
-
-        # Component wide clamping
-        #phi = torch.min(phi, dim=2, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp=1]
-
-        return phi
+    # def _phi(self, delta, dU):
+    #     # dU = torch.where(dU.abs() < 1e-8, -1e-8, dU)
+    #     #dU = 2 * ((dU>0).float()-0.5) * (dU.abs() + 1e-8)
+    #     #r = delta / dU        # shape = [n_cells, neigh=3, n_comp]
+    #
+    #     """VENKATAKRISHNAN"""
+    #     eps = 10 * self.area_p # self.mesh.areas.cuda().view(-1, 1, 1)#
+    #     # _r = r**2 + r + eps/r
+    #     # phi = (_r + r) / (_r + 2)
+    #
+    #     # phi = (delta ** 2 + eps + 2 * delta * dU) / (delta ** 2 + 2 * dU ** 2 + delta * dU + eps)
+    #
+    #     """ 3rd order"""
+    #     a = delta.abs()
+    #     b = dU.abs()
+    #
+    #     # a_eps = a ** 3 + eps ** 1.5
+    #     # S = 4 * b ** 2
+    #     # phi = (a_eps +  a * S) / (a_eps + b * (delta ** 2 + S))
+    #
+    #     """ 4th order"""
+    #     a_eps = a ** 4 + 100 * eps
+    #     S = 2 * b * (a **2 - 2 * b * (a - 2 * b))
+    #     phi = (a_eps +  a * S) / (a_eps + b * (delta ** 3 + S))
+    #
+    #     # phi = torch.where(a < 2 * b, phi, 1)
+    #     # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_comp]
+    #     #
+    #     """BJ"""
+    #     # phi = torch.clamp(r, min=0., max=1)       # shape = [n_cells, neigh=3, n_comp]
+    #
+    #     # Cell wide clamping
+    #     phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp]
+    #
+    #
+    #     return phi
 
 
     def _limit_face_vals(self, Us, U_face_bc, cell_grads):
@@ -724,8 +821,7 @@ class FVMEdgeInfo:
         U_lower = torch.min(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent
 
         numerator = torch.where(dU > 0, U_upper, U_lower)
-        dU = torch.where(dU.abs() < 1e-8, 1e-8, dU)
-        phi_lim = self._phi(numerator / dU)           # shape = [n_cells, neigh=3, n_comp]
+        phi_lim = self.slope_limiter.limit(numerator, dU)           # shape = [n_cells, neigh=3, n_comp]
         Us_face = U_cent + phi_lim * dU      # shape = [n_cells, neigh=3, n_comp]
 
         # # Project to left and right face values

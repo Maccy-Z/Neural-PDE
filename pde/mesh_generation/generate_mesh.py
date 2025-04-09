@@ -37,7 +37,7 @@ def _create_mesh_thread(holes, points, p_marks, segments, seg_marks, mesh_props,
     mesh_info.set_facets(segments, facet_markers=seg_marks)
 
     # Create the mesh
-    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg), min_angle=25)
+    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg), min_angle=30)
 
     return_val.append(mesh)
 
@@ -172,8 +172,7 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas, cell_lnscale=2):
     triscale = np.sqrt(2 * min_area)
     lims = [xmin, ymin], [xmax, ymax]
 
-    # print(f'{triscale = }')
-    # exit(7)
+
     coords = [
                 Line([[xmin, ymin], [xmax, ymin]], True, name="NavierWall"),     # Bottom
                 Line([[xmin, ymax], [xmax, ymax]], False, name="NavierWall"),     # Top

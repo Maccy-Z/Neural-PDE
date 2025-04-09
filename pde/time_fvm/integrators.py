@@ -9,13 +9,14 @@ from pde.time_fvm.t_solvers import TSolver, FVMCells
 
 
 class Adaptive:
-    def _adapt_init(self, order: int, rtol, atol, alphas, dt_min=None):
+    def _adapt_init(self, order: int, rtol, atol, alphas, dt_min=None, dt_max=None):
         self.order = order
         self.rtol = rtol
         self.atol = atol
         self.alphas = alphas
 
         self.dt_min = dt_min
+        self.dt_max = dt_max
 
     @torch.compile()
     def update_stepsize(self, U_high, U_low):
@@ -42,7 +43,7 @@ class Adaptive:
         self.dt = self.dt * (alpha  + (1-alpha) * factor)
 
         if self.dt_min is not None:
-            self.dt = torch.clamp(self.dt, min=self.dt_min)
+            self.dt = torch.clamp(self.dt, min=self.dt_min, max=self.dt_max)
 
 
 class Euler(TSolver):
@@ -53,11 +54,10 @@ class Euler(TSolver):
     def _step(self, t):
         """U^{i+1} = U^i + dt * f(U^i)"""
 
-        dUdt, _ = self.eq.forward(self.cells.get_values()[0], t=t)
+        dUdt = self.eq.forward(self.cells.get_values()[0], self.dt, t=t)
         U_i_1 = self.cells.state + self.dt * dUdt
 
         return U_i_1
-
 
 # class IMEX_Euler(TSolver):
 #     def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
@@ -1002,7 +1002,7 @@ class Butcher_adapt(TSolver, Adaptive):
         dU_low = torch.sum(self.b2 * self.k, dim=0)
         U_next_high = state_0 + dU_high
 
-        self.update_stepsize(dU_high[:, :3], dU_low[:, :3])
+        self.update_stepsize(dU_high, dU_low)
         return U_next_high
 
 

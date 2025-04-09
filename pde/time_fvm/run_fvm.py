@@ -46,10 +46,11 @@ def mesh_graph(cfg: ConfigFVM, new):
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
-            v_in = 0.1 #if (0.025 < (y0+y1)/2 < 0.4) else 0
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [v_in, 0, None, 278], [None, None, 0, None]) #(E.INLET, 0)
+            v_in = 0.1 # if (0.1 < (y0+y1)/2 < 0.6) else 0
+            T = 178 #if (y0+y1)/2 > 0.7 else 250
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [v_in, 0, None, T], [None, None, 0, None]) #(E.INLET, 0)
         elif e_tag == "Right":
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield, E.Neuman], [None, None, None, None], [0, 0, None, 0]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
+            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield, E.Dirich], [None, None, None, 178], [0, 0, None, None]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 
@@ -70,7 +71,7 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
         us_init[:, 0] = 0.1 #(0.4<y) * (y<0.8) * 0.1
         us_init[:, 1] = 0
         us_init[:, 2] = 1  # + ((x>1) * (x < 2)) * 0.01
-        us_init[:, 3] = 100
+        us_init[:, 3] = 178
 
         # Energy: C_v * T + 0.5 * (u^2 + v^2)
         E = cfg.C_v * us_init[:, 3] + 0.5 * (us_init[:, 0] ** 2 + us_init[:, 1] ** 2)

@@ -6,6 +6,8 @@ from codetiming import Timer
 from matplotlib import pyplot as plt
 import time
 
+from pde.time_fvm.config_fvm import ConfigFVM
+
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from time_fvm import FVMEquation
@@ -14,13 +16,15 @@ if TYPE_CHECKING:
 class FVMCells:
     state: torch.Tensor  # shape = (n_cells, N_component)
     """ State stored as: [momentum_x, momenum_y, density, energy] """
-    def __init__(self, n_cells, n_component, init_val=None, device="cpu"):
+    def __init__(self, n_cells, n_component, cfg: ConfigFVM, init_val=None, device="cpu"):
         self.device = device
         if init_val is None:
             self.state = torch.zeros(n_cells, n_component, device=device)
         else:
             assert init_val.shape == (n_cells, n_component), f'Incorrect us init shape {init_val.shape = }'
             self.state = init_val.to(device)
+
+        self.C_v_inv = 1 / cfg.C_v
 
 
     def update_cells(self, state_new):
@@ -31,13 +35,13 @@ class FVMCells:
     def get_values(self):
         return self.convert_state_to_value(self.state)
 
-    # @torch.compile()
+    @torch.compile()
     def convert_state_to_value(self, state):
-        momentum, density, energy = state[:, :2], state[:,2], state[:,3]
-        density = density.unsqueeze(-1)
-        energy = energy.unsqueeze(-1)
+        momentum, density, Q = state[:, [0, 1]], state[:,[2]], state[:,[3]]
+
         V = momentum / density
-        primatives = torch.cat([V, density, energy], dim=-1)
+        T = self.C_v_inv * (Q / density - 0.5 * V.norm(dim=1, keepdim=True) ** 2)
+        primatives = torch.cat([V, density, T], dim=-1)
 
         return primatives, state
 
@@ -74,18 +78,17 @@ class TSolver(ABC):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_t = 0.2
+        plot_t = 10
         next_plot_t = plot_t
 
         dts = []
 
         st_time = time.time()
-        t = 0
+        t = 0.
         for i in range(self.n_steps):
             t += self.dt
 
             new_Us = self._step(t)
-            self.cells.update_cells(new_Us)
             dts.append(self.dt)
 
             # if t > 1.1:
@@ -102,12 +105,18 @@ class TSolver(ABC):
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
-                Xlims = [[1.0, 1.2], [1.2, 1.45]]
+                Xlims = None # [[0.9, 1.15], [1.1, 1.4]]
                 #
-                # self.eq.plot_flux(self.eq.E_props.Q_faces[:, :, 0], title=f"Vx t={i * self.dt :.4g}", Xlims=Xlims, show_index=True)
-                # self.eq.plot_cells(primatives[:, 3], title=f'Q at t={i * self.dt:.4g}', Xlims=Xlims, show_index=True)
-                self.eq.plot_interp(primatives[:], title=f"Values at t={t :.4g}", )
+                self.eq.plot_interp(primatives[:], title=f"Values at t={t :.4g}", Xlims=Xlims)
 
+                # self.eq.plot_cells(primatives[:, 3], title=f'Q at t={i * self.dt:.4g}', Xlims=Xlims, show_index=True)
+                # self.eq.plot_interp(self.eq.pressure_div[:, :2], Xlims=Xlims, title=f"Pressure div at t={t:.4g}")
+                # self.eq.plot_interp(self.eq.advect_div[:, :2], Xlims=Xlims, title=f"advect div at t={t:.4g}")
+                #self.eq.plot_interp(self.eq.kt_div[:, 0], Xlims=Xlims, title=f"KT div  at t={t:.4g}")
+                # self.eq.plot_interp(self.eq.divergence[:, :2], Xlims=Xlims, title=f"div at t={t:.4g}")
+                # self.eq.plot_flux(self.eq.kt_flux[:, 0], title=f"rho t={t :.4g}", Xlims=Xlims, show_index=True)
+
+                # exit(7)
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
@@ -118,6 +127,7 @@ class TSolver(ABC):
             #     with open("save_state.pt", "wb") as f:
             #         torch.save(self.cells.state, f)
             #     exit(7)
+            self.cells.update_cells(new_Us)
 
         dts = torch.stack(dts).cpu()
         kernel_size = 10
