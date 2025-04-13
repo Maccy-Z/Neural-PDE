@@ -131,18 +131,17 @@ class FVMMesh:
         center_expanded = centroids.unsqueeze(1)  # shape: [n_cells, 1, 2]
         d = neigh_cents - center_expanded  # shape: [n_cells, 3, 2]
         # Compute weights per neighbor: w_i = 1 / norm(d_i) ** k
-        w = 1 / torch.norm(d, dim=2) ** 1.5 # shape: [n_cells, 3]
-        w2 = w ** 2  # shape: [n_cells, 3]
+        w = 1 / torch.norm(d, dim=2) ** 0.5 # shape: [n_cells, 3]
+        w2 = w.double() ** 2  # shape: [n_cells, 3]
         # Compute A = dᵀ @ diag(w²) @ d for each cell.
         # dᵀ has shape [n_cells, 2, 3] and d * w2.unsqueeze(-1) scales each 2D neighbor vector.
-        dT = d.transpose(1, 2)  # shape: [n_cells, 2, 3]
+        dT = d.transpose(1, 2).double()  # shape: [n_cells, 2, 3]
         A = torch.bmm(dT, d * w2.unsqueeze(-1))  # shape: [n_cells, 2, 2]
         # Invert A for each cell.
-        A_inv = torch.inverse(A)  # shape: [n_cells, 2, 2]
+        A_inv = torch.inverse(A.double())  # shape: [n_cells, 2, 2]
         # Finally, compute the gradient matrix as A_inv @ dᵀ @ diag(w²)
         # Multiply dᵀ by w2 along the neighbor dimension:
-        A_inv_di_T = torch.bmm(A_inv, dT * w2.unsqueeze(1))  # shape: [n_cells, 2, 3]
-
+        A_inv_di_T = torch.bmm(A_inv, dT * w2.unsqueeze(1)).float()  # shape: [n_cells, 2, 3]
 
         G_mats = []
         for i in range(2):

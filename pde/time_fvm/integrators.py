@@ -853,7 +853,7 @@ class Adams4PC(TSolver, Adaptive):
         dU_high = self.dt/24 * (9 * dUdt_a + 19 * dUdt_0 - 5 * dUdt_m1 + dUdt_m2)
         dU_low = self.dt / 12 * (5 * dUdt_a + 8 * dUdt_0 - dUdt_m1)
         U_1_high =  U_0 + dU_high
-        U_1_low = U_0 + dU_low
+        # U_1_low = U_0 + dU_low
         self.prev_dUdt.append(dUdt_0)
 
         self.update_stepsize(dU_high, dU_low)

@@ -14,8 +14,8 @@ def mesh_graph(cfg: ConfigFVM, new):
     N_comp = 4
     if new:
         c_print(f'Creating new mesh', "green")
-        xmin, xmax = 0.0, 2
-        ymin, ymax = 0.0, 1.4
+        xmin, xmax = 0, 2
+        ymin, ymax = 0, 1.4
         mesh_stuff = gen_mesh_fvm(xmin, xmax, ymin, ymax, areas=[cfg.min_A, cfg.max_A], cell_lnscale=cfg.lnscale)
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
@@ -29,6 +29,10 @@ def mesh_graph(cfg: ConfigFVM, new):
     all_edgs = torch.cat([int_edgs, bound_edgs], dim=0)
     bc_edge_mask = torch.cat([torch.zeros_like(int_edgs[:, 0], dtype=torch.bool), torch.ones_like(bound_edgs[:, 0], dtype=torch.bool)], dim=0)
 
+
+    c_print(f'Number of mesh cells: {len(tri_idx)}', "green")
+    c_print(f'Number of mesh edges: {len(all_edgs)}', "green")
+
     # all_tags = np.concatenate([np.zeros(len(int_edgs)), np.ones(len(edge_tag))], axis=0, dtype=np.float32)
     # all_tags = torch.from_numpy(all_tags)
     # plot_edges(Xs, all_edgs, all_tags)
@@ -36,28 +40,24 @@ def mesh_graph(cfg: ConfigFVM, new):
 
     bc_tags = {}
     for bc_idx, (e_tag, e_vert) in enumerate(zip(edge_tag, bound_edgs, strict=True)):
-        if e_tag == "Wall":
-            raise NotImplementedError
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0])   #(E.WALL, 0)
-        elif e_tag == "NavierWall":
+        if e_tag == "NavierWall":
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0])   #(E.WALL, 0)
 
         elif e_tag == "Left":
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
-            v_in = 0.1 # if (0.1 < (y0+y1)/2 < 0.6) else 0
-            T = 178 #if (y0+y1)/2 > 0.7 else 250
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [v_in, 0, None, T], [None, None, 0, None]) #(E.INLET, 0)
+            v_in = 0.5 if (0.1 < (y0+y1)/2 < 0.5) else 0
+            T = 100 #if (y0+y1)/2 > 0.7 else 250
+            bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Dirich, E.Dirich], [None, 0, 1.01, T], [0, None, None, None]) #(E.INLET, 0)
         elif e_tag == "Right":
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield, E.Dirich], [None, None, None, 178], [0, 0, None, None]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
+            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield, E.Dirich], [None, None, 1.0, 100], [0, 0, None, None]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 
-    c_print(f'Number of mesh cells: {len(tri_idx)}', "green")
-    c_print(f'Number of mesh edges: {len(all_edgs)}', "green")
 
     return Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp
+
 
 def init_conds(centroids, cfg: ConfigFVM, load_state):
 
@@ -70,8 +70,8 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
         us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 4)
         us_init[:, 0] = 0.1 #(0.4<y) * (y<0.8) * 0.1
         us_init[:, 1] = 0
-        us_init[:, 2] = 1  # + ((x>1) * (x < 2)) * 0.01
-        us_init[:, 3] = 178
+        us_init[:, 2] = 1.  # + ((x>1) * (x < 2)) * 0.01
+        us_init[:, 3] = 100
 
         # Energy: C_v * T + 0.5 * (u^2 + v^2)
         E = cfg.C_v * us_init[:, 3] + 0.5 * (us_init[:, 0] ** 2 + us_init[:, 1] ** 2)
@@ -87,8 +87,7 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
 def main():
     import pickle
     torch.manual_seed(0)
-    # setup_logging(debug=False)
-    new = False
+    new = True
     load_state = False
 
     cfg = ConfigFVM()

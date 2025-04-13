@@ -63,6 +63,7 @@ class PhysicalSetup:
     E_props: FVMEdgeInfo
     tau: torch.Tensor
     P_face: torch.Tensor    # shape = [n_edges, 2, 1]
+    C: torch.Tensor         # shape = [n_edges, 2, 1]
 
     def __init__(self, E_props: FVMEdgeInfo, cfg: ConfigFVM, device="cpu"):
         self.E_props = E_props
@@ -92,9 +93,10 @@ class PhysicalSetup:
         """
         E_props = self.E_props
         rho_faces = E_props.rho_faces  # shape = [n_edges, edges=2, n_comp=1]
-        #T_faces = E_props.T_faces       # shape = [n_edges, edges=2, n_comp=1]
+        T_faces = E_props.T_faces       # shape = [n_edges, edges=2, n_comp=1]
 
-        self.P_face = self.R * rho_faces * 178
+        self.P_face = self.R * rho_faces * 100 #* T_faces
+        self.c = torch.sqrt(self.P_face / rho_faces)  # shape = [n_edges, edges=2, n_comp=1]
 
     def update(self):
         self._tau()
@@ -123,9 +125,6 @@ class Adevction(FVMEdgeFunc):
         self.device = device
         self.E_props = E_props
         self.phy_setup = phy_setup
-        self.c2 = cfg.c ** 2
-
-
         # self._build_jacobian(diag=False)
 
     #@torch.compile()
@@ -488,14 +487,15 @@ class KTDiffusion(FVMEdgeFunc):
     """ Diffusion term from K-T solver """
     E_props: FVMEdgeInfo
 
-    def __init__(self, v_factor, E_props: FVMEdgeInfo, device="cpu"):
+    def __init__(self, v_factor, phy_setup: PhysicalSetup, E_props: FVMEdgeInfo, device="cpu"):
         self.device = device
         self.v_factor = v_factor
         self.E_props = E_props
+        self.phy_setup = phy_setup
 
 
     @torch.compile()
-    def edge_fluxes(self, c, dt):
+    def edge_fluxes(self, dt):
         E_props = self.E_props
         rho_face = E_props.rho_faces
         Vs_face = E_props.Vs_faces      # shape = [n_edges, edges=2, n_comp=2]
@@ -507,7 +507,7 @@ class KTDiffusion(FVMEdgeFunc):
         # Wavespeed is c + v_max. Clip velocity wavespeed to k*c + v_max
         Vs = Vs_face.norm(dim=-1)            # shape = [n_edges, edges=2]
         Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
-
+        c = self.phy_setup.c.max(dim=1).values  # shape = [n_edges, 1]
         # a = torch.tensor([[self.v_factor * c, self.v_factor * c, c, c]], device=self.device)
         # a = a.repeat(self.E_props.n_edges, 1) + Vs_max  # shape = [n_edges, n_comp]
         a = Vs_max + c
@@ -515,7 +515,7 @@ class KTDiffusion(FVMEdgeFunc):
         # Maximum diffusion distance is a * dt/2 < tri_height -> a < 2 * tri_height / dt
         # Assume tri_height = k * edge_len / 2
         edge_len = E_props.edge_len
-        a = a.clamp(max=0.5 * edge_len / dt)  # shape = [n_edges, 1]
+        #a = a.clamp(max=0.75 * edge_len / dt)  # shape = [n_edges, 1]
         kt_fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * edge_len  # shape = [n_edges, n_comp]
 
         return kt_fluxes
@@ -544,17 +544,16 @@ class FVMEquation:
         # Matrix for converting edge fluxes to cell divergence
         self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges, mesh.areas)  # shape = [n_cells * n_comp, n_edges * n_comp]
         # Physical parameters
-        self.c = cfg.c      # Speed of sound squared
         self.phy_setup = PhysicalSetup(E_props, cfg=cfg, device=device)
 
         self.P_force = PressureForce(E_props, self.phy_setup, device=device)
         self.U_advect = Adevction(E_props, self.phy_setup, cfg=cfg, device=device)
         self.U_visc = Viscosity(E_props, self.phy_setup, flux_mat=self.flux_mat, device=device)
         self.Heat = Heating(E_props, self.phy_setup, cfg=cfg, device=device)
-        self.KT_diff = KTDiffusion(cfg.v_factor, E_props, device=device)
+        self.KT_diff = KTDiffusion(cfg.v_factor, self.phy_setup, E_props, device=device)
 
-        #self.t_solver = Euler(self.cells, cfg.dt, cfg.n_iter, self)
-        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
+        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
+        # self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP4")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
@@ -586,25 +585,28 @@ class FVMEquation:
         # Stack row and column indices for the sparse tensor.
         D_indices = torch.stack([row_indices, col_indices])
 
-        # "Lift" D to act on the full fluxes (all components) using the Kronecker product.
-        #    We want M = D ⊗ I_{n_component}, which has shape (n_tri*n_component, n_edges*n_component)
-        comp_ids = torch.arange(self.n_comp, device="cpu")  # shape: (n_comp,)
-        new_rows = D_indices[0].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
-        new_cols = D_indices[1].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
+        D_shape = [n_tri, n_edges]
+        flux_mat = torch.sparse_coo_tensor(D_indices, D_values, size=D_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
 
-        # Flatten the new indices.
-        new_rows = new_rows.reshape(-1)
-        new_cols = new_cols.reshape(-1)
-        flux_indices = torch.stack([new_rows, new_cols], dim=0)
+        # # "Lift" D to act on the full fluxes (all components) using the Kronecker product.
+        # #    We want M = D ⊗ I_{n_component}, which has shape (n_tri*n_component, n_edges*n_component)
+        # comp_ids = torch.arange(self.n_comp, device="cpu")  # shape: (n_comp,)
+        # new_rows = D_indices[0].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
+        # new_cols = D_indices[1].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
+        #
+        # # Flatten the new indices.
+        # new_rows = new_rows.reshape(-1)
+        # new_cols = new_cols.reshape(-1)
+        # flux_indices = torch.stack([new_rows, new_cols], dim=0)
+        #
+        # # The values are just the original ones repeated for each component.
+        # flux_values = D_values.unsqueeze(1).expand(-1, self.n_comp).reshape(-1)
+        #
+        # # Define the shape of the lifted matrix:
+        # flux_shape = (n_tri * self.n_comp, n_edges * self.n_comp)
 
-        # The values are just the original ones repeated for each component.
-        flux_values = D_values.unsqueeze(1).expand(-1, self.n_comp).reshape(-1)
-
-        # Define the shape of the lifted matrix:
-        flux_shape = (n_tri * self.n_comp, n_edges * self.n_comp)
-
-        # Construct the sparse flux matrix.
-        flux_mat = torch.sparse_coo_tensor(flux_indices, flux_values, size=flux_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
+        # # Construct the sparse flux matrix.
+        # flux_mat = torch.sparse_coo_tensor(flux_indices, flux_values, size=flux_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
 
         return flux_mat
 
@@ -621,9 +623,9 @@ class FVMEquation:
         # divergence = torch.sum(-self.tri_edge_sign * tri_fluxes, dim=1).squeeze() / self.areas.unsqueeze(-1)     # shape = [n_cells, N_component]
 
         # Matrix version
-        fluxes = fluxes.flatten()
-        divergence_flat = torch.mv(self.flux_mat, fluxes)  # shape: (n_cells * n_component,)
-        divergence = divergence_flat.view(-1, self.n_comp)  # shape: (n_cells, n_component)
+        #fluxes = fluxes.flatten()
+        divergence = torch.mm(self.flux_mat, fluxes)  # shape: (n_cells * n_component,)
+        #divergence = divergence_flat.view(-1, self.n_comp)  # shape: (n_cells, n_component)
         return divergence
 
 
@@ -638,24 +640,27 @@ class FVMEquation:
         fluxes = self.U_advect.edge_fluxes()
         # Pressure term
         self.P_force.edge_fluxes(fluxes)
-        # Viscosity  term
+        # Viscosity term
         self.U_visc.edge_fluxes(fluxes)
         # Heating term
         self.Heat.edge_fluxes(fluxes)
         # MUSCL term
-        fluxes += self.KT_diff.edge_fluxes(self.c, dt)
+        fluxes += self.KT_diff.edge_fluxes(dt)
         # Compute divergence
         divergence = self._flux_to_div(fluxes)
         #
-        # pressure_flux = self.P_force.edge_fluxes()
-        # self.pressure_div = self._flux_to_div(pressure_flux)
-        # advect_flux = self.U_advect.edge_fluxes()
-        # self.advect_div = self._flux_to_div(advect_flux)
-        # self.kt_flux = self.KT_diff.edge_fluxes(self.c, dt)
+        # self.pressure_flux = self.P_force.edge_fluxes()
+        # self.pressure_div = self._flux_to_div(self.pressure_flux)
+        # self.advect_flux = self.U_advect.edge_fluxes()
+        # self.advect_div = self._flux_to_div(self.advect_flux)
+        # self.kt_flux = self.KT_diff.edge_fluxes(dt)
         # self.kt_div = self._flux_to_div(self.kt_flux)
         # self.divergence = divergence
         # self.heat_flux = self.Heat.edge_fluxes()
         # self.heat_div = self._flux_to_div(self.heat_flux)
+        # self.visc_flux = self.U_visc.edge_fluxes()
+        # self.visc_div = self._flux_to_div(self.visc_flux)
+
         return divergence
 
 

@@ -78,7 +78,7 @@ class TSolver(ABC):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_t = 10
+        plot_t = 1
         next_plot_t = plot_t
 
         dts = []
@@ -100,27 +100,30 @@ class TSolver(ABC):
                 c_print(f'{i = }, {t = :.4g}, {avg_dt = :.3g}, {irl_time = :.3g}', color="bright_green")
                 st_time = time.time()
 
-            if t > next_plot_t:
+            if t >= next_plot_t:
                 next_plot_t = t + plot_t
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
-                Xlims = None # [[0.9, 1.15], [1.1, 1.4]]
+                Xlims = None # [[1.0, 1.1], [1.3, 1.4]]
                 #
                 self.eq.plot_interp(primatives[:], title=f"Values at t={t :.4g}", Xlims=Xlims)
 
-                # self.eq.plot_cells(primatives[:, 3], title=f'Q at t={i * self.dt:.4g}', Xlims=Xlims, show_index=True)
+
                 # self.eq.plot_interp(self.eq.pressure_div[:, :2], Xlims=Xlims, title=f"Pressure div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.advect_div[:, :2], Xlims=Xlims, title=f"advect div at t={t:.4g}")
-                #self.eq.plot_interp(self.eq.kt_div[:, 0], Xlims=Xlims, title=f"KT div  at t={t:.4g}")
-                # self.eq.plot_interp(self.eq.divergence[:, :2], Xlims=Xlims, title=f"div at t={t:.4g}")
-                # self.eq.plot_flux(self.eq.kt_flux[:, 0], title=f"rho t={t :.4g}", Xlims=Xlims, show_index=True)
+                # self.eq.plot_interp(self.eq.kt_div[:, 0], Xlims=Xlims, title=f"KT div  at t={t:.4g}")
+                # self.eq.plot_interp(self.eq.divergence[:, 2], Xlims=Xlims, title=f"div at t={t:.4g}")
+                # self.eq.plot_cells(primatives[:, 0], title=f'Vx at t={t:.4g}', Xlims=Xlims, show_index=True)
+                # self.eq.plot_flux(self.eq.kt_flux[:, 2], title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
 
-                # exit(7)
+                print()
+                # exit(3)
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
-                # if t>0.2:
+
+                # if t>0.4:
                 #     exit("DONE PLOTTING")
 
             # if t >= 180:

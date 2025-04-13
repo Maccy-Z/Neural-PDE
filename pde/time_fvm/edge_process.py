@@ -482,13 +482,14 @@ class FarfieldBC:
     def set_bc_U_face(self, U_face, Us_bc_cells):
         raise NotImplementedError
 
+
 class SlopeLimiter:
     def __init__(self, areas, cfg: ConfigFVM):
         lim_p = cfg.lim_p
         K = cfg.lim_K
         areas = areas.view(-1, 1, 1)
 
-        self.eps_p = (K * areas ** 0.5) ** lim_p
+        self.eps_p = (K * areas ** 0.5) ** (lim_p+1)
 
         if lim_p == 1:
             self._limit = self.p1
@@ -531,6 +532,7 @@ class SlopeLimiter:
         a_eps = a ** 4 + self.eps_p
         S = 2 * b * (a ** 2 - 2 * b * (a - 2 * b))
         phi = (a_eps + a * S) / (a_eps + b * (delta ** 3 + S))
+        phi = torch.where(a < 2 * b, phi, 1)
         return phi
 
     def limit(self, delta, dU):
@@ -539,6 +541,7 @@ class SlopeLimiter:
         """
         phi = self._limit(delta, dU)    # shape = [n_cells, neigh=3, n_comp]
 
+        # print(f'{phi[4508, :, 0] = }')
         # Cell wide clamping
         phi = torch.min(phi, dim=1, keepdim=True).values  # shape = [n_cells, neigh=1, n_comp]
 
@@ -657,8 +660,8 @@ class FVMEdgeInfo:
 
 
     def clear_temp(self):
-        del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
-        del self.dirich_mask, self.neumann_mask
+        # del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
+        # del self.dirich_mask, self.neumann_mask
         # del self.A_face_grad, self.b_face_grad
         # del self.dUf_dUc
 
@@ -718,6 +721,7 @@ class FVMEdgeInfo:
         Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # Us_face.shape = [n_cells, 3, n_comp], phi_lim.shape =  [n_cells, 1, n_comp]
         Us_face = Us_face.view(3 * self.n_cells, self.n_comp)
         cell_grads = cell_grads * phi_lim
+
         self.phi_lim = phi_lim
 
         # Face gradients of velocity and temperature
@@ -740,7 +744,7 @@ class FVMEdgeInfo:
         U_face_all = torch.empty((self.n_edges, 2, self.n_comp + 7), device=self.device)    # [momx, momy, rho, Q, div_V, face_grad X 4]
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = cell_values
         U_face_all[self.bc_edge_mask, self.bc_edge_side] = cell_values_bc
-        # U_face_all[self.bc_edge_mask, ~self.bc_edge_side] = cell_values_bc
+        #U_face_all[self.bc_edge_mask, ~self.bc_edge_side] = cell_values_bc
 
         # Decompose components back
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
@@ -815,25 +819,23 @@ class FVMEdgeInfo:
         grads = cell_grads.unsqueeze(1)     # shape = [n_cells, 1, dims=2, n_comp]
         dU = (grads * self.cent_to_edge_disp).sum(dim=2)  # shape = [n_cells, neigh=3, n_comp]
 
+        # print()
+        # print(f'{Us[4508, 0] = }')
+        # print(f'{Us_neigh[4508, :, 0] = }')
+        # print(f'{dU[4508, :, 0] = }')
+
         # Select limiting neighbor values and compute gradient limiter
-        U_cent_neigh = torch.cat([U_cent, Us_neigh], dim=1)
+        U_cent_neigh = torch.cat([U_cent, Us_neigh], dim=1)             # shape = [n_cells, 4, n_comp]
+
         U_upper = torch.max(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent      # shape = [n_cells, neigh=3, n_comp]
         U_lower = torch.min(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent
 
         numerator = torch.where(dU > 0, U_upper, U_lower)
+        # print(f'{numerator[4508, :, 0] = }')
         phi_lim = self.slope_limiter.limit(numerator, dU)           # shape = [n_cells, neigh=3, n_comp]
         Us_face = U_cent + phi_lim * dU      # shape = [n_cells, neigh=3, n_comp]
 
-        # # Project to left and right face values
-        # U_face_all = torch.empty((self.n_edges, 2, n_component), device=self.device)
-        # U_face_all[self.tri_to_edge, self.tri_edge_signs] = Us_face.view(3*self.n_cells, -1)
-        # U_face_all[self.bc_edge_mask] = U_face_bc.unsqueeze(1)      # Boundary conditions are fixed as is.
-
-        # assert not torch.any(torch.isnan(phi_lim)), f'Nan in phi'
-
-        # U_face_flat = torch.mm(self.S_cells, Us_face.view(3*self.n_cells, 3))
-        # self.U_face = U_face_flat.view(self.n_edges, 2, self.n_component)
-        # self.U_face[self.bc_edge_mask] = U_face_bc.unsqueeze(1)
+        # print(f'{Us_face[4508, :, 0] = }')
 
         return Us_face, phi_lim
 
@@ -867,6 +869,7 @@ class FVMEdgeInfo:
         # Reshape back to (n_edges_bc, n_component)
         U_face = U_face_flat.view(self.n_edges_bc, self.n_comp)
 
+        #U_face[:, 0] = U_face[:, 0].clamp(max=2)
         # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
         if self.use_farfield :
             self.farfield_calc.set_bc_U_face(U_face, Us[self.exit_cell2edge], dt)
@@ -1023,6 +1026,7 @@ class FVMEdgeInfo:
 
         # print("Starting combine_edge_operators")
         self.A_face_grad, self.b_face_grad = combine_edge_operators(A_face_grad_main, A_grad_bc, b_grad, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_comp, self.device)
+
 
     def _build_spm_face_vals(self):
         """ Compute bc edge values using sparse matrix multiplication. """

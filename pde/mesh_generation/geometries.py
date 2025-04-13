@@ -5,7 +5,7 @@ from dataclasses import dataclass
 class MeshFacet:
     points: np.ndarray
     segments: np.ndarray
-    hole: bool | np.ndarray  # False if its to be filled, otherwise any point inside object
+    hole: bool | list  # False if its to be filled, otherwise any point inside object
     dist_req: bool  # If segment needs mesh refinement around
     name: any # Tag to be carried through to the mesh
 
@@ -39,7 +39,7 @@ class Circle(MeshFacet):
         self.segments = np.column_stack((np.arange(num_segments), (np.arange(num_segments) + 1) % num_segments))
 
         if hole:
-            self.hole = center
+            self.hole = [center]
         else:
             self.hole = False
 
@@ -109,7 +109,11 @@ class Box(MeshFacet):
                          3: Bottom
         """
         self.name = name
-        self.hole = hole
+        if hole:
+            center = np.mean([Xmin, Xmax], axis=0)
+            self.hole = [center]
+        else:
+            self.hole = False
         self.dist_req = dist_req
 
         xmin, ymin = Xmin
@@ -144,3 +148,145 @@ class Line(MeshFacet):
 
         self.points = np.array(lims)
         self.segments = np.array([(0, 1)])
+
+
+class Nozzle(MeshFacet):
+    def __init__(self, Xmin, Rt=1.0, Re=2, theta_n_deg=35, theta_exit_deg=15, lengthscale=0.1, lip_size=0.1, dist_req: bool = True, name=None):
+        """
+            Generates a mesh (a set of points) for the top half of a Roe rocket nozzle
+            with an approximate spacing given by "lengthscale".
+
+            The nozzle is defined by:
+              1. Arc 1: A circular arc (radius = 1.5·Rt) from -135° to -90°.
+              2. Arc 2: A circular arc (radius = 0.382·Rt) from -90° to (theta_n_deg - 90)°.
+                 The end of this arc is the inflection point N.
+              3. Parabolic Section: A parabola attached at point N with a slope of tan(theta_n_deg)
+                 that meets the exit condition (y = Re) with the derivative equal to tan(theta_exit_deg).
+                 The horizontal length L_nozzle of the parabolic part is derived from these conditions.
+
+            Parameters:
+              Rt             : Throat radius.
+              Re             : Exit radius.
+              theta_n_deg    : Angle (in degrees) that sets the end of arc2 (from -90° to theta_n_deg - 90°).
+              theta_exit_deg : Desired exit angle (in degrees) for the parabolic outlet (i.e. its tangent at the exit).
+              lengthscale    : Approximate distance between consecutive mesh points along the nozzle.
+            """
+        self.name = name
+        self.dist_req = dist_req
+
+        # ===== Arc 1: From -135° to -90° =====
+        R1 = 1.5 * Rt
+        center1 = np.array([0, R1])  # chosen so that at -90° the point is at (0,0)
+        angle1_start = np.deg2rad(-135)
+        angle1_end = np.deg2rad(-90)
+        arc1_angle_diff = angle1_end - angle1_start  # should be 45° in radians (0.7854)
+        arc1_length = R1 * abs(arc1_angle_diff)
+        num_points1 = max(int(np.ceil(arc1_length / lengthscale)) + 1, 2)
+        arc1_angles = np.linspace(angle1_start, angle1_end, num_points1)
+        arc1_x = center1[0] + R1 * np.cos(arc1_angles)
+        arc1_y = center1[1] + R1 * np.sin(arc1_angles)
+
+        # ===== Arc 2: From -90° to (theta_n_deg - 90)° =====
+        R2 = 0.382 * Rt
+        center2 = np.array([0, R2])  # chosen so that at -90° the point is (0,0)
+        angle2_start = np.deg2rad(-90)
+        angle2_end = np.deg2rad(theta_n_deg - 90)
+        arc2_angle_diff = angle2_end - angle2_start  # equals theta_n_deg in radians
+        arc2_length = R2 * abs(arc2_angle_diff)
+        num_points2 = max(int(np.ceil(arc2_length / lengthscale)) + 1, 2)
+        arc2_angles = np.linspace(angle2_start, angle2_end, num_points2)
+        arc2_x = center2[0] + R2 * np.cos(arc2_angles)
+        arc2_y = center2[1] + R2 * np.sin(arc2_angles)
+
+        # ===== Inflection Point N =====
+        # End of Arc 2 (point at angle2_end)
+        tN = angle2_end
+        N_x = center2[0] + R2 * np.cos(tN)
+        N_y = center2[1] + R2 * np.sin(tN)
+
+        # ===== Parabolic Section =====
+        # The parabola is defined as:
+        #   y(x) = A * (x - N_x)^2 + m_N*(x - N_x) + N_y,
+        # where m_N = tan(theta_n_deg) is the slope at N.
+        # To have the exit condition at x = N_x + L_nozzle:
+        #   y(N_x+L_nozzle) = Re,
+        #   y'(N_x+L_nozzle) = m_exit = tan(theta_exit_deg).
+        # Solving the derivative condition:
+        m_N = np.tan(np.deg2rad(theta_n_deg))
+        m_exit = np.tan(np.deg2rad(theta_exit_deg))
+        # The horizontal length of the parabola is determined by:
+        #   L_nozzle = 2*(Re - N_y)/(m_exit + m_N)
+        L_nozzle = 2 * (Re - N_y) / (m_exit + m_N)
+        # Then the quadratic coefficient A is:
+        A = (m_exit - m_N) / (2 * L_nozzle)
+
+        # To sample the parabolic section with roughly "lengthscale" spacing,
+        # we first generate a dense set of points and then re-parameterize by arc length.
+        dense_points = 1000
+        x_dense = np.linspace(N_x, N_x + L_nozzle, dense_points)
+        y_dense = A * (x_dense - N_x) ** 2 + m_N * (x_dense - N_x) + N_y
+        # Compute differential arc lengths:
+        dx_dense = np.diff(x_dense)
+        dy_dense = np.diff(y_dense)
+        ds_dense = np.sqrt(dx_dense ** 2 + dy_dense ** 2)
+        s_dense = np.concatenate(([0], np.cumsum(ds_dense)))
+        total_parabola_length = s_dense[-1]
+        # Determine the number of points so that spacing is roughly "lengthscale"
+        num_points3 = max(int(np.ceil(total_parabola_length / lengthscale)) + 1, 2)
+        # Create a uniform spacing in arc length for the parabolic section:
+        s_desired = np.linspace(0, total_parabola_length, num_points3)
+        # Interpolate to obtain (x,y) corresponding to these arc-length positions.
+        x_parabola = np.interp(s_desired, s_dense, x_dense)
+        y_parabola = np.interp(s_desired, s_dense, y_dense)
+
+        # ===== Assemble the Nozzle Mesh (Top Half Only) =====
+        # Remove duplicate points at the boundaries (the throat and point N).
+        mesh_x = np.concatenate((arc1_x, arc2_x[1:], x_parabola[1:]))
+        mesh_y = np.concatenate((arc1_y, arc2_y[1:], y_parabola[1:]))
+        mesh_X = np.column_stack((mesh_x, mesh_y))
+
+
+
+        # mesh_X = np.concatenate([mesh_X, np.array([[0., Re/4]])], axis=0)
+        # Add on boundary points
+        min_x, max_x = mesh_X[:, 0].min(), mesh_X[:, 0].max()
+        max_y = mesh_X[:, 1].max()
+        back = np.array([[min_x, max_y + lip_size]])
+        front = np.array([[max_x, max_y + lip_size]])
+        mesh_X = np.concatenate([mesh_X, front, back], axis=0)
+
+        # Segment indices
+        n_points_up = len(mesh_X)
+        segments = np.column_stack((np.arange(n_points_up), (np.arange(n_points_up) + 1) % n_points_up))[:-2]
+
+        # Lower part of the nozzle
+        mesh_X_low = np.column_stack((mesh_X[:, 0], -mesh_X[:, 1] - Rt))
+
+        # Center first point at (0,0)
+        points_all = np.concatenate([mesh_X, mesh_X_low])
+        self.points =  points_all + np.array(Xmin) - mesh_X[0]
+
+        # Add on hole point
+        hole = np.array([0, Re/4])
+        hole_upper = hole - mesh_X[0]
+        hole_lower = np.array([0, -Rt-Re/4]) - mesh_X[0]
+        self.hole = [hole_upper.tolist(), hole_lower.tolist()]
+        # print(f'{self.hole = }')
+
+        self.segments = np.concatenate([segments, segments + n_points_up], axis=0)
+
+        # self.points = mesh_X
+        # self.segments = segments
+        # print(self.points)
+        # print(f'{self.segments = }')
+        # print(f'{self.points.shape = }')
+
+
+
+if __name__ == "__main__":
+    from matplotlib import pyplot as plt
+    nozzle = Nozzle([0, 0], Rt=0.25, Re=1, theta_n_deg=30, theta_exit_deg=15, lip_size=0.3)
+    _points = nozzle.points
+    plt.scatter(*_points.T)
+    plt.show()
+

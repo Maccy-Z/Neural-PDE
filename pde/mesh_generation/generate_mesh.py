@@ -5,7 +5,7 @@ import threading
 
 from pde.mesh_generation.mesh_gen_utils import (MeshProps, min_dist_to_boundary,
                             plot_mesh, extract_mesh_data)
-from pde.mesh_generation.geometries import MeshFacet, Circle, Box, Line, Ellipse
+from pde.mesh_generation.geometries import MeshFacet, Circle, Box, Line, Ellipse, Nozzle
 from pde.graph_grid.graph_store import P_Types as PT
 
 # Custom function to control mesh refinement
@@ -64,7 +64,7 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
             seg_marks += [mark_id] * len(facets.segments)
             p_marks += [mark_id] * len(facets.points)
             if facets.hole:
-                holes.append(facets.hole)
+                holes += facets.hole
 
             marker_names[mark_id] = facets.name
 
@@ -74,15 +74,6 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
             dist_seg = np.concatenate((dist_seg, facets.segments + cur_dist_p))
 
 
-
-    # # Create the mesh info object
-    # mesh_info = tri.MeshInfo()
-    # mesh_info.set_holes(deepcopy(holes))
-    # mesh_info.set_points(deepcopy(points), point_markers=deepcopy(p_marks))
-    # mesh_info.set_facets(deepcopy(segments), facet_markers=deepcopy(seg_marks))
-    #
-    # # Create the mesh
-    # mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg))
     ret_list = []
     thread = threading.Thread(target=_create_mesh_thread, args=(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, ret_list))
     thread.start()
@@ -175,12 +166,13 @@ def gen_mesh_fvm(xmin, xmax, ymin, ymax, areas, cell_lnscale=2):
 
     coords = [
                 Line([[xmin, ymin], [xmax, ymin]], True, name="NavierWall"),     # Bottom
-                Line([[xmin, ymax], [xmax, ymax]], False, name="NavierWall"),     # Top
-                Line([[xmin, ymin], [xmin, ymax]], False, name="Left"),    # Left
+                Line([[xmin, ymax], [xmax, ymax]], True, name="NavierWall"),     # Top
+                Line([[xmin, ymin], [xmin, ymax]], True, name="Left"),    # Left
                 Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
-                Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Refinement wall
+                # Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Refinement wall
                 Circle((0.75, 0.7), 0.15, triscale, hole=True, dist_req=True, name="NavierWall"),
                 #Ellipse((1, 1.5), 1.5, 0.6, 0, triscale, lims=lims, hole=True, dist_req=True, name="NavierWall"),
+                #Nozzle(Xmin=[0, 0], Rt=0.33, Re=1, theta_n_deg=30, theta_exit_deg=15, lengthscale=triscale, lip_size=0.5, dist_req=True, name="NavierWall"),
 
     ]
 
