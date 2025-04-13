@@ -23,13 +23,13 @@ class ConfigFVM:
     n_iter: int = 10000
 
     # mesh parameters
-    min_A: float = 2e-4
-    max_A: float = 5e-3
+    min_A: float = 1e-4
+    max_A: float = 2.5e-3
     lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 3e-4
-    visc_bulk: float = 1e-5
+    viscosity: float = 10e-4
+    visc_bulk: float = 5e-4
     thermal_cond: float = 1e-6
 
     gamma: float = 1.4

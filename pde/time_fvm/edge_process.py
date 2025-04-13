@@ -660,9 +660,8 @@ class FVMEdgeInfo:
 
 
     def clear_temp(self):
-        # del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
-        # del self.dirich_mask, self.neumann_mask
-        # del self.A_face_grad, self.b_face_grad
+        del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
+        del self.dirich_mask, self.neumann_mask
         # del self.dUf_dUc
 
         torch.cuda.empty_cache()
@@ -715,14 +714,14 @@ class FVMEdgeInfo:
         cell_grads = self._cell_grads(Us_cell_face) # shape = [n_cells, 2, n_comp]
         grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_comp]
 
-        self.cell_grads = cell_grads
+        # self.cell_grads = cell_grads
 
         # Compute limited face values,
         Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # Us_face.shape = [n_cells, 3, n_comp], phi_lim.shape =  [n_cells, 1, n_comp]
         Us_face = Us_face.view(3 * self.n_cells, self.n_comp)
         cell_grads = cell_grads * phi_lim
 
-        self.phi_lim = phi_lim
+        # self.phi_lim = phi_lim
 
         # Face gradients of velocity and temperature
         grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
@@ -748,9 +747,9 @@ class FVMEdgeInfo:
 
         # Decompose components back
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
-        self.rho_faces = U_face_all[:, :, 2].unsqueeze(-1)  # shape = [n_edges, edges=2, dims=1]
-        self.T_faces = U_face_all[:, :, 3].unsqueeze(-1)    # shape = [n_edges, edges=2, dims=1]
-        self.div_V_faces = U_face_all[:, :, -1]  # shape = [n_edges, edges=2]
+        self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
+        self.T_faces = U_face_all[:, :, [3]]    # shape = [n_edges, edges=2, dims=1]
+        self.div_V_faces = U_face_all[:, :, 4]  # shape = [n_edges, edges=2]
 
         # Conserved quantities
         self.mom_faces = self.Vs_faces * self.rho_faces  # shape = [n_edges, edges=2, dims=2]

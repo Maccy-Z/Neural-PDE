@@ -580,7 +580,7 @@ class RK3_SSP4(TSolver, Adaptive):
         super().__init__(cells, dt, n_steps, eq=equation)
         self.eq: FVMEquation = equation
 
-        self._adapt_init(order=4, atol=2e-3, rtol=2e-3, alphas=(0.8, 0.99), dt_min=self.dt/2)
+        self._adapt_init(order=4, atol=1e-3, rtol=1e-3, alphas=(0.8, 0.995), dt_min=self.dt/2)
 
     def _step(self, t):
         """ U_a = 1/2 * U_i + 1/2 * [U_i + dt * f(U_i)]
@@ -602,7 +602,7 @@ class RK3_SSP4(TSolver, Adaptive):
         # U_{i+1} = 1/2 * U_c + 1/2 [U_c + dt * f(U_c)]
         U_i_1 = 1/2 * (U_c + self._euler_step(U_c, t=t+self.dt/2))
 
-        self.update_stepsize((U_i_1 - U_i)[:, :3], (U_b - U_i)[:, :3])
+        self.update_stepsize((U_i_1 - U_i), (U_b - U_i))
 
         return U_i_1
 

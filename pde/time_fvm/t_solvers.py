@@ -78,7 +78,7 @@ class TSolver(ABC):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_t = 1
+        plot_t = 2
         next_plot_t = plot_t
 
         dts = []
