@@ -420,6 +420,8 @@ from pde.time_fvm.sparse_utils import create_insertion_matrix, lift_sparse_matri
 
 class FarfieldBC:
     def __init__(self, cfg: ConfigFVM, farfield_mask):
+        # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
+
         self.cfg = cfg
         self.exit_cfg = cfg.exit_cfg
 
@@ -548,6 +550,8 @@ class SlopeLimiter:
         return phi
 
 
+
+
 class FVMEdgeInfo:
     device: str
     n_edges: int
@@ -576,7 +580,7 @@ class FVMEdgeInfo:
     exit_cell2edge: torch.Tensor  # shape = (n_cells, 2)  # Exit edge for each cell
     bc_edge_side: torch.Tensor  # shape = (n_edges_bc, 2)  # Side of the edge for each boundary edge
     use_farfield: bool
-    farfield_calc: FarfieldBC
+    boundary_setter: any
 
     # Gradients
     G_mats: list[torch.Tensor]  # shape = [2](n_cells, n_cells)  Gradient matrix for every cell
@@ -626,27 +630,25 @@ class FVMEdgeInfo:
         self.cell_disps = cell_disps.to(device)
         self.normals = mesh.normals.to(device)
         normal_hat = self.normals / torch.norm(self.normals, dim=1, keepdim=True)
-        self.normal_hat = normal_hat
+        self.normals_hat = normal_hat
         cell_disps = torch.full((self.n_edges, 2), float("nan"), device=device)
         cell_disps[~self.bc_edge_mask] = self.cell_disps
         d_cos_theta = (normal_hat * cell_disps).sum(dim=1)
+        self.cell_dist_proj = d_cos_theta
         # Non-orthogonal correction: du/dn = du/dn_face - grad(U) (d/(n_hat dot d) - n_hat)
         X_orthog = cell_disps / d_cos_theta.unsqueeze(-1) - normal_hat
         X_orthog[self.bc_edge_mask] = 0
         self.X_orthog = X_orthog
-        self.cell_dist_proj = d_cos_theta
         self.edge_len = torch.norm(self.normals, dim=1).to(device).unsqueeze(-1)
 
         self._init_bc(bc_tags)
         c_print(f'_init_bc done', color="magenta")
-        self._build_spm_face_vals()
-        c_print(f'_build_spm_face_vals done', color="magenta")
 
         self._build_spm_face_grads()
         c_print(f'_build_spm_face_grads done', color="magenta")
 
         #self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_comp, [0, 1], device=device).to_sparse_csr()
-        c_print(f'V_insertion_matrix done', color="magenta")
+        # c_print(f'V_insertion_matrix done', color="magenta")
 
         # Create indexing masks between main and boundary edges
         # Step 1: Create a boolean tensor tracking which face of each edge is assigned.
@@ -658,10 +660,11 @@ class FVMEdgeInfo:
         self.bc_edge_side = (~assigned_boundary).float().argmax(dim=1)
         c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
+        self.cell_grads = None
 
     def clear_temp(self):
-        del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
-        del self.dirich_mask, self.neumann_mask
+        # del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
+        # del self.dirich_mask, self.neumann_mask
         # del self.dUf_dUc
 
         torch.cuda.empty_cache()
@@ -699,29 +702,31 @@ class FVMEdgeInfo:
         assert self.neumann_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
         assert self.farfield_mask.shape[0] == self.bc_edge_mask.sum(), f'Wrong mask shape'
 
+        self.boundary_setter = BoundarySetter(self)
+
         if self.use_farfield:
-            self.exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask[:, 2]]
-            self.farfield_calc = FarfieldBC(self.cfg, self.farfield_mask)
+            exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask[:, 2]]
+            # self.farfield_calc = FarfieldBC(self.cfg, self.farfield_mask)
+            self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge)
 
 
     @torch.compile()
     def precompute_shared(self, Us, dt):
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """
-
         U_face_bc = self._bc_face_vals(Us, dt)      # shape = [n_edges_bc, n_comp]
         Us_cell_face = torch.cat([Us, U_face_bc])        # shape = [n_cells + n_edges_bc, n_comp]
         cell_grads = self._cell_grads(Us_cell_face) # shape = [n_cells, 2, n_comp]
         grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_comp]
 
-        # self.cell_grads = cell_grads
+        self.cell_grads = cell_grads
 
         # Compute limited face values,
         Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # Us_face.shape = [n_cells, 3, n_comp], phi_lim.shape =  [n_cells, 1, n_comp]
         Us_face = Us_face.view(3 * self.n_cells, self.n_comp)
         cell_grads = cell_grads * phi_lim
 
-        # self.phi_lim = phi_lim
+        self.phi_lim = phi_lim
 
         # Face gradients of velocity and temperature
         grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
@@ -743,7 +748,18 @@ class FVMEdgeInfo:
         U_face_all = torch.empty((self.n_edges, 2, self.n_comp + 7), device=self.device)    # [momx, momy, rho, Q, div_V, face_grad X 4]
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = cell_values
         U_face_all[self.bc_edge_mask, self.bc_edge_side] = cell_values_bc
-        #U_face_all[self.bc_edge_mask, ~self.bc_edge_side] = cell_values_bc
+        # U_face_all[self.bc_edge_mask, ~self.bc_edge_side] = cell_values_bc
+
+        # """ TEMP TEST """
+        # neum_mask_all = torch.zeros_like(self.bc_edge_mask)
+        # neum_mask_all = neum_mask_all.unsqueeze(-1).repeat(1, 4)
+        # neum_mask_all[self.bc_edge_mask] = self.neumann_mask
+        # where_neum_all = torch.where(neum_mask_all)
+        #
+        # where_neum = torch.where(self.neumann_mask)
+        # neum_vals = U_face_bc[where_neum[0], where_neum[1]]
+        # U_face_all[where_neum_all[0], :, where_neum_all[1]] = neum_vals.unsqueeze(-1)
+
 
         # Decompose components back
         self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
@@ -761,49 +777,12 @@ class FVMEdgeInfo:
         grad_F_lstsq = grad_F_lstsq.mean(dim=1).view(self.n_edges, 2, 3)   # shape = [n_edges, {x, y}, {vx, vy, T}]
         dFdn_correct = grad_F_dn - (grad_F_lstsq * self.X_orthog.unsqueeze(-1)).sum(dim=1)      # shape = [n_edges, 3]
         # Replace normal part of gradient with face gradient
-        grad_F_dot_n = (grad_F_lstsq * self.normal_hat.unsqueeze(-1)).sum(dim=1, keepdim=True)       # shape = [n_edges, 1, 3]
-        grad_F_para = (dFdn_correct.unsqueeze(dim=1) - grad_F_dot_n) * self.normal_hat.unsqueeze(dim=-1)       # shape = [n_edges, 2, 3]
+        grad_F_dot_n = (grad_F_lstsq * self.normals_hat.unsqueeze(-1)).sum(dim=1, keepdim=True)       # shape = [n_edges, 1, 3]
+        grad_F_para = (dFdn_correct.unsqueeze(dim=1) - grad_F_dot_n) * self.normals_hat.unsqueeze(dim=-1)       # shape = [n_edges, 2, 3]
         grad_F = grad_F_lstsq + grad_F_para             # shape = [n_edges, 2, 3]
         self.grad_V = grad_F[:, :, :2]
         self.grad_T_n = dFdn_correct[:, 2]      # shape = [n_edges]
         # self.grad_T_n = grad_faces_n[:, 3]
-
-    # def _phi(self, delta, dU):
-    #     # dU = torch.where(dU.abs() < 1e-8, -1e-8, dU)
-    #     #dU = 2 * ((dU>0).float()-0.5) * (dU.abs() + 1e-8)
-    #     #r = delta / dU        # shape = [n_cells, neigh=3, n_comp]
-    #
-    #     """VENKATAKRISHNAN"""
-    #     eps = 10 * self.area_p # self.mesh.areas.cuda().view(-1, 1, 1)#
-    #     # _r = r**2 + r + eps/r
-    #     # phi = (_r + r) / (_r + 2)
-    #
-    #     # phi = (delta ** 2 + eps + 2 * delta * dU) / (delta ** 2 + 2 * dU ** 2 + delta * dU + eps)
-    #
-    #     """ 3rd order"""
-    #     a = delta.abs()
-    #     b = dU.abs()
-    #
-    #     # a_eps = a ** 3 + eps ** 1.5
-    #     # S = 4 * b ** 2
-    #     # phi = (a_eps +  a * S) / (a_eps + b * (delta ** 2 + S))
-    #
-    #     """ 4th order"""
-    #     a_eps = a ** 4 + 100 * eps
-    #     S = 2 * b * (a **2 - 2 * b * (a - 2 * b))
-    #     phi = (a_eps +  a * S) / (a_eps + b * (delta ** 3 + S))
-    #
-    #     # phi = torch.where(a < 2 * b, phi, 1)
-    #     # phi = torch.clamp(phi, min=0, max=1.)       # shape = [n_cells, neigh=3, n_comp]
-    #     #
-    #     """BJ"""
-    #     # phi = torch.clamp(r, min=0., max=1)       # shape = [n_cells, neigh=3, n_comp]
-    #
-    #     # Cell wide clamping
-    #     phi = torch.min(phi, dim=1, keepdim=True).values        # shape = [n_cells, neigh=1, n_comp]
-    #
-    #
-    #     return phi
 
 
     def _limit_face_vals(self, Us, U_face_bc, cell_grads):
@@ -845,34 +824,20 @@ class FVMEdgeInfo:
             return.shape: [n_edges_bc, n_comp]
 
          """
-        # U_face = torch.empty((self.n_edges_bc, self.n_component), device=self.device)
+        # U_face = torch.empty((self.n_edges_bc, self.n_comp), device=self.device)
         # # Boundary edges
-        # u_centroid_bc = Us[self.edge_to_tri_bc] # shape = [n_bc_edges, N_component]
+        # u_centroid_bc = Us[self.edge_to_tri_bc] # shape = [n_bc_edges, n_comp]
         # # Dirichlet
         # U_face[self.dirich_mask] = self.dirich_val
         # # Neumann
         # U_cent_bc_neum = u_centroid_bc[self.neumann_mask]        # shape = [n_neum_edges]
-        # U_face_neum = U_cent_bc_neum + self.neumann_val / self.edge_dists_bc[self.neumann_mask]
+        # U_face_neum = U_cent_bc_neum + self.neumann_val * self.edge_dists_bc[self.neumann_mask]
         # U_face[self.neumann_mask] = U_face_neum
-        # # Wall
-        # V_cent_wall = u_centroid_bc[self.euler_w_mask, :2]
-        # V_cent_wall = (self.wall_vects * V_cent_wall).sum(dim=1)        # Normal derivative. shape = [n_euler_w_edges]
-        # V_wall = V_cent_wall.unsqueeze(-1).repeat(1, 2)
-        # V_wall[:, 0] = 0
-        # U_face_wall = torch.matmul(self.inv_wall_mat, V_wall.unsqueeze(-1)).squeeze()       # shape = [n_euler_w_edges, 2]
-        # U_face[self.euler_w_mask, :2] = U_face_wall
 
-        Us_flat = Us.flatten()
-        # Final U_face in flattened form.a
-        U_face_flat = torch.mv(self.A_bc, Us_flat) + self.b_bc      # shape = [n_edges_bc * n_component]
-        # Reshape back to (n_edges_bc, n_component)
-        U_face = U_face_flat.view(self.n_edges_bc, self.n_comp)
+        U_face = self.boundary_setter.set_face_values(Us, self.cell_grads, dt)
 
-        #U_face[:, 0] = U_face[:, 0].clamp(max=2)
-        # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
-        if self.use_farfield :
-            self.farfield_calc.set_bc_U_face(U_face, Us[self.exit_cell2edge], dt)
-
+        # if self.use_farfield :
+        #     self.farfield_calc.set_bc_U_face(U_face, Us[self.exit_cell2edge], dt)
 
         return  U_face
 
@@ -1027,60 +992,6 @@ class FVMEdgeInfo:
         self.A_face_grad, self.b_face_grad = combine_edge_operators(A_face_grad_main, A_grad_bc, b_grad, self.bc_edge_mask, self.n_edges, self.n_cells, self.n_comp, self.device)
 
 
-    def _build_spm_face_vals(self):
-        """ Compute bc edge values using sparse matrix multiplication. """
-
-        device = self.device
-        n_bc = self.n_edges_bc  # number of boundary edges
-        n_comp = self.n_comp
-        n_cells = self.n_cells
-
-        # Total number of flattened BC rows.
-        N = n_bc * n_comp
-
-        # Create flattened indices for the boundary rows and the corresponding component.
-        # Each boundary edge gives rise to n_comp rows.
-        bc_rows = torch.arange(n_bc, device=device).unsqueeze(1).expand(n_bc, n_comp).reshape(-1)
-        comp_idx = torch.arange(n_comp, device=device).unsqueeze(0).expand(n_bc, n_comp).reshape(-1)
-
-        # Reshape the condition masks to a flat vector of length N.
-        dirich_mask = self.dirich_mask.reshape(-1)  # For Dirichlet conditions.
-        neum_mask = self.neumann_mask.reshape(-1)  # For Neumann conditions.
-
-        # --- Build sparse matrix A ---
-        # For Neumann entries, we want to extract the cell value from Us.
-        # For each Neumann row, the corresponding column in Us (flattened) is given by:
-        #   col = self.edge_to_tri_bc[ edge_index ] * n_comp + component
-        neum_indices = torch.nonzero(neum_mask, as_tuple=False).squeeze(1)  # indices where Neumann is True.
-        A_rows = neum_indices
-        # bc_rows[neum_indices] gives the corresponding boundary edge for each flattened row.
-        A_cols = self.edge_to_tri_bc[bc_rows[neum_indices]] * n_comp + comp_idx[neum_indices]
-        A_vals = torch.ones_like(A_rows, dtype=torch.float32, device=device)
-
-        size_A = (N, n_cells * n_comp)
-        self.A_bc = torch.sparse_coo_tensor(torch.stack([A_rows, A_cols], dim=0), A_vals, size=size_A).coalesce().to_sparse_csr()
-
-        # Build the offset vector b.
-        self.b_bc = torch.empty(N, device=device, dtype=torch.float32)
-        # For Dirichlet entries, the prescribed value should override any extracted value.
-        self.b_bc[dirich_mask] = self.dirich_val
-        # For Neumann entries, add the offset computed from the edge distance.
-        # Here, we select the proper component value from self.neumann_val using comp_idx.
-        self.b_bc[neum_mask] = self.neumann_val[comp_idx[neum_mask]] / self.edge_dists_bc.flatten()[neum_mask]
-        #
-        # """ Regrouping """
-        # flat_rows = self.tri_to_edge * 2 + self.tri_edge_signs
-        # cols = torch.arange(3*self.n_cells, device=self.device)
-        # # All nonzero values are 1.0:
-        # vals = torch.ones_like(flat_rows, dtype=torch.float32)
-        # # Build the sparse selection matrix: shape (n_edges*2, n_cell_entries)
-        # self.S_cells = torch.sparse_coo_tensor(
-        #     torch.stack([flat_rows, cols]),
-        #     vals,
-        #     size=(self.n_edges * 2, 3*self.n_cells)
-        # ).to_sparse_csr()
-
-
     def _build_dUf_dUc(self):
         """ Build sparse matrix for dU_f/dU_c - gradient of face val w.r.t. cell values.
             U_cell = [interleave(mom_x | mom_y | rho)], shape = [3*n_cell]
@@ -1126,3 +1037,142 @@ class FVMEdgeInfo:
         #dUfL_dUc, dUfR_dUc = dUfL_dUc.to_sparse_csr(), dUfR_dUc.to_sparse_csr()
         dUfL_dUc, dUfR_dUc = dUfL_dUc.cuda(non_blocking=True), dUfR_dUc.cuda(non_blocking=True)
         return dUfL_dUc, dUfR_dUc
+
+
+class BoundarySetter:
+    """ Non-orthogonal correction for Neumann BCs."""
+    n_comp: int
+    n_edges_bc: int
+
+    tri_to_bc_edge: torch.Tensor    # shape = [n_edges, 3]
+    grad_comps: torch.Tensor          # shape = [n_neum_edges, 2, 1]
+    where_neum: tuple[torch.Tensor]      # shape = [2][n_neum_edges, 2]
+
+    # Matrices for general face values
+    A_bc: torch.Tensor
+    b_bc: torch.Tensor
+
+    # Farfield boundary condition
+    use_farfield: bool
+    farfield_calc: FarfieldBC
+    exit_cell2edge: torch.tensor    # shape = (n_cells, 2)  # Exit edge for each cell
+
+    def __init__(self, E_props: FVMEdgeInfo):
+        self.use_farfield = False
+
+        self.n_comp = E_props.n_comp
+        self.n_edges_bc = E_props.n_edges_bc
+
+        # Mapping from triangle to bool if edge is boundary
+        tri_to_bc_edge = E_props.bc_edge_mask[E_props.tri_to_edge.view(-1, 3)]
+
+        # Flatten out all Neumann BCs and index according to order where_neum_all[0]
+        neum_mask_all = torch.zeros_like(E_props.bc_edge_mask)
+        neum_mask_all = neum_mask_all.unsqueeze(-1).repeat(1, 4)
+        neum_mask_all[E_props.bc_edge_mask] = E_props.neumann_mask
+        where_neum_all = torch.where(neum_mask_all)
+        # Mapping from boundary id to boundary edge id
+        self.where_neum = torch.where(E_props.neumann_mask)
+
+        # Mapping from boundary edge to cell
+        bc_edge_to_tri = torch.zeros_like(E_props.bc_edge_mask).long()
+        bc_edge_to_tri[E_props.bc_edge_mask] = E_props.edge_to_tri_bc
+
+        # Cells corresponding to Neumann BC
+        neum_cells = bc_edge_to_tri[where_neum_all[0]]  # shape = [n_neum_edges], which cells have neuman BCs
+        self.neum_cells = neum_cells        # shape = [n_neum_edges]
+
+        # Which component of gradient is needed for Neumann BC
+        self.grad_comps = where_neum_all[1].unsqueeze(1).repeat(1, 2).unsqueeze(2)     # shape = [n_neum_edges, 2, 1]
+        # Normal vector of edges
+        n_hats = E_props.normals_hat[where_neum_all[0]]  # shape = [n_neum_edges, 2]
+        # Displacement from centroid to edge
+        cent_to_edge = E_props.cent_to_edge_disp[neum_cells].squeeze()  # shape = [n_neum_edge, 3, 2]
+        bc_edges = tri_to_bc_edge[neum_cells]  # shape = [n_neum_edge, 3]    Which cell edge is the boundary edge (Only 1)
+        r = cent_to_edge[bc_edges]  # shape = [n_neum_edge, 2]
+        # Normal component of r
+        d = n_hats * (r * n_hats).sum(dim=1, keepdim=True)  # shape = [n_neum_edge, 2]
+        # Parallel component of r
+        self.l = r - d
+
+        A_bc, b_bc = self._build_spm_face_vals(E_props)
+        self.A_bc, self.b_bc = A_bc, b_bc
+
+    def set_face_values(self, Us, cell_grads=None, dt=None):
+        Us_flat = Us.flatten()
+        # Final U_face in flattened form.a
+        U_face_flat = torch.mv(self.A_bc, Us_flat) + self.b_bc      # shape = [n_edges_bc * n_comp]
+        # Reshape back to (n_edges_bc, n_comp)
+        U_face = U_face_flat.view(self.n_edges_bc, self.n_comp)
+
+        if cell_grads is not None:
+            self._non_orthogonal_correction(U_face, cell_grads)
+
+        if self.use_farfield:
+            self.farfield_calc.set_bc_U_face(U_face, Us[self.exit_cell2edge], dt)
+
+        return U_face
+
+    def _non_orthogonal_correction(self, U_face, cell_grads):
+        """
+        Use previous gradient for non-orthogonal correction.
+
+        U_face.shape = [n_bc_faces, n_comp]
+        cell_grads.shape = [n_cells, 2, n_comp]
+
+        r = centroid to midpoint.
+        d = normal component of r
+        U_f = U_0 + d * dUdn + (r-d) grad(U)
+        """
+        grads = torch.gather(cell_grads[self.neum_cells], 2, self.grad_comps).squeeze()  # shape = [n_neum_edge, 2]
+
+        dU = (grads * self.l).sum(dim=1)  # shape = [n_neum_edge]
+        U_face[self.where_neum[0], self.where_neum[1]] += dU
+
+    def _build_spm_face_vals(self, E_props):
+        """ Compute bc edge values using sparse matrix multiplication. """
+
+        device = E_props.device
+        n_bc = E_props.n_edges_bc  # number of boundary edges
+        n_comp = E_props.n_comp
+        n_cells = E_props.n_cells
+
+        # Total number of flattened BC rows.
+        N = n_bc * n_comp
+
+        # Create flattened indices for the boundary rows and the corresponding component.
+        # Each boundary edge gives rise to n_comp rows.
+        bc_rows = torch.arange(n_bc, device=device).unsqueeze(1).expand(n_bc, n_comp).reshape(-1)
+        comp_idx = torch.arange(n_comp, device=device).unsqueeze(0).expand(n_bc, n_comp).reshape(-1)
+
+        # Reshape the condition masks to a flat vector of length N.
+        dirich_mask = E_props.dirich_mask.reshape(-1)  # For Dirichlet conditions.
+        neum_mask = E_props.neumann_mask.reshape(-1)  # For Neumann conditions.
+
+        # --- Build sparse matrix A ---
+        # For Neumann entries, we want to extract the cell value from Us.
+        # For each Neumann row, the corresponding column in Us (flattened) is given by:
+        #   col = self.edge_to_tri_bc[ edge_index ] * n_comp + component
+        neum_indices = torch.nonzero(neum_mask, as_tuple=False).squeeze(1)  # indices where Neumann is True.
+        A_rows = neum_indices
+        # bc_rows[neum_indices] gives the corresponding boundary edge for each flattened row.
+        A_cols = E_props.edge_to_tri_bc[bc_rows[neum_indices]] * n_comp + comp_idx[neum_indices]
+        A_vals = torch.ones_like(A_rows, dtype=torch.float32, device=device)
+
+        size_A = (N, n_cells * n_comp)
+        A_bc = torch.sparse_coo_tensor(torch.stack([A_rows, A_cols], dim=0), A_vals, size=size_A).coalesce().to_sparse_csr()
+
+        # Build the offset vector b.
+        b_bc = torch.empty(N, device=device, dtype=torch.float32)
+        # For Dirichlet entries, the prescribed value should override any extracted value.
+        b_bc[dirich_mask] = E_props.dirich_val
+        # For Neumann entries, add the offset computed from the edge distance.
+        # Here, we select the proper component value from self.neumann_val using comp_idx.
+        b_bc[neum_mask] = E_props.neumann_val[comp_idx[neum_mask]] * E_props.edge_dists_bc.flatten()[neum_mask]
+
+        return A_bc, b_bc
+
+    def init_farfield(self, cfg, farfield_mask, exit_cell2edge):
+        self.use_farfield = True
+        self.farfield_calc = FarfieldBC(cfg, farfield_mask)
+        self.exit_cell2edge = exit_cell2edge

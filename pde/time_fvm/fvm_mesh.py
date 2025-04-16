@@ -101,21 +101,22 @@ class FVMMesh:
                 edge_to_tri_comb.append(bc_edge_id)
         edge_to_tri_comb = torch.stack(edge_to_tri_comb)
 
-        combined_neigh = []
-        neigh_cents = []
+        combined_neigh, neigh_cents, combined_bc = [], [], []
         for cell_id, edges in enumerate(tri_to_edge):  # Must keep this order. Neighbor id: torch.cat([Us, Us_bc_edge])
             # Get neighboring cells
-            neighbors, centers = [], []
+            neighbors, centers, is_bc = [], [], []
             for e in edges:
                 e = e.item()
                 if len(edge_to_tri_ord[e]) == 2:
                     """ Interior Edge"""
+                    is_bc.append(False)
                     tris = edge_to_tri_ord[e]
                     neigh_cell = tris[tris != cell_id]
                     centers.append(centroids[neigh_cell])  # [1, 2]
                     neighbors.append(neigh_cell.item())
                 else:
                     """ Boundary edge """
+                    is_bc.append(True)
                     midpoint = midpoints[e].unsqueeze(0)
                     centers.append(midpoint)
                     glob_edge_idx = global_to_local[e]
@@ -123,16 +124,19 @@ class FVMMesh:
 
             combined_neigh.append(torch.tensor(neighbors))
             neigh_cents.append(torch.cat(centers))  # [3, 2]
+            combined_bc.append(torch.tensor(is_bc)) # [3]
         combined_neigh = torch.stack(combined_neigh).int()
-
         neigh_cents = torch.stack(neigh_cents)  # [n_cells, 3, 2]
+        combined_bc = torch.stack(combined_bc).bool()  # [n_cells, 3]
+
         # --- Compute gradient vectors in batch ---
         # For each cell, compute the displacement vectors d_i = (neighbor center - cell center)
         center_expanded = centroids.unsqueeze(1)  # shape: [n_cells, 1, 2]
         d = neigh_cents - center_expanded  # shape: [n_cells, 3, 2]
         # Compute weights per neighbor: w_i = 1 / norm(d_i) ** k
-        w = 1 / torch.norm(d, dim=2) ** 0.5 # shape: [n_cells, 3]
-        w2 = w.double() ** 2  # shape: [n_cells, 3]
+        w = 1 / torch.norm(d.double(), dim=2) ** 0.25 # shape: [n_cells, 3]
+        w[combined_bc] *= 7.5
+        w2 = w ** 2  # shape: [n_cells, 3]
         # Compute A = dᵀ @ diag(w²) @ d for each cell.
         # dᵀ has shape [n_cells, 2, 3] and d * w2.unsqueeze(-1) scales each 2D neighbor vector.
         dT = d.transpose(1, 2).double()  # shape: [n_cells, 2, 3]

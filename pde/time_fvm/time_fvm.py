@@ -518,7 +518,7 @@ class KTDiffusion(FVMEdgeFunc):
         #a = a.clamp(max=0.75 * edge_len / dt)  # shape = [n_edges, 1]
         kt_fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * edge_len  # shape = [n_edges, n_comp]
 
-        return kt_fluxes
+        return kt_fluxes #* 0.25
 
 
 class FVMEquation:
@@ -553,7 +553,7 @@ class FVMEquation:
         self.KT_diff = KTDiffusion(cfg.v_factor, self.phy_setup, E_props, device=device)
 
         # self.t_solver = RK3_SSP4(self.cells, cfg.dt, cfg.n_iter, self)
-        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP4")
+        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
@@ -561,6 +561,41 @@ class FVMEquation:
 
     def solve(self):
         self.t_solver.solve()
+
+
+    def forward(self, primatives, dt, t):
+        """ primatives.shape = (n_cells, n_component) """
+        E_props = self.E_props
+        E_props.precompute_shared(primatives, dt)
+
+        self.phy_setup.update()
+
+        # Advection term
+        fluxes = self.U_advect.edge_fluxes()
+        # Pressure term
+        self.P_force.edge_fluxes(fluxes)
+        # Viscosity term
+        self.U_visc.edge_fluxes(fluxes)
+        # Heating term
+        self.Heat.edge_fluxes(fluxes)
+        # MUSCL term
+        fluxes += self.KT_diff.edge_fluxes(dt)
+        # Compute divergence
+        divergence = self._flux_to_div(fluxes)
+        #
+        # self.pressure_flux = self.P_force.edge_fluxes()
+        # self.pressure_div = self._flux_to_div(self.pressure_flux)
+        # self.advect_flux = self.U_advect.edge_fluxes()
+        # self.advect_div = self._flux_to_div(self.advect_flux)
+        # self.kt_flux = self.KT_diff.edge_fluxes(dt)
+        # self.kt_div = self._flux_to_div(self.kt_flux)
+        # self.divergence = divergence
+        # self.heat_flux = self.Heat.edge_fluxes()
+        # self.heat_div = self._flux_to_div(self.heat_flux)
+        # self.visc_flux = self.U_visc.edge_fluxes()
+        # self.visc_div = self._flux_to_div(self.visc_flux)
+
+        return divergence
 
     def build_flux_mat(self, tri_to_edge, tri_edge_sign, n_edges, areas, dtype=torch.float32):
         """
@@ -629,39 +664,6 @@ class FVMEquation:
         return divergence
 
 
-    def forward(self, primatives, dt, t):
-        """ primatives.shape = (n_cells, n_component) """
-        E_props = self.E_props
-        E_props.precompute_shared(primatives, dt)
-
-        self.phy_setup.update()
-
-        # Advection term
-        fluxes = self.U_advect.edge_fluxes()
-        # Pressure term
-        self.P_force.edge_fluxes(fluxes)
-        # Viscosity term
-        self.U_visc.edge_fluxes(fluxes)
-        # Heating term
-        self.Heat.edge_fluxes(fluxes)
-        # MUSCL term
-        fluxes += self.KT_diff.edge_fluxes(dt)
-        # Compute divergence
-        divergence = self._flux_to_div(fluxes)
-        #
-        # self.pressure_flux = self.P_force.edge_fluxes()
-        # self.pressure_div = self._flux_to_div(self.pressure_flux)
-        # self.advect_flux = self.U_advect.edge_fluxes()
-        # self.advect_div = self._flux_to_div(self.advect_flux)
-        # self.kt_flux = self.KT_diff.edge_fluxes(dt)
-        # self.kt_div = self._flux_to_div(self.kt_flux)
-        # self.divergence = divergence
-        # self.heat_flux = self.Heat.edge_fluxes()
-        # self.heat_div = self._flux_to_div(self.heat_flux)
-        # self.visc_flux = self.U_visc.edge_fluxes()
-        # self.visc_div = self._flux_to_div(self.visc_flux)
-
-        return divergence
 
 
 

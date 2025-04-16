@@ -32,6 +32,7 @@ class FVMCells:
         #assert not torch.any(torch.isnan(state_new)), "Error in state_new"
         self.state =  state_new
 
+
     def get_values(self):
         return self.convert_state_to_value(self.state)
 
@@ -78,7 +79,7 @@ class TSolver(ABC):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_t = 2
+        plot_t = 5
         next_plot_t = plot_t
 
         dts = []
@@ -105,19 +106,20 @@ class TSolver(ABC):
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
-                Xlims = None # [[1.0, 1.1], [1.3, 1.4]]
+                Xlims = None # [[0, 0.14], [0.4, 0.5]] #, [(0, 1), [0, 0.5]]  #
                 #
-                self.eq.plot_interp(primatives[:], title=f"Values at t={t :.4g}", Xlims=Xlims)
+                self.eq.plot_interp(primatives[:, :], title=f"Values at t={t :.4g}", Xlims=Xlims)
 
 
                 # self.eq.plot_interp(self.eq.pressure_div[:, :2], Xlims=Xlims, title=f"Pressure div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.advect_div[:, :2], Xlims=Xlims, title=f"advect div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.kt_div[:, 0], Xlims=Xlims, title=f"KT div  at t={t:.4g}")
-                # self.eq.plot_interp(self.eq.divergence[:, 2], Xlims=Xlims, title=f"div at t={t:.4g}")
+                # self.eq.plot_interp(self.eq.divergence[:, 0], Xlims=Xlims, title=f"div at t={t:.4g}")
                 # self.eq.plot_cells(primatives[:, 0], title=f'Vx at t={t:.4g}', Xlims=Xlims, show_index=True)
-                # self.eq.plot_flux(self.eq.kt_flux[:, 2], title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
+                # self.eq.plot_flux(self.eq.pressure_flux[:, 2], title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
 
-                print()
+
+                # print()
                 # exit(3)
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")

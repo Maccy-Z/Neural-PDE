@@ -3,14 +3,14 @@ import torch
 
 @dataclass
 class ConfigFarfield:
-    mode: str = "decay"    # {decay, farfield, interior} BC
+    mode: str = "farfield"    # {decay, farfield, interior} BC
 
     # Farfield physical parameters
     v_far: float = 0.1
     rho_far: float = 1
 
     # Farfield limit / simulation parameters
-    decay_tau: float = 5
+    decay_tau: float = 1
     beta_tau: float = 0.33
 
     decay_beta: float = 0.002
@@ -19,7 +19,7 @@ class ConfigFarfield:
 class ConfigFVM:
 
     # solver parameters
-    dt: float = 0.001
+    dt: float = 0.002
     n_iter: int = 10000
 
     # mesh parameters
@@ -28,8 +28,8 @@ class ConfigFVM:
     lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 10e-4
-    visc_bulk: float = 5e-4
+    viscosity: float = 1e-5
+    visc_bulk: float = 0e-4
     thermal_cond: float = 1e-6
 
     gamma: float = 1.4
@@ -39,7 +39,7 @@ class ConfigFVM:
     v_factor: float = 1     # Modification for velocity KT scheme
     # bulk_visc_lim: float = 0.25
     lim_p: int = 4          # Order of limiter (1 for BJ)
-    lim_K: int = 0.25
+    lim_K: int = 0.1
 
     # Exit parameters
     exit_cfg: ConfigFarfield = None
