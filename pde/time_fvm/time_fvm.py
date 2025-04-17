@@ -63,15 +63,30 @@ class PhysicalSetup:
     E_props: FVMEdgeInfo
     tau: torch.Tensor
     P_face: torch.Tensor    # shape = [n_edges, 2, 1]
-    C: torch.Tensor         # shape = [n_edges, 2, 1]
+    c: torch.Tensor         # shape = [n_edges, 2, 1]
 
     def __init__(self, E_props: FVMEdgeInfo, cfg: ConfigFVM, device="cpu"):
         self.E_props = E_props
         self.device = device
 
+        self.gamma = cfg.gamma
         self.mu = cfg.viscosity
         self.mu_b = cfg.visc_bulk
         self.R = cfg.C_v * (cfg.gamma - 1)
+        #self.M = cfg.M
+        self.C_v_inv = 1 / cfg.C_v
+
+    @torch.compile()
+    def state_to_primative(self, state):
+        """ Convert """
+        momentum, density, Q = state[:, [0, 1]], state[:,[2]], state[:,[3]]
+
+        V = momentum / density
+        T = self.C_v_inv * (Q / density - 0.5 * V.norm(dim=1, keepdim=True) ** 2)
+        primatives = torch.cat([V, density, T], dim=-1)
+
+        return primatives, state
+
 
     @torch.compile()
     def _tau(self):
@@ -95,10 +110,15 @@ class PhysicalSetup:
         rho_faces = E_props.rho_faces  # shape = [n_edges, edges=2, n_comp=1]
         T_faces = E_props.T_faces       # shape = [n_edges, edges=2, n_comp=1]
 
-        self.P_face = self.R * rho_faces * 100 #* T_faces
-        self.c = torch.sqrt(self.P_face / rho_faces)  # shape = [n_edges, edges=2, n_comp=1]
+        self.P_face = self.R * rho_faces * T_faces #/ self.M
+        self.c = torch.sqrt(self.gamma * self.P_face / rho_faces)  # shape = [n_edges, edges=2, n_comp=1]
+
+        # assert not torch.any(torch.isnan(self.c))
 
     def update(self):
+        E_props = self.E_props
+        E_props.T_faces = E_props.T_faces.clamp(min=10, max=2000)
+
         self._tau()
         self._pressure()
 
@@ -535,16 +555,15 @@ class FVMEquation:
         self.n_comp = n_comp
 
         E_props = FVMEdgeInfo(cfg, mesh, n_comp, bc_tag, device=device)
-        self.cells = FVMCells(mesh.n_cells, n_comp, init_val=us_init, cfg=cfg, device=device)
-        self.E_props = E_props
-
-        # Cell divergence calcs
-        tri_to_edge = mesh.tri_to_edge
-        tri_edge_sign = mesh.tri_edge_signs.unsqueeze(-1) # .to(device)
-        # Matrix for converting edge fluxes to cell divergence
-        self.flux_mat = self.build_flux_mat(tri_to_edge, -tri_edge_sign, mesh.n_edges, mesh.areas)  # shape = [n_cells * n_comp, n_edges * n_comp]
         # Physical parameters
         self.phy_setup = PhysicalSetup(E_props, cfg=cfg, device=device)
+
+        self.cells = FVMCells(mesh.n_cells, n_comp, init_val=us_init, phys_setup=self.phy_setup, device=device)
+        self.E_props = E_props
+
+        # Matrix for converting edge fluxes to cell divergence
+        self.flux_mat = self.build_flux_mat(mesh.tri_to_edge, -mesh.tri_edge_signs, mesh.n_edges, mesh.areas)  # shape = [n_cells * n_comp, n_edges * n_comp]
+
 
         self.P_force = PressureForce(E_props, self.phy_setup, device=device)
         self.U_advect = Adevction(E_props, self.phy_setup, cfg=cfg, device=device)
@@ -552,7 +571,7 @@ class FVMEquation:
         self.Heat = Heating(E_props, self.phy_setup, cfg=cfg, device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, self.phy_setup, E_props, device=device)
 
-        # self.t_solver = RK3_SSP4(self.cells, cfg.dt, cfg.n_iter, self)
+        # self.t_solver = Adams3PC(self.cells, cfg.dt, cfg.n_iter, self)
         self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
 
         E_props.clear_temp()
@@ -582,6 +601,10 @@ class FVMEquation:
         fluxes += self.KT_diff.edge_fluxes(dt)
         # Compute divergence
         divergence = self._flux_to_div(fluxes)
+
+        # For plotting
+        self.divergence = divergence
+
         #
         # self.pressure_flux = self.P_force.edge_fluxes()
         # self.pressure_div = self._flux_to_div(self.pressure_flux)
@@ -675,4 +698,21 @@ class FVMEquation:
 
     def plot_interp(self, values, title="Cell Values", Xlims=None, resolution=2000):
         plot_interp(self.mesh.vertices, values.T, self.mesh.triangles, title=title, Xlims=Xlims, resolution=resolution)
+
+    def pretty_plot(self, primatives, Xlims=None, title=None):
+        Vx, Vy, rho, T = primatives[:, 0], primatives[:, 1], primatives[:, 2], primatives[:, 3]
+
+        P = self.phy_setup.R * rho * T / self.phy_setup.M
+        c = torch.sqrt(P / rho)
+
+        Mx, My = Vx / c, Vy / c
+        M_num = torch.sqrt(Mx ** 2 + My ** 2)
+
+        plot_vals = torch.stack([M_num, P, self.divergence[:, 3] ], dim=0)
+
+        title = [f"Mach number: {title}", f"Pressure: {title}", f'Heating: {title}']
+        plot_interp(self.mesh.vertices, plot_vals, self.mesh.triangles, title=title, Xlims=Xlims)
+
+        # exit(7)
+
 

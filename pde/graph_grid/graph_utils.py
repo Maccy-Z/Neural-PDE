@@ -266,6 +266,8 @@ def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
     # Create a triangulation from the vertex locations.
     triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles)
 
+    if isinstance(title, str):
+        title = [title] * len(axes)
 
     # Determine plot limits.
     if Xlims is not None:
@@ -290,18 +292,14 @@ def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
 
     # Loop over each batch and plot only the triangles inside the region.
     for i, ax in enumerate(axes):
-        ax.set_title(f"{title} - Batch {i}")
+        ax.set_title(f"{title[i]}")
 
         # Filter the face-based values for the triangles inside the region.
         new_facecolors = values[i][in_region]
 
-        if i == 2:
-            vmin, vmax = None, None
-        else:
-            vmin, vmax = None, None
         # Plot using the new triangulation and corresponding facecolors.
         tc = ax.tripcolor(new_triang, facecolors=new_facecolors, edgecolors='none',
-                          cmap='viridis', shading='flat', vmin=vmin, vmax=vmax)
+                          cmap='viridis', shading='flat')
         fig.colorbar(tc, ax=ax)
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)

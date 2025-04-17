@@ -972,7 +972,7 @@ class Butcher_adapt(TSolver, Adaptive):
         self.c = tables.b
         self.stages = self.b.shape[0]
 
-        self._adapt_init(order=4, atol=1e-3, rtol=1e-3, alphas=(0.8, 0.995), dt_min=self.dt*0.5)
+        self._adapt_init(order=4, atol=2e-3, rtol=2e-3, alphas=(0.8, 0.995), dt_min=self.dt*0.5)
         self.k = torch.zeros((self.stages, *self.cells.state.shape), device=self.A.device)
 
     def _step(self, t) -> torch.Tensor:

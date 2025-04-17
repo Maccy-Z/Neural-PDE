@@ -10,21 +10,23 @@ from pde.time_fvm.config_fvm import ConfigFVM
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from time_fvm import FVMEquation
+    from time_fvm import FVMEquation, PhysicalSetup
 
 
 class FVMCells:
     state: torch.Tensor  # shape = (n_cells, N_component)
     """ State stored as: [momentum_x, momenum_y, density, energy] """
-    def __init__(self, n_cells, n_component, cfg: ConfigFVM, init_val=None, device="cpu"):
+    def __init__(self, n_cells, n_component, phys_setup: PhysicalSetup, init_val=None, device="cpu"):
         self.device = device
+        self.phys_setup = phys_setup
+
         if init_val is None:
             self.state = torch.zeros(n_cells, n_component, device=device)
         else:
             assert init_val.shape == (n_cells, n_component), f'Incorrect us init shape {init_val.shape = }'
             self.state = init_val.to(device)
 
-        self.C_v_inv = 1 / cfg.C_v
+        # self.C_v_inv = 1 / cfg.C_v
 
 
     def update_cells(self, state_new):
@@ -34,17 +36,18 @@ class FVMCells:
 
 
     def get_values(self):
-        return self.convert_state_to_value(self.state)
+        return self.phys_setup.state_to_primative(self.state)
 
-    @torch.compile()
     def convert_state_to_value(self, state):
-        momentum, density, Q = state[:, [0, 1]], state[:,[2]], state[:,[3]]
+        return self.phys_setup.state_to_primative(state)
 
-        V = momentum / density
-        T = self.C_v_inv * (Q / density - 0.5 * V.norm(dim=1, keepdim=True) ** 2)
-        primatives = torch.cat([V, density, T], dim=-1)
-
-        return primatives, state
+        # momentum, density, Q = state[:, [0, 1]], state[:,[2]], state[:,[3]]
+        #
+        # V = momentum / density
+        # T = self.C_v_inv * (Q / density - 0.5 * V.norm(dim=1, keepdim=True) ** 2)
+        # primatives = torch.cat([V, density, T], dim=-1)
+        #
+        # return primatives, state
 
     def save(self, name="state.pt"):
         torch.save(self.state, name)
@@ -79,7 +82,7 @@ class TSolver(ABC):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
         E_props = self.eq.E_props
 
-        plot_t = 5
+        plot_t = 0.002
         next_plot_t = plot_t
 
         dts = []
@@ -106,17 +109,17 @@ class TSolver(ABC):
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
-                Xlims = None # [[0, 0.14], [0.4, 0.5]] #, [(0, 1), [0, 0.5]]  #
+                Xlims = None # [[-0.25, -0.1], [-0.65, -0.55]] #, [(0, 1), [0, 0.5]]  #
                 #
                 self.eq.plot_interp(primatives[:, :], title=f"Values at t={t :.4g}", Xlims=Xlims)
-
+                # self.eq.pretty_plot(primatives, Xlims, title=f"t={t:.4g}")
 
                 # self.eq.plot_interp(self.eq.pressure_div[:, :2], Xlims=Xlims, title=f"Pressure div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.advect_div[:, :2], Xlims=Xlims, title=f"advect div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.kt_div[:, 0], Xlims=Xlims, title=f"KT div  at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.divergence[:, 0], Xlims=Xlims, title=f"div at t={t:.4g}")
                 # self.eq.plot_cells(primatives[:, 0], title=f'Vx at t={t:.4g}', Xlims=Xlims, show_index=True)
-                # self.eq.plot_flux(self.eq.pressure_flux[:, 2], title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
+                # self.eq.plot_flux(torch.ones_like(E_props.rho_faces[:, 0, 0]), title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
 
 
                 # print()

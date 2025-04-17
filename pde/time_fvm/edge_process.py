@@ -430,6 +430,7 @@ class FarfieldBC:
         self.rho_far = self.exit_cfg.rho_far
 
         self.factor = 1
+        self.c = 300
 
         if self.exit_cfg.mode == "decay":
             self.tau = 1 / self.exit_cfg.decay_tau
@@ -456,7 +457,7 @@ class FarfieldBC:
         vx_interior = Us_bc_cells[:, 0]
         tau = dt * self.tau
 
-        rho_bc = self.factor * self.rho_far * torch.exp(vx_interior - self.v_far)
+        rho_bc = self.factor * self.rho_far * torch.exp((vx_interior - self.v_far)/self.c)
 
         d_factor = (self.rho_far - rho_bc) + self.decay_beta * (1 - self.factor)
         self.factor = self.factor + tau * d_factor
@@ -529,8 +530,8 @@ class SlopeLimiter:
 
     def p4(self, delta, dU):
         """ 4th order limiter """
-        a = delta
-        b = dU
+        a = delta.abs()
+        b = dU.abs()
         a_eps = a ** 4 + self.eps_p
         S = 2 * b * (a ** 2 - 2 * b * (a - 2 * b))
         phi = (a_eps + a * S) / (a_eps + b * (delta ** 3 + S))
@@ -548,8 +549,6 @@ class SlopeLimiter:
         phi = torch.min(phi, dim=1, keepdim=True).values  # shape = [n_cells, neigh=1, n_comp]
 
         return phi
-
-
 
 
 class FVMEdgeInfo:
@@ -661,6 +660,7 @@ class FVMEdgeInfo:
         c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
         self.cell_grads = None
+
 
     def clear_temp(self):
         # del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
@@ -797,23 +797,14 @@ class FVMEdgeInfo:
         grads = cell_grads.unsqueeze(1)     # shape = [n_cells, 1, dims=2, n_comp]
         dU = (grads * self.cent_to_edge_disp).sum(dim=2)  # shape = [n_cells, neigh=3, n_comp]
 
-        # print()
-        # print(f'{Us[4508, 0] = }')
-        # print(f'{Us_neigh[4508, :, 0] = }')
-        # print(f'{dU[4508, :, 0] = }')
-
         # Select limiting neighbor values and compute gradient limiter
         U_cent_neigh = torch.cat([U_cent, Us_neigh], dim=1)             # shape = [n_cells, 4, n_comp]
-
-        U_upper = torch.max(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent      # shape = [n_cells, neigh=3, n_comp]
+        U_upper = torch.max(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent      # shape = [n_cells, 1, n_comp]
         U_lower = torch.min(U_cent_neigh,dim=1, keepdim=True)[0] - U_cent
 
-        numerator = torch.where(dU > 0, U_upper, U_lower)
-        # print(f'{numerator[4508, :, 0] = }')
+        numerator = torch.where(dU > 0, U_upper, U_lower) # shape = [n_cells, neigh=3, n_comp]
         phi_lim = self.slope_limiter.limit(numerator, dU)           # shape = [n_cells, neigh=3, n_comp]
         Us_face = U_cent + phi_lim * dU      # shape = [n_cells, neigh=3, n_comp]
-
-        # print(f'{Us_face[4508, :, 0] = }')
 
         return Us_face, phi_lim
 
@@ -1062,15 +1053,17 @@ class BoundarySetter:
 
         self.n_comp = E_props.n_comp
         self.n_edges_bc = E_props.n_edges_bc
+        tri_to_edge = E_props.tri_to_edge.view(-1, 3)
 
-        # Mapping from triangle to bool if edge is boundary
-        tri_to_bc_edge = E_props.bc_edge_mask[E_props.tri_to_edge.view(-1, 3)]
+        # Non orthogonal correction is only done for cells with 1 edge.
+        tri_to_bc_edge = E_props.bc_edge_mask[tri_to_edge]
 
         # Flatten out all Neumann BCs and index according to order where_neum_all[0]
         neum_mask_all = torch.zeros_like(E_props.bc_edge_mask)
         neum_mask_all = neum_mask_all.unsqueeze(-1).repeat(1, 4)
         neum_mask_all[E_props.bc_edge_mask] = E_props.neumann_mask
         where_neum_all = torch.where(neum_mask_all)
+        where_neum = {'edge': where_neum_all[0], 'comp': where_neum_all[1]}  # shape = [n_neum_edges, 2]
         # Mapping from boundary id to boundary edge id
         self.where_neum = torch.where(E_props.neumann_mask)
 
@@ -1079,17 +1072,20 @@ class BoundarySetter:
         bc_edge_to_tri[E_props.bc_edge_mask] = E_props.edge_to_tri_bc
 
         # Cells corresponding to Neumann BC
-        neum_cells = bc_edge_to_tri[where_neum_all[0]]  # shape = [n_neum_edges], which cells have neuman BCs
-        self.neum_cells = neum_cells        # shape = [n_neum_edges]
+        self.neum_cells = bc_edge_to_tri[where_neum_all[0]]  # shape = [n_neum_edges], which cells have neuman BCs
+        where_neum['cells'] = self.neum_cells
+        # Edge within cell corresponding to Neumann BC
+        tri_edge_num = (where_neum['edge'].unsqueeze(-1).repeat(1, 3) == tri_to_edge[where_neum['cells']])
+        tri_edge_id = torch.where(tri_edge_num)[1]
+        where_neum['tri_edge_id'] = tri_edge_id
 
         # Which component of gradient is needed for Neumann BC
-        self.grad_comps = where_neum_all[1].unsqueeze(1).repeat(1, 2).unsqueeze(2)     # shape = [n_neum_edges, 2, 1]
+        self.grad_comps = where_neum['comp'].unsqueeze(1).repeat(1, 2).unsqueeze(2)     # shape = [n_neum_edges, 2, 1]
         # Normal vector of edges
-        n_hats = E_props.normals_hat[where_neum_all[0]]  # shape = [n_neum_edges, 2]
+        n_hats = E_props.normals_hat[where_neum['edge']]  # shape = [n_neum_edges, 2]
         # Displacement from centroid to edge
-        cent_to_edge = E_props.cent_to_edge_disp[neum_cells].squeeze()  # shape = [n_neum_edge, 3, 2]
-        bc_edges = tri_to_bc_edge[neum_cells]  # shape = [n_neum_edge, 3]    Which cell edge is the boundary edge (Only 1)
-        r = cent_to_edge[bc_edges]  # shape = [n_neum_edge, 2]
+        cent_to_edge = E_props.cent_to_edge_disp[where_neum['cells']].squeeze()  # shape = [n_neum_edge, 3, 2]
+        r = cent_to_edge[torch.arange(cent_to_edge.shape[0]), where_neum['tri_edge_id']]  # shape = [n_neum_edge, 2]
         # Normal component of r
         d = n_hats * (r * n_hats).sum(dim=1, keepdim=True)  # shape = [n_neum_edge, 2]
         # Parallel component of r

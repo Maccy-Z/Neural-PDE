@@ -246,18 +246,20 @@ class Nozzle(MeshFacet):
         mesh_X = np.column_stack((mesh_x, mesh_y))
 
 
-
         # mesh_X = np.concatenate([mesh_X, np.array([[0., Re/4]])], axis=0)
         # Add on boundary points
         min_x, max_x = mesh_X[:, 0].min(), mesh_X[:, 0].max()
         max_y = mesh_X[:, 1].max()
-        back = np.array([[min_x, max_y + lip_size]])
+        start_y = mesh_X[0, 1]
+        back = np.array([[min_x-lip_size, max_y + lip_size]])
         front = np.array([[max_x, max_y + lip_size]])
-        mesh_X = np.concatenate([mesh_X, front, back], axis=0)
+        inlet = np.array([[min_x-lip_size, start_y]])
+        mesh_X = np.concatenate([mesh_X, front, back, inlet], axis=0)
 
         # Segment indices
         n_points_up = len(mesh_X)
-        segments = np.column_stack((np.arange(n_points_up), (np.arange(n_points_up) + 1) % n_points_up))[:-2]
+        segments = np.column_stack((np.arange(n_points_up), (np.arange(n_points_up) + 1) % n_points_up))[:]
+        segments = np.delete(segments, [-2, -3], axis=0)
 
         # Lower part of the nozzle
         mesh_X_low = np.column_stack((mesh_X[:, 0], -mesh_X[:, 1] - Rt))
@@ -277,16 +279,25 @@ class Nozzle(MeshFacet):
 
         # self.points = mesh_X
         # self.segments = segments
-        # print(self.points)
         # print(f'{self.segments = }')
         # print(f'{self.points.shape = }')
 
 
-
-if __name__ == "__main__":
+def main():
     from matplotlib import pyplot as plt
-    nozzle = Nozzle([0, 0], Rt=0.25, Re=1, theta_n_deg=30, theta_exit_deg=15, lip_size=0.3)
-    _points = nozzle.points
-    plt.scatter(*_points.T)
+    nozzle = Nozzle([0, 0], Rt=0.25, Re=1, theta_n_deg=30, theta_exit_deg=15, lip_size=0.5)
+    points = nozzle.points
+
+    print(nozzle.segments)
+
+    for start_idx, end_idx in nozzle.segments:
+        x_vals = [points[start_idx][0], points[end_idx][0]]
+        y_vals = [points[start_idx][1], points[end_idx][1]]
+        plt.plot(x_vals, y_vals, 'b-')  # 'b-' means blue line
+
+    plt.scatter(*points.T)
     plt.show()
 
+
+if __name__ == "__main__":
+    main()

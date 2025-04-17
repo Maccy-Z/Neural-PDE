@@ -69,6 +69,8 @@ def extract_mesh_data(mesh):
     points, triangles, bound_edges = np.array(points), np.array(triangles), np.array(bound_edges)
     p_markers, f_markers = np.array(p_markers), np.array(f_markers)
 
+    assert len(triangles) != 0, "No triangles found in the mesh."
+
     int_edges = extract_interor_edges(triangles)
     return (points, triangles), (p_markers, f_markers), (int_edges, bound_edges)
 
