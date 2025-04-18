@@ -467,6 +467,19 @@ class FarfieldBC:
 
 
     def __farfield(self, U_face, Us_bc_cells, dt):
+        # V = Us_bc_cells[:, :2]                                          # shape = [n_ff_edge, 2]
+        # V_n = (V * self.farfield_normals).sum(dim=1, keepdim=True)      # shape = [n_ff_edge, 1]
+
+        # rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
+        # T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
+        # P_int = self.R * rho_int * T_int
+        #
+        # rho_bc = rho_int * (self.P_far / P_int) ** (1 / self.cfg.gamma)
+        # T_bc = self.P_far / (rho_bc * self.cfg.R)
+
+        # U_face[self.farfield_mask, 2] = rho_bc
+        # U_face[self.farfield_mask, 3] = T_bc
+
         vx_interior = Us_bc_cells[:, 0]
         rho_bc = self.rho_far * torch.exp(vx_interior - self.v_far)
         U_face[self.farfield_mask] = rho_bc
