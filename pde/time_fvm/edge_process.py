@@ -484,7 +484,7 @@ class FarfieldBC:
                 R- = u - 2a/(gamma - 1) = R-_far
                 a = (gamma-1)/2 * (u - u_far) + a_far
         """
-        V = Us_bc_cells[:, :2]                                          # shape = [n_ff_edge, 2]
+        V = Us_bc_cells[:, [0, 1]]                                          # shape = [n_ff_edge, 2]
         rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
         T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
 
@@ -500,7 +500,7 @@ class FarfieldBC:
         T_bc = a_b **2  / (self.gamma * self.cfg.R)
 
         U_face[self.farfield_mask, 2] = rho_bc
-        U_face[self.farfield_mask, 3] = T_bc
+        #U_face[self.farfield_mask, 3] = T_bc
 
         # vx_interior = Us_bc_cells[:, 0]
         # rho_bc = self.rho_far * torch.exp(vx_interior - self.v_far)
@@ -749,7 +749,7 @@ class FVMEdgeInfo:
             self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge, ff_edge_normals)
 
 
-    #@torch.compile()
+    @torch.compile()
     def precompute_shared(self, Us, dt):
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """

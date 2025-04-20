@@ -10,53 +10,7 @@ from pde.time_fvm.edge_process import FVMEdgeInfo
 from pde.time_fvm.t_solvers import FVMCells
 from pde.time_fvm.integrators import Magazenkov, LeapfrogAss, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Adams4PC, Butcher, Butcher_adapt, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4, Leapfrog2
 from pde.time_fvm.config_fvm import ConfigFVM
-from pde.time_fvm.sparse_utils import create_selection_matrix
-
-def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
-    """
-    Instead of fluxes[:, idxs] = A, use fluxes = S @ A.flatten()
-
-    Create a sparse matrix S that maps a flattened tensor with shape
-      (num_blocks * len(selected_indices))
-    to a flattened tensor with shape
-      (num_blocks * full_block_size)
-    by scattering the values into positions determined by selected_indices for each block.
-
-    For each block i and for each local index j (with v = selected_indices[j]),
-    set:
-        S[i * full_block_size + v,  i * len(selected_indices) + j] = 1.
-
-    Args:
-        num_blocks (int): Number of blocks (e.g. n_edges).
-        full_block_size (int): Size of the full block (e.g. n_component).
-        selected_indices (list or iterable): Indices within each block where values should be inserted.
-        device (torch.device, optional): Device for the resulting tensor.
-        dtype (torch.dtype, optional): Data type for the values.
-
-    Returns:
-        torch.Tensor: A sparse matrix of shape (num_blocks * full_block_size, num_blocks * len(selected_indices)).
-    """
-    num_selected = len(selected_indices)
-    total_rows = num_blocks * full_block_size
-    total_cols = num_blocks * num_selected
-
-    row_indices = []
-    col_indices = []
-    values = []
-
-    for block in range(num_blocks):
-        for j, v in enumerate(selected_indices):
-            row = block * full_block_size + v
-            col = block * num_selected + j
-            row_indices.append(row)
-            col_indices.append(col)
-            values.append(1.0)
-
-    indices = torch.tensor([row_indices, col_indices], dtype=torch.long, device=device)
-    values = torch.tensor(values, dtype=dtype, device=device)
-    S = torch.sparse_coo_tensor(indices, values, (total_rows, total_cols))
-    return S
-
+from pde.time_fvm.sparse_utils import create_selection_matrix, create_insertion_matrix
 
 class PhysicalSetup:
     """ Set physical properties of fluid. """
@@ -110,7 +64,7 @@ class PhysicalSetup:
         rho_faces = E_props.rho_faces  # shape = [n_edges, edges=2, n_comp=1]
         T_faces = E_props.T_faces       # shape = [n_edges, edges=2, n_comp=1]
 
-        self.P_face = self.R * rho_faces * T_faces #/ self.M
+        self.P_face = self.R * rho_faces * T_faces
         self.c = torch.sqrt(self.gamma * self.P_face / rho_faces)  # shape = [n_edges, edges=2, n_comp=1]
 
         # assert not torch.any(torch.isnan(self.c))
@@ -122,7 +76,6 @@ class PhysicalSetup:
         self._tau()
         self._pressure()
 
-        """ Pressure """
 
 
 class FVMEdgeFunc(ABC):
