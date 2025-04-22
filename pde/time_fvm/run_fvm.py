@@ -51,7 +51,7 @@ def mesh_graph(cfg: ConfigFVM, new):
             T = 278 #if (y0+y1)/2 > 0.7 else 250
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [0.1, 0, None, T], [None, None, 0, None]) #(E.INLET, 0)
         elif e_tag == "Right":
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Farfield, E.Neuman], [None, None, None, None], [0, 0, None, 0]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
+            bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Neuman], [None, None, None, None], [0, 0, None, 0]) #Edge([E.Neuman, E.Neuman, E.Dirich], [None, None, 1], [0, 0, None])  #(E.EXIT, 0)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 

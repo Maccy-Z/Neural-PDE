@@ -29,9 +29,9 @@ class ConfigFVM:
     lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 0e-5
-    visc_bulk: float = 2e-5
-    thermal_cond: float = 1e-6
+    viscosity: float = 0e-4
+    visc_bulk: float = 5e-3
+    thermal_cond: float = 0e-6
 
     gamma: float = 1.4  # Ratio of specific heats
     C_v: float = 0.01     # Specific heat at constant volume

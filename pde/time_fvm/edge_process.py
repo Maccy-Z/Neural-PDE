@@ -7,422 +7,12 @@ from pde.graph_grid.fvm_store import Edge
 from pde.time_fvm.config_fvm import ConfigFVM
 from pde.time_fvm.sparse_utils import create_insertion_matrix, lift_sparse_matrix, combine_edge_operators
 
-# def create_insertion_matrix(num_blocks, full_block_size, selected_indices, device=None, dtype=torch.float32):
-#     """
-#     Instead of fluxes[:, idxs] = A, use fluxes = S @ A.flatten()
-#
-#     Create a sparse matrix S that maps a flattened tensor with shape
-#       (num_blocks * len(selected_indices))
-#     to a flattened tensor with shape
-#       (num_blocks * full_block_size)
-#     by scattering the values into positions determined by selected_indices for each block.
-#
-#     For each block i and for each local index j (with v = selected_indices[j]),
-#     set:
-#         S[i * full_block_size + v,  i * len(selected_indices) + j] = 1.
-#
-#     Args:
-#         num_blocks (int): Number of blocks (e.g. n_edges).
-#         full_block_size (int): Size of the full block (e.g. n_component).
-#         selected_indices (list or iterable): Indices within each block where values should be inserted.
-#         device (torch.device, optional): Device for the resulting tensor.
-#         dtype (torch.dtype, optional): Data type for the values.
-#
-#     Returns:
-#         torch.Tensor: A sparse matrix of shape (num_blocks * full_block_size, num_blocks * len(selected_indices)).
-#     """
-#     num_selected = len(selected_indices)
-#     total_rows = num_blocks * full_block_size
-#     total_cols = num_blocks * num_selected
-#
-#     row_indices = []
-#     col_indices = []
-#     values = []
-#
-#     for block in range(num_blocks):
-#         for j, v in enumerate(selected_indices):
-#             row = block * full_block_size + v
-#             col = block * num_selected + j
-#             row_indices.append(row)
-#             col_indices.append(col)
-#             values.append(1.0)
-#
-#     indices = torch.tensor([row_indices, col_indices], dtype=torch.long, device=device)
-#     values = torch.tensor(values, dtype=dtype, device=device)
-#     S = torch.sparse_coo_tensor(indices, values, (total_rows, total_cols))
-#     return S
-#
-#
-# def invert_selection_matrix(num_blocks, block_size, selected_indices, device=None, dtype=torch.float32):
-#     """
-#     Create a matrix that "inverts" the selection performed by create_selection_matrix().
-#
-#     Given a flattened vector of shape (num_blocks * len(selected_indices)),
-#     this function creates a sparse matrix that maps it to a flattened vector of shape
-#     (num_blocks * block_size) by inserting each block’s values into the positions given by selected_indices.
-#
-#     In other words, if S = create_selection_matrix(num_blocks, block_size, selected_indices) extracts
-#     the values, then this function returns a matrix S_inv such that:
-#
-#             x_extended = torch.zeros(num_blocks, block_size)
-#             x_extended[:, selected_indices] = x
-#         OR:
-#             S_inv @ (S @ x) = x_extended
-#
-#     where x_extended is the larger vector with the selected entries inserted into positions specified by selected_indices.
-#
-#     Args:
-#         num_blocks (int): Number of blocks.
-#         block_size (int): Size of the full block.
-#         selected_indices (list or iterable): Indices within each block that were selected.
-#         device (torch.device, optional): Device to create the matrix on.
-#         dtype (torch.dtype, optional): Data type for the matrix.
-#
-#     Returns:
-#         torch.Tensor: A sparse matrix of shape
-#           (num_blocks * block_size, num_blocks * len(selected_indices))
-#     """
-#     selected_indices = list(selected_indices)
-#     num_selected = len(selected_indices)
-#     total_rows = num_blocks * block_size
-#     total_cols = num_blocks * num_selected
-#
-#     row_indices = []
-#     col_indices = []
-#     values = []
-#
-#     for block in range(num_blocks):
-#         for j, idx in enumerate(selected_indices):
-#             row = block * block_size + idx
-#             col = block * num_selected + j
-#             row_indices.append(row)
-#             col_indices.append(col)
-#             values.append(1.0)
-#
-#     indices = torch.tensor([row_indices, col_indices], dtype=torch.long, device=device)
-#     values = torch.tensor(values, dtype=dtype, device=device)
-#     S_inv = torch.sparse_coo_tensor(indices, values, (total_rows, total_cols)).to_dense()
-#     return S_inv
-#
-#
-# # def create_selection_matrix(num_blocks, block_size, selected_indices, device=None, dtype=torch.float32):
-# #     """
-# #     Create a selection matrix that extracts specified indices from each block of a flattened tensor.
-# #
-# #     Given a flattened tensor composed of num_blocks blocks (each of length block_size),
-# #     this function builds a selection matrix E such that:
-# #
-# #         E @ x == x.view(num_blocks, block_size)[:, selected_indices]
-# #
-# #     The resulting matrix E has shape (num_blocks * len(selected_indices), num_blocks * block_size).
-# #
-# #     Args:
-# #         num_blocks (int): The number of blocks in the flattened tensor.
-# #         block_size (int): The size of each block.
-# #         selected_indices (list or 1D tensor): Indices to select from each block.
-# #             Each value must satisfy 0 <= index < block_size.
-# #         device (torch.device, optional): The device on which to create the tensor.
-# #         dtype (torch.dtype, optional): The data type of the resulting tensor.
-# #
-# #     Returns:
-# #         torch.Tensor: The selection matrix of shape (num_blocks * len(selected_indices), num_blocks * block_size).
-# #     """
-# #     selected_indices = list(selected_indices)  # ensure it's a list
-# #     num_selected = len(selected_indices)
-# #     total_rows = num_blocks * num_selected
-# #     total_cols = num_blocks * block_size
-# #     E = torch.zeros(total_rows, total_cols, device=device, dtype=dtype)
-# #
-# #     for block in range(num_blocks):
-# #         for j, sel in enumerate(selected_indices):
-# #             row = block * num_selected + j
-# #             col = block * block_size + sel
-# #             E[row, col] = 1.0
-# #     return E
-# def create_selection_matrix(n_blocks, block_size, selected_dims, weights=None):
-#     """
-#     Constructs a sparse selection matrix A that selects (and optionally weights) entries
-#     from a block-structured vector.
-#
-#     The resulting matrix A has shape (n_blocks * len(selected_dims), n_blocks * block_size)
-#     so that for each block i and for each selected dimension index r:
-#
-#         A[i * len(selected_dims) + r, i * block_size + selected_dims[r]] = weight
-#           (or 1 if weights is None)
-#
-#     This can be used, for example, to represent an operation like:
-#
-#         visc.flatten() = A * E_props.grad_faces_n.flatten()
-#
-#     where each block corresponds to an edge and selected_dims are the columns (dimensions)
-#     chosen from each block.
-#
-#     Args:
-#         n_blocks (int): Number of blocks (e.g., m, the number of edges).
-#         block_size (int): The size of each block (e.g., p, the total number of components).
-#         selected_dims (list or 1D tensor): The indices to select from each block.
-#         weights (Tensor, optional): A tensor of shape (n_blocks, len(selected_dims)) containing
-#                                     weights for each selected entry. If provided, these values are
-#                                     used as the nonzero entries in A. Defaults to None (all ones).
-#
-#     Returns:
-#         torch.sparse.FloatTensor: The sparse selection matrix A.
-#     """
-#     k = len(selected_dims)
-#     rows = []
-#     cols = []
-#     vals = []
-#
-#     # Loop over each block and each selected index.
-#     for i in range(n_blocks):
-#         for r, d in enumerate(selected_dims):
-#             rows.append(i * k + r)
-#             cols.append(i * block_size + int(d))
-#             if weights is not None:
-#                 vals.append(weights[i, r].item())
-#             else:
-#                 vals.append(1.0)
-#
-#     indices = torch.tensor([rows, cols], dtype=torch.long)
-#     values = torch.tensor(vals, dtype=torch.float32)
-#
-#     # Construct the sparse matrix of shape (n_blocks * k, n_blocks * block_size)
-#     A = torch.sparse_coo_tensor(indices, values, size=(n_blocks * k, n_blocks * block_size))
-#     return A
-#
-#
-# def create_block_diagonal(normals):
-#     """
-#     Create a block diagonal matrix D that has, for each block i,
-#     a block of shape (2, 1) equal to normals[i, :].
-#
-#     Args:
-#         normals (torch.Tensor): Tensor of shape (n_edges, 2).
-#
-#     Returns:
-#         torch.Tensor: A block diagonal matrix of shape (n_edges*2, n_edges).
-#     """
-#     n_edges = normals.shape[0]
-#     D = torch.zeros(n_edges * 2, n_edges, dtype=normals.dtype, device=normals.device)
-#     for i in range(n_edges):
-#         # Place normals[i, :] as a column in the i-th block.
-#         D[2 * i:2 * i + 2, i] = normals[i, :]
-#     return D
-#
-#
-# def combine_edge_operators(A_main, A_bc, b_bc, bc_edge_mask, n_edges, n_cells, n_comp, device):
-#     """
-#     Combines a main-edge operator and a boundary-edge operator into a single global operator.
-#
-#     Parameters:
-#       A_main      : sparse COO tensor of shape (n_edges_m*n_comp, n_cells*n_comp)
-#                     -- the main-edge operator (with local row ordering).
-#       A_bc        : sparse COO tensor of shape (n_edges_bc*n_comp, n_cells*n_comp)
-#                     -- the boundary-edge operator (with local row ordering).
-#       b_bc        : tensor of shape (n_edges_bc*n_comp,)
-#                     -- the offset vector for boundary edges.
-#       bc_edge_mask: Boolean tensor of shape (n_edges,)
-#                     -- True if the global edge is a boundary edge.
-#       n_edges     : int, total number of global edges.
-#       n_cells     : int, number of cells.
-#       n_comp      : int, number of components.
-#       device      : torch.device
-#
-#     Returns:
-#       A_all       : sparse COO tensor of shape (n_edges*n_comp, n_cells*n_comp)
-#                     -- the combined operator.
-#       b_all       : tensor of shape (n_edges*n_comp,)
-#                     -- the combined offset vector.
-#     """
-#
-#     """# Get the COO indices and values for the two operators.
-#     # (They must be in COO format.)
-#     A_main_indices = A_main._indices()  # shape (2, L_main)
-#     A_main_values = A_main._values()  # shape (L_main,)
-#     A_bc_indices = A_bc._indices()  # shape (2, L_bc)
-#     A_bc_values = A_bc._values()  # shape (L_bc,)
-#
-#     # We will build lists of row indices, column indices, and values for the global operator.
-#     global_rows = []
-#     global_cols = []
-#     global_vals = []
-#     b_all_list = []  # offset for each global row
-#
-#     # Counters for the local row index in A_main and A_bc.
-#     # They indicate which main (or bc) edge (block) we are currently processing.
-#     main_counter = 0
-#     bc_counter = 0
-#
-#     # Loop over all global edges.
-#     for i in range(n_edges):
-#         # For each edge, process all components.
-#         for c in range(n_comp):
-#             # Compute the flattened (global) row index for edge i and component c.
-#             global_row = i * n_comp + c
-#
-#             if not bc_edge_mask[i]:
-#                 # --- Main edge ---
-#                 # The corresponding local row in A_main is:
-#                 local_row = main_counter * n_comp + c
-#                 # Find the entries in A_main corresponding to this local row.
-#                 mask = (A_main_indices[0, :] == local_row)
-#                 # (These entries come with column indices and values.)
-#                 cols = A_main_indices[1, :][mask]
-#                 vals = A_main_values[mask]
-#                 # Append these entries, but with the global row instead of the local row.
-#                 for col, val in zip(cols.tolist(), vals.tolist()):
-#                     global_rows.append(global_row)
-#                     global_cols.append(col)
-#                     global_vals.append(val)
-#                 # For a main edge, no offset is added.
-#                 b_all_list.append(0.0)
-#             else:
-#                 # --- Boundary edge ---
-#                 local_row = bc_counter * n_comp + c
-#                 mask = (A_bc_indices[0, :] == local_row)
-#                 cols = A_bc_indices[1, :][mask]
-#                 vals = A_bc_values[mask]
-#                 for col, val in zip(cols.tolist(), vals.tolist()):
-#                     global_rows.append(global_row)
-#                     global_cols.append(col)
-#                     global_vals.append(val)
-#                 # The offset for boundary edges comes from b_bc.
-#                 # (Assume b_bc is a 1D tensor of length n_edges_bc*n_comp.)
-#                 b_all_list.append(b_bc[local_row].item())
-#         # Update the local counters.
-#         if not bc_edge_mask[i]:
-#             main_counter += 1
-#         else:
-#             bc_counter += 1
-#
-#
-#     # Convert the lists into tensors.
-#     indices = torch.tensor([global_rows, global_cols], dtype=torch.long, device=device)
-#     values = torch.tensor(global_vals, dtype=A_main_values.dtype, device=device)
-#
-#     # The global operator acts on flattened cell fields of length n_cells*n_comp and produces
-#     # an output of length n_edges*n_comp.
-#     size_all = (n_edges * n_comp, n_cells * n_comp)
-#     A_all = torch.sparse_coo_tensor(indices, values, size=size_all).coalesce()
-#     b_all = torch.tensor(b_all_list, dtype=A_main_values.dtype, device=device)"""
-#
-#     # Assume the following inputs are given:
-#     # A_main: sparse COO tensor of shape (n_edges_m*n_comp, n_cells*n_comp)
-#     # A_bc: sparse COO tensor of shape (n_edges_bc*n_comp, n_cells*n_comp)
-#     # b_bc: tensor of shape (n_edges_bc*n_comp,)
-#     # bc_edge_mask: Boolean tensor of shape (n_edges,), where True indicates a boundary edge.
-#     # n_edges, n_cells, n_comp, device are given.
-#
-#     # First, compute the mapping for global main and boundary edges.
-#     # The ordering of the local operators corresponds to the order of the global edges.
-#     main_edge_global_indices = torch.where(~bc_edge_mask)[0]  # shape: (n_main_edges,)
-#     bc_edge_global_indices = torch.where(bc_edge_mask)[0]  # shape: (n_bc_edges,)
-#
-#     A_main_indices = A_main._indices()  # shape: (2, L_main)
-#     A_main_values = A_main._values()  # shape: (L_main,)
-#     A_bc_indices = A_bc._indices()  # shape: (2, L_bc)
-#     A_bc_values = A_bc._values()  # shape: (L_bc,)
-#
-#     # --- Process A_main ---
-#     # For each local row in A_main, determine its main edge index and component:
-#     local_rows_main = A_main_indices[0, :]  # local row indices in A_main (range: 0 to n_edges_m*n_comp - 1)
-#     j_main = local_rows_main // n_comp  # index into main_edge_global_indices
-#     c_main = local_rows_main % n_comp  # component index
-#
-#     # Map to global row index: for main edges the global row is (global_edge_index * n_comp + component)
-#     global_rows_main = main_edge_global_indices[j_main] * n_comp + c_main
-#     global_cols_main = A_main_indices[1, :]
-#
-#
-#     # --- Process A_bc ---
-#     local_rows_bc = A_bc_indices[0, :]  # local row indices in A_bc (range: 0 to n_edges_bc*n_comp - 1)
-#     j_bc = local_rows_bc // n_comp  # index into bc_edge_global_indices
-#     c_bc = local_rows_bc % n_comp  # component index
-#
-#     global_rows_bc = bc_edge_global_indices[j_bc] * n_comp + c_bc
-#     global_cols_bc = A_bc_indices[1, :]
-#
-#     # --- Combine the main and boundary contributions ---
-#     global_rows = torch.cat([global_rows_main, global_rows_bc], dim=0)
-#     global_cols = torch.cat([global_cols_main, global_cols_bc], dim=0)
-#     global_vals = torch.cat([A_main_values, A_bc_values], dim=0)
-#     global_indices = torch.stack([global_rows, global_cols], dim=0)
-#
-#     # Build the global sparse operator of shape (n_edges*n_comp, n_cells*n_comp).
-#     A_all = torch.sparse_coo_tensor(global_indices, global_vals,
-#                                     size=(n_edges * n_comp, n_cells * n_comp),
-#                                     device=device, dtype=A_main.dtype).coalesce()
-#
-#     # --- Build the global offset vector b_all ---
-#     b_all = torch.zeros(n_edges * n_comp, device=device, dtype=b_bc.dtype)
-#     # For the boundary rows, compute the global row indices similarly.
-#     # Create a vector for the local rows in the boundary operator.
-#     r_bc = torch.arange(b_bc.numel(), device=device)
-#     j_bc_for_b = r_bc // n_comp  # which boundary edge block each entry belongs to
-#     c_bc_for_b = r_bc % n_comp  # component within the block
-#
-#     global_b_rows = bc_edge_global_indices[j_bc_for_b] * n_comp + c_bc_for_b
-#     b_all[global_b_rows] = b_bc
-#
-#
-#     return A_all.to_sparse_csr(), b_all
-#
-#
-# def lift_sparse_matrix(A_old, n_comp):
-#     """
-#     Lift a sparse matrix so that it acts on a flattened multi-component vector.
-#         U_out = torch.sparse.mm(A_old, U)   # U_out has shape (M, n_comp)
-#         U_out = torch.sparse.mm(A_new, U.flatten()).reshape(M, n_comp)
-#     A_old : torch.sparse.Tensor
-#         A sparse matrix in COO format of shape (M, N).
-#     n_comp : int
-#         The number of components (i.e. the second dimension of U).
-#     A_new : torch.sparse.Tensor
-#         The "lifted" sparse matrix of shape (M*n_comp, N*n_comp) that operates on a flattened U.
-#     """
-#     # Get the original indices and values.
-#     # indices_old is a tensor of shape (2, nnz), where nnz is the number of nonzero entries.
-#     A_old = A_old.coalesce()
-#
-#     indices_old = A_old.indices()  # shape: (2, nnz)
-#     values_old = A_old.values()  # shape: (nnz,)
-#     M, N = A_old.size()
-#     nnz = values_old.size(0)
-#     device = A_old.device
-#
-#     # Create a vector for the component indices: 0, 1, ..., n_comp - 1.
-#     comp = torch.arange(n_comp, device=device)  # shape: (n_comp,)
-#
-#     # For each nonzero entry in A_old, we replicate the index for each component.
-#     # The new row index for an entry originally at row i becomes:
-#     #    i_new = i * n_comp + c   for c in 0,..., n_comp-1.
-#     new_rows = indices_old[0].unsqueeze(1) * n_comp + comp.unsqueeze(0)  # shape: (nnz, n_comp)
-#     new_cols = indices_old[1].unsqueeze(1) * n_comp + comp.unsqueeze(0)  # shape: (nnz, n_comp)
-#     new_vals = values_old.unsqueeze(1).expand(nnz, n_comp)  # shape: (nnz, n_comp)
-#
-#     # Flatten these arrays to create the COO indices for A_new.
-#     new_rows = new_rows.reshape(-1)  # shape: (nnz * n_comp,)
-#     new_cols = new_cols.reshape(-1)
-#     new_vals = new_vals.reshape(-1)
-#
-#     new_indices = torch.stack([new_rows, new_cols], dim=0)  # shape: (2, nnz * n_comp)
-#     new_size = (M * n_comp, N * n_comp)
-#
-#     # # For now, we don't need rho entries.
-#     # rho_mask = (new_indices[0] % 3 == 2)
-#     # new_indices = new_indices[:, ~rho_mask]
-#     # new_vals = new_vals[~rho_mask]
-#
-#     A_new = torch.sparse_coo_tensor(new_indices, new_vals, size=new_size, device=device).coalesce()
-#
-#     return A_new
-
 
 class FarfieldBC:
     set_bc_U_face: callable
 
     def __init__(self, cfg: ConfigFVM, farfield_mask, farfield_normals):
-        # TODO: Don't assume boundary is in +X direction, use phi for general boundary.
+        # TODO: Noormal direction
 
         self.cfg = cfg
         self.exit_cfg = cfg.exit_cfg
@@ -481,30 +71,66 @@ class FarfieldBC:
     def __farfield(self, U_face, Us_bc_cells, dt):
         """ Compressible farfield:
                 R+ = u + 2a/(gamma - 1)
-                R- = u - 2a/(gamma - 1) = R-_far
-                a = (gamma-1)/2 * (u - u_far) + a_far
+                R- = u - 2a/(gamma - 1)
+                S = P / rho^gamma
+            On exit, we have:
+                R+ = R+_int
+                R- = R-_inf
+                S = S_int
         """
+        gm1 = self.gamma - 1
+
         V = Us_bc_cells[:, [0, 1]]                                          # shape = [n_ff_edge, 2]
         rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
         T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
 
-        # Tangential velocity
+        # Parallel and tangential velocity
         V_n = -(V * self.farfield_normals).sum(dim=1)      # shape = [n_ff_edge]
-        # a_int = math.sqrt(self.gamma * self.R * T_int)  # shape = [n_ff_edge]
+        V_t = V + V_n.unsqueeze(-1) * self.farfield_normals
+
+        # Incoming farfield:
+        R_m = self.v_far - 2 * self.a_far / gm1    # Rm = v_far - 2 * a_far/(gamma - 1)
+
+        # Outgoing (extrapolate from internal) :
         a_int = torch.sqrt(self.gamma * self.R * T_int)
-        # a_bc
-        a_b = (self.gamma-1)/2 * (V_n - self.v_far) + self.a_far
-        # boundary rho
-        rho_bc = rho_int * (a_b/a_int) ** (2/(self.gamma - 1))
-        # boundary T
-        T_bc = a_b **2  / (self.gamma * self.cfg.R)
+        R_p = V_n + 2 * a_int / gm1       #  R+ = R+_int = V_n + 2 * a_in / (gamma-1)
+        S_p = self.R * T_int * rho_int ** (-gm1)
+
+        # Boundary values: a_bc = (gamma-1)/4 * (R+ - R-)
+        a_bc_2 = (gm1/4 * (R_p - R_m)) ** 2
+        V_n_bc = 1/2 * (R_p + R_m)
+        rho_bc = (a_bc_2 / (self.gamma * S_p)) ** (1 / gm1)
+        T_bc = a_bc_2 / (self.gamma * self.R)
+
+        V_bc = V_t - V_n_bc.unsqueeze(-1) * self.farfield_normals
+
+        U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
+        U_face[self.farfield_mask] = U_face_farfield
+
+    def _farfield_neuman(self, U_face, Us_bc_cells, dt):
+        """Neuman velocity BC """
+        V = Us_bc_cells[:, [0, 1]]                                          # shape = [n_ff_edge, 2]
+        rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
+        T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
+
+        # # a_int = math.sqrt(self.gamma * self.R * T_int)  # shape = [n_ff_edge]
+        a_int_2 = self.gamma * self.R * T_int
+        a_bc_2 = a_int_2
+
+        # Boundary entropy: S- = rho_int^(1-gamma) R T_int
+        S_m = rho_int ** (1 - self.gamma) * self.R * T_int
+        # rho_b = (a^2/gamma * S) ^(1/(gamma-1))
+        rho_bc = (a_bc_2 / (self.gamma * S_m)) ** (1/(self.gamma - 1))
+        # T_bc = a^2 / (gamma * R)
+        T_bc = a_bc_2 / (self.gamma * self.cfg.R)
 
         U_face[self.farfield_mask, 2] = rho_bc
-        #U_face[self.farfield_mask, 3] = T_bc
+        U_face[self.farfield_mask, 3] = T_bc
 
-        # vx_interior = Us_bc_cells[:, 0]
-        # rho_bc = self.rho_far * torch.exp(vx_interior - self.v_far)
-        # U_face[self.farfield_mask, 2] = rho_bc
+    def __farfield_isothermal(self, U_face, Us_bc_cells, dt):
+        vx_interior = Us_bc_cells[:, 0]
+        rho_bc = self.rho_far * torch.exp(vx_interior - self.v_far)
+        U_face[self.farfield_mask, 2] = rho_bc
 
 
     def __interior(self, U_face, Us_bc_cells, dt):
@@ -597,7 +223,9 @@ class FVMEdgeInfo:
     # Shared
     edge_len: torch.Tensor  # shape = (n_edges, 1)
     normals: torch.Tensor  # shape = (n_edges, 2)
-    normals_hat: torch.Tensor  # shape = (n_edges, 2)
+    normals_hat: torch.Tensor  # shape = (n_edges, 2, 1)
+    X_orthog: torch.Tensor      # shape = (n_edges, 2, 1)
+    cell_disps: torch.Tensor        # shape = (n_edges, 2)
     #V_insertion_matrix: torch.Tensor  # shape = (n_edges*n_component, n_edges*2)
     # edge_to_tri_comb: torch.Tensor  # shape = (n_edges, 2)
 
@@ -665,7 +293,7 @@ class FVMEdgeInfo:
         self.cell_disps = cell_disps.to(device)
         self.normals = mesh.normals.to(device)
         normal_hat = self.normals / torch.norm(self.normals, dim=1, keepdim=True)
-        self.normals_hat = normal_hat
+        self.normals_hat = normal_hat.unsqueeze(-1)
         cell_disps = torch.full((self.n_edges, 2), float("nan"), device=device)
         cell_disps[~self.bc_edge_mask] = self.cell_disps
         d_cos_theta = (normal_hat * cell_disps).sum(dim=1)
@@ -673,7 +301,7 @@ class FVMEdgeInfo:
         # Non-orthogonal correction: du/dn = du/dn_face - grad(U) (d/(n_hat dot d) - n_hat)
         X_orthog = cell_disps / d_cos_theta.unsqueeze(-1) - normal_hat
         X_orthog[self.bc_edge_mask] = 0
-        self.X_orthog = X_orthog
+        self.X_orthog = X_orthog.unsqueeze(dim=-1)
         self.edge_len = torch.norm(self.normals, dim=1).to(device).unsqueeze(-1)
 
         self._init_bc(bc_tags)
@@ -699,8 +327,8 @@ class FVMEdgeInfo:
 
 
     def clear_temp(self):
-        # del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
-        # del self.dirich_mask, self.neumann_mask
+        del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
+        del self.dirich_mask, self.neumann_mask
         # del self.dUf_dUc
 
         torch.cuda.empty_cache()
@@ -708,7 +336,6 @@ class FVMEdgeInfo:
 
 
     def _init_bc(self, bc_tags: dict[int, Edge]):
-        #self.n_edges_m = self.n_edges - self.bc_edge_mask.sum().item()
         self.n_edges_bc = self.bc_edge_mask.sum().item()
 
         dirich_mask, neumann_mask = [], []
@@ -745,7 +372,7 @@ class FVMEdgeInfo:
         if self.use_farfield:
             exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask]
             # Normal for farfield edges
-            ff_edge_normals = self.normals_hat[self.bc_edge_mask][self.farfield_mask]
+            ff_edge_normals = self.normals_hat.squeeze()[self.bc_edge_mask][self.farfield_mask]
             self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge, ff_edge_normals)
 
 
@@ -758,14 +385,10 @@ class FVMEdgeInfo:
         cell_grads = self._cell_grads(Us_cell_face) # shape = [n_cells, 2, n_comp]
         grad_faces_n = self._face_grads(Us)        # shape = [n_faces, n_comp]
 
-        self.cell_grads = cell_grads
-
         # Compute limited face values,
         Us_face, phi_lim = self._limit_face_vals(Us, U_face_bc, cell_grads)   # Us_face.shape = [n_cells, 3, n_comp], phi_lim.shape =  [n_cells, 1, n_comp]
         Us_face = Us_face.view(3 * self.n_cells, self.n_comp)
         cell_grads = cell_grads * phi_lim
-
-        self.phi_lim = phi_lim
 
         # Face gradients of velocity and temperature
         grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
@@ -775,7 +398,7 @@ class FVMEdgeInfo:
 
         # Limited cell divergence
         div_V = cell_grads[:, 0, 0] + cell_grads[:, 1, 1]        # shape = [n_cells]
-        div_V_bc = div_V[self.edge_to_tri_bc].unsqueeze(-1)
+        div_V_bc = div_V[self.edge_to_tri_bc].unsqueeze(-1)     # shape = [n_bc_edges, 1]
         div_V = div_V.repeat_interleave(3).unsqueeze(-1)            # shape = [3*n_cells, 1]
 
 
@@ -812,16 +435,15 @@ class FVMEdgeInfo:
         self.phi = (self.Vs_faces * self.normals.unsqueeze(1)).sum(dim=-1) # shape = [n_edges, edges=2, ]
 
         # Non-orthogonal correction for face gradient. Assume lstsq gradient is mean of left and right cell.
-        grad_F_lstsq = U_face_all[:, :, 5:11].view(self.n_edges, 2, 6)   # shape = [n_edges, edges=2, components=6]
-        grad_F_lstsq = grad_F_lstsq.mean(dim=1).view(self.n_edges, 2, 3)   # shape = [n_edges, {x, y}, {vx, vy, T}]
-        dFdn_correct = grad_F_dn - (grad_F_lstsq * self.X_orthog.unsqueeze(-1)).sum(dim=1)      # shape = [n_edges, 3]
+        grad_F_lstsq = U_face_all[:, :, 5:11].view(self.n_edges, 2, 2, 3)   # shape = [n_edges, edges=2, {x, y}, {vx, vy, T}]
+        grad_F_lstsq = grad_F_lstsq.mean(dim=1)   # shape = [n_edges, {x, y}, {vx, vy, T}]
+        dFdn_correct = grad_F_dn - (grad_F_lstsq * self.X_orthog).sum(dim=1)      # shape = [n_edges, 3]
         # Replace normal part of gradient with face gradient
-        grad_F_dot_n = (grad_F_lstsq * self.normals_hat.unsqueeze(-1)).sum(dim=1, keepdim=True)       # shape = [n_edges, 1, 3]
-        grad_F_para = (dFdn_correct.unsqueeze(dim=1) - grad_F_dot_n) * self.normals_hat.unsqueeze(dim=-1)       # shape = [n_edges, 2, 3]
+        grad_F_dot_n = (grad_F_lstsq * self.normals_hat).sum(dim=1, keepdim=True)       # shape = [n_edges, 1, 3]
+        grad_F_para = (dFdn_correct.unsqueeze(dim=1) - grad_F_dot_n) * self.normals_hat       # shape = [n_edges, 2, 3]
         grad_F = grad_F_lstsq + grad_F_para             # shape = [n_edges, 2, 3]
-        self.grad_V = grad_F[:, :, :2]
+        self.grad_V = grad_F[:, :, [0, 1]]
         self.grad_T_n = dFdn_correct[:, 2]      # shape = [n_edges]
-        # self.grad_T_n = grad_faces_n[:, 3]
 
 
     def _limit_face_vals(self, Us, U_face_bc, cell_grads):
@@ -1094,9 +716,6 @@ class BoundarySetter:
         self.n_edges_bc = E_props.n_edges_bc
         tri_to_edge = E_props.tri_to_edge.view(-1, 3)
 
-        # # Non orthogonal correction is only done for cells with 1 edge.
-        # tri_to_bc_edge = E_props.bc_edge_mask[tri_to_edge]
-
         # Flatten out all Neumann BCs and index according to order where_neum_all[0]
         neum_mask_all = torch.zeros_like(E_props.bc_edge_mask)
         neum_mask_all = neum_mask_all.unsqueeze(-1).repeat(1, 4)
@@ -1121,7 +740,7 @@ class BoundarySetter:
         # Which component of gradient is needed for Neumann BC
         self.grad_comps = where_neum['comp'].unsqueeze(1).repeat(1, 2).unsqueeze(2)     # shape = [n_neum_edges, 2, 1]
         # Normal vector of edges
-        n_hats = E_props.normals_hat[where_neum['edge']]  # shape = [n_neum_edges, 2]
+        n_hats = E_props.normals_hat.squeeze()[where_neum['edge']]  # shape = [n_neum_edges, 2]
         # Displacement from centroid to edge
         cent_to_edge = E_props.cent_to_edge_disp[where_neum['cells']].squeeze()  # shape = [n_neum_edge, 3, 2]
         r = cent_to_edge[torch.arange(cent_to_edge.shape[0]), where_neum['tri_edge_id']]  # shape = [n_neum_edge, 2]
@@ -1163,6 +782,7 @@ class BoundarySetter:
 
         dU = (grads * self.l).sum(dim=1)  # shape = [n_neum_edge]
         U_face[self.where_neum[0], self.where_neum[1]] += dU
+
 
     def _build_spm_face_vals(self, E_props):
         """ Compute bc edge values using sparse matrix multiplication. """

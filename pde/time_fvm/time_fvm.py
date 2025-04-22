@@ -10,7 +10,6 @@ from pde.time_fvm.edge_process import FVMEdgeInfo
 from pde.time_fvm.t_solvers import FVMCells
 from pde.time_fvm.integrators import Magazenkov, LeapfrogAss, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Adams4PC, Butcher, Butcher_adapt, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4, Leapfrog2
 from pde.time_fvm.config_fvm import ConfigFVM
-from pde.time_fvm.sparse_utils import create_selection_matrix, create_insertion_matrix
 
 class PhysicalSetup:
     """ Set physical properties of fluid. """
@@ -30,6 +29,9 @@ class PhysicalSetup:
         #self.M = cfg.M
         self.C_v_inv = 1 / cfg.C_v
 
+        # Precompute
+        self.eye = self.mu_b * torch.eye(2, device=self.device).unsqueeze(0)
+
     @torch.compile()
     def state_to_primative(self, state):
         """ Convert """
@@ -42,7 +44,6 @@ class PhysicalSetup:
         return primatives, state
 
 
-    @torch.compile()
     def _tau(self):
         """ Compute stress tensor:
                 tau = mu * (grad(V) + grad(V).T) + mu_b * div(V) * I
@@ -52,9 +53,8 @@ class PhysicalSetup:
         grad_V_t = E_props.grad_V  # shape = [n_edges, dim=2, n_comp=2,]
         div_V_edge = E_props.div_V_faces.mean(dim=1)  # shape = [n_edges]
 
-        identity = torch.eye(2, device=self.device).unsqueeze(0)  # shape = [1, 2, 2]
-        bulk_tau = div_V_edge.view(-1, 1, 1) * identity
-        self.tau = -self.mu * (grad_V_t + grad_V_t.permute(0, 2, 1)) - self.mu_b * bulk_tau  # shape = [n_edges, 2, 2]
+        bulk_tau = div_V_edge.view(-1, 1, 1) * self.eye
+        self.tau = -self.mu * (grad_V_t + grad_V_t.permute(0, 2, 1)) - bulk_tau  # shape = [n_edges, 2, 2]
 
     def _pressure(self):
         """ Pressure force:
@@ -69,9 +69,10 @@ class PhysicalSetup:
 
         # assert not torch.any(torch.isnan(self.c))
 
+    @torch.compile()
     def update(self):
-        E_props = self.E_props
-        E_props.T_faces = E_props.T_faces.clamp(min=10, max=2000)
+        # E_props = self.E_props
+        #E_props.T_faces = E_props.T_faces.clamp(min=10, max=2000)
 
         self._tau()
         self._pressure()

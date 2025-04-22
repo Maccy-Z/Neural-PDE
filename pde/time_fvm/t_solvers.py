@@ -80,8 +80,6 @@ class TSolver(ABC):
 
     def _solve(self):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
-        E_props = self.eq.E_props
-
         plot_t = 0.1
         next_plot_t = plot_t
 
