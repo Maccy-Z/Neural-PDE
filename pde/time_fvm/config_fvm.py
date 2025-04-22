@@ -3,7 +3,7 @@ import torch
 
 @dataclass
 class ConfigFarfield:
-    mode: str = "farfield"    # {decay, farfield, interior} BC
+    mode: str = "adaptive"    # {decay, farfield, interior} BC
 
     # Farfield physical parameters
     v_far: float = 0.1
@@ -11,10 +11,10 @@ class ConfigFarfield:
     T_far: float = 278
 
     # Farfield limit / simulation parameters
-    decay_tau: float = 0.001
+    decay_tau: float = 10
     beta_tau: float = 0.33
 
-    decay_beta: float = 0.002
+    decay_beta: float = 0.1
 
 @dataclass
 class ConfigFVM:
@@ -30,7 +30,7 @@ class ConfigFVM:
 
     # Physical parameters
     viscosity: float = 0e-4
-    visc_bulk: float = 5e-3
+    visc_bulk: float = 1e-3
     thermal_cond: float = 0e-6
 
     gamma: float = 1.4  # Ratio of specific heats

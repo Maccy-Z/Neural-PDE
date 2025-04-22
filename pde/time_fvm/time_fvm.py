@@ -656,7 +656,7 @@ class FVMEquation:
     def pretty_plot(self, primatives, Xlims=None, title=None):
         Vx, Vy, rho, T = primatives[:, 0], primatives[:, 1], primatives[:, 2], primatives[:, 3]
 
-        P = self.phy_setup.R * rho * T / self.phy_setup.M
+        P = self.phy_setup.R * rho * T
         c = torch.sqrt(P / rho)
 
         Mx, My = Vx / c, Vy / c

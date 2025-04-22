@@ -24,20 +24,29 @@ class FarfieldBC:
         self.R = self.cfg.R
         self.gamma = self.cfg.gamma
 
-        self.v_far = self.exit_cfg.v_far
-        self.rho_far = self.exit_cfg.rho_far
-        self.T_far = self.exit_cfg.T_far
-        self.P_far = self.rho_far * self.T_far * self.R
-        self.a_far = math.sqrt(self.gamma * self.R * self.T_far)
-        self.factor = 1
+        v_far = self.exit_cfg.v_far
+        rho_far = self.exit_cfg.rho_far
+        T_far = self.exit_cfg.T_far
+        P_far = rho_far * T_far * self.R
+        a_far = math.sqrt(self.gamma * self.R * T_far)
 
 
         if self.exit_cfg.mode == "decay":
             self.tau = 1 / self.exit_cfg.decay_tau
             self.decay_beta = self.exit_cfg.decay_beta
             self.set_bc_U_face = self.__decay
+            self.factor = 1
+
         elif self.exit_cfg.mode == "farfield":
             self.set_bc_U_face = self.__farfield
+            self.factor = 1
+        elif self.exit_cfg.mode == "adaptive":
+            self.set_bc_U_face = self.__adaptive
+            self.dR_m = 0
+            self.R_m = v_far - 2 * a_far / (self.gamma - 1)
+            self.P_far = P_far
+            self.tau = self.exit_cfg.decay_tau
+            self.decay_beta = self.exit_cfg.decay_beta
         elif self.exit_cfg.mode == "interior":
             self.beta = 1 - 1 / self.exit_cfg.beta_tau
             self.set_bc_U_face = self.__interior
@@ -59,13 +68,68 @@ class FarfieldBC:
         # vx_interior = Us_bc_cells[:, 0]
         tau = dt * self.tau
 
-        rho_bc = self.factor * self.rho_far * torch.exp((vx_interior - self.v_far)/self.c)
+        rho_bc = self.factor * self.rho_far * torch.exp((V_n - self.v_far)/self.c)
 
         d_factor = (self.rho_far - rho_bc) + self.decay_beta * (1 - self.factor)
         self.factor = self.factor + tau * d_factor
 
         # rho_bc = rho_bc.clamp(min=0.3, max=1.4)
         U_face[self.farfield_mask] =  rho_bc
+
+
+    def __adaptive(self, U_face, Us_bc_cells, dt):
+        """ Compressible farfield:
+                R+ = u + 2a/(gamma - 1)
+                R- = u - 2a/(gamma - 1)
+                S = P / rho^gamma
+            On exit, we have:
+                R+ = R+_int
+                R- = R-_inf
+                S = S_int
+
+            Adapt V_far.
+        """
+        gm1 = self.gamma - 1
+
+        V = Us_bc_cells[:, [0, 1]]                                    # shape = [n_ff_edge, 2]
+        rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
+        T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
+
+        # Parallel and tangential velocity
+        V_n = -(V * self.farfield_normals).sum(dim=1)      # shape = [n_ff_edge]
+        V_t = V + V_n.unsqueeze(-1) * self.farfield_normals
+
+        # Incoming farfield:
+        R_m = self.R_m + self.dR_m    # Rm = v_far - 2 * a_far/(gamma - 1)
+
+        # Outgoing (extrapolate from internal) :
+        a_int = torch.sqrt(self.gamma * self.R * T_int)
+        R_p = V_n + 2 * a_int / gm1       #  R+ = R+_int = V_n + 2 * a_in / (gamma-1)
+        # S_p = self.R * T_int * rho_int ** (-gm1)
+
+        # Boundary values: a_bc = (gamma-1)/4 * (R+ - R-)
+        a_bc_2 = (gm1/4 * (R_p - R_m)) ** 2
+        V_n_bc = 1/2 * (R_p + R_m)
+        T_bc = a_bc_2 / (self.gamma * self.R)
+        rho_bc = rho_int * (T_bc / T_int) ** (1/gm1) #(a_bc_2 / (self.gamma * S_p)) ** (1 / gm1)
+
+        V_bc = V_t - V_n_bc.unsqueeze(-1) * self.farfield_normals
+
+        U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
+        U_face[self.farfield_mask] = U_face_farfield
+
+        # Adapt farfield conditions. Decay pressure exponentially and update R-:
+        P_bc = rho_bc * self.R * T_bc
+        P_new = P_bc + dt / self.tau * (self.P_far - P_bc)
+        m = self.gamma / gm1
+        B = (gm1 ** 2 / (16 * self.gamma)) ** m * (self.R * T_int) ** (-1/gm1) * rho_int
+        R_new = R_p - (P_new / B) ** (0.5/m)
+        self.dR_m = R_new - self.R_m - dt / self.tau * self.decay_beta * self.dR_m
+
+
+        # self.v_far = self.v_far + dt / self.tau * (V_n - self.v_far)
+
+        # print(f'{self.v_far = }')
 
 
     def __farfield(self, U_face, Us_bc_cells, dt):
@@ -80,7 +144,7 @@ class FarfieldBC:
         """
         gm1 = self.gamma - 1
 
-        V = Us_bc_cells[:, [0, 1]]                                          # shape = [n_ff_edge, 2]
+        V = Us_bc_cells[:, [0, 1]]                                    # shape = [n_ff_edge, 2]
         rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
         T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
 
