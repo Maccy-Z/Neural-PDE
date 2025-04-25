@@ -40,6 +40,14 @@ class FarfieldBC:
         elif self.exit_cfg.mode == "farfield":
             self.set_bc_U_face = self.__farfield
             self.factor = 1
+            self.R_far = v_far - 2 * a_far / (self.gamma - 1)
+        elif self.exit_cfg.mode == "farfield_blended":
+            self.set_bc_U_face = self.__farfield_blended
+            self.factor = 1
+            self.R_m_far = v_far - 2 * a_far / (self.gamma - 1)
+            self.R_p_far = v_far + 2 * a_far / (self.gamma - 1)
+            self.S_far = P_far / (rho_far ** self.gamma)
+
         elif self.exit_cfg.mode == "adaptive":
             self.set_bc_U_face = self.__adaptive
             self.dR_m = 0
@@ -153,7 +161,7 @@ class FarfieldBC:
         V_t = V + V_n.unsqueeze(-1) * self.farfield_normals
 
         # Incoming farfield:
-        R_m = self.v_far - 2 * self.a_far / gm1    # Rm = v_far - 2 * a_far/(gamma - 1)
+        R_m = self.R_far #self.v_far - 2 * self.a_far / gm1    # Rm = v_far - 2 * a_far/(gamma - 1)
 
         # Outgoing (extrapolate from internal) :
         a_int = torch.sqrt(self.gamma * self.R * T_int)
@@ -161,8 +169,8 @@ class FarfieldBC:
         S_p = self.R * T_int * rho_int ** (-gm1)
 
         # Boundary values: a_bc = (gamma-1)/4 * (R+ - R-)
-        a_bc_2 = (gm1/4 * (R_p - R_m)) ** 2
         V_n_bc = 1/2 * (R_p + R_m)
+        a_bc_2 = (gm1/4 * (R_p - R_m)) ** 2
         rho_bc = (a_bc_2 / (self.gamma * S_p)) ** (1 / gm1)
         T_bc = a_bc_2 / (self.gamma * self.R)
 
@@ -170,6 +178,70 @@ class FarfieldBC:
 
         U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
         U_face[self.farfield_mask] = U_face_farfield
+
+        # if rho_bc.max() > 2:
+        #     print()
+        #     print(f'{rho_bc.max() = }')
+        #     # print(f'{a_bc_2.min() = }')
+        #     print(f'{T_bc.min() = }')
+
+
+    def __farfield_blended(self, U_face, Us_bc_cells, dt):
+        """ Compressible farfield:
+                R+ = u + 2a/(gamma - 1)
+                R- = u - 2a/(gamma - 1)
+                S = P / rho^gamma
+            Blend of left and right variable for smooth inlet/outlet flow
+
+        """
+        gm1 = self.gamma - 1
+
+        V = Us_bc_cells[:, [0, 1]]                                    # shape = [n_ff_edge, 2]
+        rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
+        T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
+
+        # Parallel and tangential velocity
+        V_n = -(V * self.farfield_normals).sum(dim=1)      # shape = [n_ff_edge]
+        V_t = V + V_n.unsqueeze(-1) * self.farfield_normals
+
+        # Outside invariants:
+        R_m_far = self.R_m_far  # 1
+        S_far = self.S_far      # 2
+        R_p_far = self.R_p_far  # 3
+
+
+        # Interior invariants:
+        a_int = torch.sqrt(self.gamma * self.R * T_int)
+        R_m_int = V_n - 2 * a_int / gm1       #  1
+        S_int = self.R * T_int * rho_int ** (-gm1)        # 2
+        R_p_int = V_n + 2 * a_int / gm1       #  3
+
+        # Interpolation values (assuming c = a_int). Transition smoothly on scale O(c)
+        c = a_int.mean()
+        v_hat, a_hat = 0.1*V_n / c, 0.1*a_int / c
+        lambda1 = v_hat - a_hat
+        alpha1 = 0.5 * (1 - torch.tanh(lambda1))
+        lambda2 = v_hat
+        alpha2 = 0.5 * (1 - torch.tanh(lambda2))
+        lambda3 = v_hat + a_hat
+        alpha3 = 0.5 * (1 - torch.tanh(lambda3))
+
+        # Set boundary invariants
+        R_m_bc = alpha1 * R_m_far + (1 - alpha1) * R_m_int
+        S_bc = alpha2 * S_far + (1 - alpha2) * S_int
+        R_p_bc = alpha3 * R_p_far + (1 - alpha3) * R_p_int
+
+        # Construct boundary values
+        V_n_bc = 1/2 * (R_m_bc + R_p_bc)
+        a_bc_2 = (gm1/4 * (R_p_bc - R_m_bc)) ** 2
+        rho_bc = (a_bc_2 / (self.gamma * S_bc)) ** (1 / gm1)
+        T_bc = a_bc_2 / (self.gamma * self.R)
+
+        V_bc = V_t - V_n_bc.unsqueeze(-1) * self.farfield_normals
+
+        U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
+        U_face[self.farfield_mask] = U_face_farfield
+
 
     def _farfield_neuman(self, U_face, Us_bc_cells, dt):
         """Neuman velocity BC """
@@ -356,35 +428,31 @@ class FVMEdgeInfo:
         self.neigh_combine = neigh_combine.to(device)
         self.cell_disps = cell_disps.to(device)
         self.normals = mesh.normals.to(device)
-        normal_hat = self.normals / torch.norm(self.normals, dim=1, keepdim=True)
+        self.edge_len = torch.norm(self.normals, dim=1).to(device).unsqueeze(-1)
+        normal_hat = self.normals / self.edge_len
         self.normals_hat = normal_hat.unsqueeze(-1)
+        # Non orthogonal correction
         cell_disps = torch.full((self.n_edges, 2), float("nan"), device=device)
         cell_disps[~self.bc_edge_mask] = self.cell_disps
         d_cos_theta = (normal_hat * cell_disps).sum(dim=1)
         self.cell_dist_proj = d_cos_theta
-        # Non-orthogonal correction: du/dn = du/dn_face - grad(U) (d/(n_hat dot d) - n_hat)
         X_orthog = cell_disps / d_cos_theta.unsqueeze(-1) - normal_hat
         X_orthog[self.bc_edge_mask] = 0
         self.X_orthog = X_orthog.unsqueeze(dim=-1)
-        self.edge_len = torch.norm(self.normals, dim=1).to(device).unsqueeze(-1)
+
+        # Create indexing masks between main and boundary edges
+        # Step 1: Create a boolean tensor tracking which face of each edge is assigned.
+        face_assigned = torch.zeros((self.n_edges, 2), dtype=torch.bool, device=self.device)
+        face_assigned[self.tri_to_edge, self.tri_edge_signs] = True
+        # Step 2: For each boundary edge, find which side (face) is not assigned, with the index (0 or 1) of the unset face
+        assigned_boundary = face_assigned[self.bc_edge_mask]  # shape: (n_boundary_edges, 2)
+        self.bc_edge_side = (~assigned_boundary).float().argmax(dim=1)
 
         self._init_bc(bc_tags)
         c_print(f'_init_bc done', color="magenta")
 
         self._build_spm_face_grads()
         c_print(f'_build_spm_face_grads done', color="magenta")
-
-        #self.V_insertion_matrix = create_insertion_matrix(self.n_edges, self.n_comp, [0, 1], device=device).to_sparse_csr()
-        # c_print(f'V_insertion_matrix done', color="magenta")
-
-        # Create indexing masks between main and boundary edges
-        # Step 1: Create a boolean tensor tracking which face of each edge is assigned.
-        face_assigned = torch.zeros((self.n_edges, 2), dtype=torch.bool, device=self.device)
-        face_assigned[self.tri_to_edge, self.tri_edge_signs] = True
-        # Step 2: For each boundary edge, find which side (face) is not assigned.
-        # This returns a tensor of shape (n_boundary_edges,) with the index (0 or 1) of the unset face.
-        assigned_boundary = face_assigned[self.bc_edge_mask]  # shape: (n_boundary_edges, 2)
-        self.bc_edge_side = (~assigned_boundary).float().argmax(dim=1)
         c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
         self.cell_grads = None
@@ -436,7 +504,9 @@ class FVMEdgeInfo:
         if self.use_farfield:
             exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask]
             # Normal for farfield edges
+            ff_edge_sign = - 2 * (self.bc_edge_side[self.farfield_mask] - 0.5)
             ff_edge_normals = self.normals_hat.squeeze()[self.bc_edge_mask][self.farfield_mask]
+            ff_edge_normals = ff_edge_normals * ff_edge_sign.unsqueeze(-1)
             self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge, ff_edge_normals)
 
 

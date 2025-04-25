@@ -525,8 +525,8 @@ class FVMEquation:
         self.Heat = Heating(E_props, self.phy_setup, cfg=cfg, device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, self.phy_setup, E_props, device=device)
 
-        # self.t_solver = Adams3PC(self.cells, cfg.dt, cfg.n_iter, self)
-        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
+        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
+        # self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
