@@ -156,8 +156,8 @@ def generate_box_points_spacing(xmax, ymax, spacing=1.0):
 
 
 def gen_mesh_fvm(areas, cell_lnscale=2):
-    xmin, xmax = -0.25, 8
-    ymin, ymax = -1.75, 1.25
+    xmin, xmax = -0.25, 10
+    ymin, ymax = -2.25, 1.5
 
     min_area, max_area = areas
     mesh_props = MeshProps(min_area, max_area, lengthscale=cell_lnscale)
@@ -172,6 +172,8 @@ def gen_mesh_fvm(areas, cell_lnscale=2):
                 Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
                 # Line([[0.75, 0.7], [xmax, 0.7]], True, real=False, name=None),  # Refinement wall
                 # Circle((0.75, 0.7), 0.15, triscale, hole=True, dist_req=True, name="NavierWall"),
+                Circle((4, -0.15), 0.15, triscale, hole=True, dist_req=True, name="NavierWall"),
+
                 #Ellipse((1, 1.5), 1.5, 0.6, 0, triscale, lims=lims, hole=True, dist_req=True, name="NavierWall"),
                 Nozzle(Xmin=[0, 0], Rt=0.33, Re=1, theta_n_deg=30, theta_exit_deg=15, lengthscale=triscale, lip_size=1., dist_req=True, name="NavierWall"),
 

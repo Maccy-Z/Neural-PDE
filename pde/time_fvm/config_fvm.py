@@ -7,8 +7,8 @@ class ConfigFarfield:
 
     # Farfield physical parameters
     v_far: float = 0.0
-    rho_far: float = 0.5
-    T_far: float = 100
+    rho_far: float = 0.4
+    T_far: float = 75
 
     # Farfield limit / simulation parameters
     decay_tau: float = 0.05
@@ -20,12 +20,12 @@ class ConfigFarfield:
 class ConfigFVM:
 
     # solver parameters
-    dt: float = 10e-7
+    dt: float = 1e-6
     n_iter: int = 50000
 
     # mesh parameters
     min_A: float = 1e-4
-    max_A: float = 7e-3
+    max_A: float = 3e-3
     lnscale: float = 3
 
     # Physical parameters
@@ -40,7 +40,7 @@ class ConfigFVM:
     v_factor: float = 1     # Modification for velocity KT scheme
     # bulk_visc_lim: float = 0.25
     lim_p: int = 4          # Order of limiter (1 for BJ)
-    lim_K: int = 2
+    lim_K: int = 1
 
     # Exit parameters
     exit_cfg: ConfigFarfield = None

@@ -82,7 +82,7 @@ class TSolver(ABC):
         E_props = self.eq.E_props
 
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
-        plot_t = 0.004
+        plot_t = 0.005
         next_plot_t = plot_t #+ 0.015
 
         dts = []
@@ -111,8 +111,10 @@ class TSolver(ABC):
                 primatives = self.cells.get_values()[0]
                 Xlims = None # [[3.1, 3.4], [-1.8, -1.6]] #, [(0, 1), [0, 0.5]]  #
                 #
-                self.eq.plot_interp(primatives[:, :], title=f"Values at t={t :.4g}", Xlims=Xlims)
-                # self.eq.pretty_plot(primatives, Xlims, title=f"t={t:.4g}")
+                titles = ["Vx", "Vy", "rho", "T"]
+                titles = [f'{title} at {t=:4g}' for title in titles]
+                self.eq.plot_interp(primatives[:, :], title=titles, Xlims=Xlims)
+                self.eq.pretty_plot(primatives, [(0.75, 10), (-2.25, 1.5)] , title=f"t={t:.4g}")
 
                 # self.eq.plot_interp(self.eq.pressure_div[:, :2], Xlims=Xlims, title=f"Pressure div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.advect_div[:, :2], Xlims=Xlims, title=f"advect div at t={t:.4g}")

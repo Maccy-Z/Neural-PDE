@@ -50,8 +50,8 @@ def mesh_graph(cfg: ConfigFVM, new):
             x0, y0 = X0
             x1, y1 = X1
             v_in = 0.1 if (0.05 < (y0+y1)/2 < 1.45) else 0
-            T = 450 #if (y0+y1)/2 > 0.7 else 250
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Dirich, E.Dirich], [None, 0, 1.25, T], [0, None, None, None])
+            T = 550 #if (y0+y1)/2 > 0.7 else 250
+            bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Dirich, E.Dirich], [None, 0, 2.6, T], [0, None, None, None])
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None])
         else:
@@ -72,8 +72,8 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
         us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 4)
         us_init[:, 0] = 0#50 * (x<.4) + 0 * (x>.4)
         us_init[:, 1] = 0
-        us_init[:, 2] = 0.75 * (x<.4) + 0.5 #* (x>.4)
-        us_init[:, 3] = 300 * (x<.4) + 100 #* (x>.4)
+        us_init[:, 2] = 1. * (x<.4) + 0.5 #* (x>.4)
+        us_init[:, 3] = 350 * (x<.4) + 75 #* (x>.4)
 
         # Energy: C_v * T + 0.5 * (u^2 + v^2)
         E = cfg.C_v * us_init[:, 3] + 0.5 * (us_init[:, 0] ** 2 + us_init[:, 1] ** 2)

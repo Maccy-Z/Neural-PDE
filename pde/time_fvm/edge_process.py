@@ -157,8 +157,8 @@ class FarfieldBC:
         T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
 
         # Parallel and tangential velocity
-        V_n = -(V * self.farfield_normals).sum(dim=1)      # shape = [n_ff_edge]
-        V_t = V + V_n.unsqueeze(-1) * self.farfield_normals
+        V_n = (V * self.farfield_normals).sum(dim=1)      # shape = [n_ff_edge]
+        V_t = V - V_n.unsqueeze(-1) * self.farfield_normals
 
         # Incoming farfield:
         R_m = self.R_far #self.v_far - 2 * self.a_far / gm1    # Rm = v_far - 2 * a_far/(gamma - 1)
@@ -174,7 +174,7 @@ class FarfieldBC:
         rho_bc = (a_bc_2 / (self.gamma * S_p)) ** (1 / gm1)
         T_bc = a_bc_2 / (self.gamma * self.R)
 
-        V_bc = V_t - V_n_bc.unsqueeze(-1) * self.farfield_normals
+        V_bc = V_t + V_n_bc.unsqueeze(-1) * self.farfield_normals
 
         U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
         U_face[self.farfield_mask] = U_face_farfield
@@ -191,7 +191,7 @@ class FarfieldBC:
                 R+ = u + 2a/(gamma - 1)
                 R- = u - 2a/(gamma - 1)
                 S = P / rho^gamma
-            Blend of left and right variable for smooth inlet/outlet flow
+            Blend of left and right invariants for smooth inlet/outlet flow
 
         """
         gm1 = self.gamma - 1
@@ -201,14 +201,13 @@ class FarfieldBC:
         T_int = Us_bc_cells[:, 3]                                     # shape = [n_ff_edge]
 
         # Parallel and tangential velocity
-        V_n = -(V * self.farfield_normals).sum(dim=1)      # shape = [n_ff_edge]
-        V_t = V + V_n.unsqueeze(-1) * self.farfield_normals
+        V_n = (V * self.farfield_normals).sum(dim=1)      # shape = [n_ff_edge]
+        V_t = V - V_n.unsqueeze(-1) * self.farfield_normals
 
         # Outside invariants:
         R_m_far = self.R_m_far  # 1
         S_far = self.S_far      # 2
         R_p_far = self.R_p_far  # 3
-
 
         # Interior invariants:
         a_int = torch.sqrt(self.gamma * self.R * T_int)
@@ -237,7 +236,7 @@ class FarfieldBC:
         rho_bc = (a_bc_2 / (self.gamma * S_bc)) ** (1 / gm1)
         T_bc = a_bc_2 / (self.gamma * self.R)
 
-        V_bc = V_t - V_n_bc.unsqueeze(-1) * self.farfield_normals
+        V_bc = V_t + V_n_bc.unsqueeze(-1) * self.farfield_normals
 
         U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
         U_face[self.farfield_mask] = U_face_farfield
@@ -362,15 +361,13 @@ class FVMEdgeInfo:
     normals_hat: torch.Tensor  # shape = (n_edges, 2, 1)
     X_orthog: torch.Tensor      # shape = (n_edges, 2, 1)
     cell_disps: torch.Tensor        # shape = (n_edges, 2)
-    #V_insertion_matrix: torch.Tensor  # shape = (n_edges*n_component, n_edges*2)
-    # edge_to_tri_comb: torch.Tensor  # shape = (n_edges, 2)
 
     # Main mesh
     edge_to_tri_main: torch.Tensor  # shape = [n_edges_m, 2], ordered so triangle parallel to edge normal comes last, antiparallel first.
     cell_dist_proj: torch.Tensor  # shape = (n_edges_m)
     tri_edge_signs: torch.Tensor  # shape = (3 * n_cells)
     tri_to_edge: torch.Tensor  # shape = (3 * n_cells)
-    cent_to_edge_disp: torch.Tensor  # shape = (n_cells, 3, 2)  # Displacement vector between cell centroids, for every edge
+    cent_to_edge_disp: torch.Tensor  # shape = (n_cells, 3, 2)  # Displacement vector between centroid to edge, for every edge
 
     # Boundary condition
     n_edges_bc: int             # Number of boundary edges
@@ -389,7 +386,6 @@ class FVMEdgeInfo:
     neigh_combine: torch.Tensor # shape = (n_cell, 2). Used for masking neighbors of cell incl boundary edges, in format [Us, U_face_bc]
 
     # Temporary Variables
-    # Primitive face variables
     grad_V: torch.Tensor        # shape = (n_edges, {dx,dy}, {vx,vy})  Gradient at V_faces
     Vs_faces: torch.Tensor  # shape = (n_edges, 2, 2)  Face values
     rho_faces: torch.Tensor  # shape = (n_edges, 2, 1)  Face values
@@ -459,7 +455,7 @@ class FVMEdgeInfo:
 
 
     def clear_temp(self):
-        del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val
+        del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val, self.cell_disps
         del self.dirich_mask, self.neumann_mask
         # del self.dUf_dUc
 
@@ -504,7 +500,7 @@ class FVMEdgeInfo:
         if self.use_farfield:
             exit_cell2edge = self.edge_to_tri_bc[self.farfield_mask]
             # Normal for farfield edges
-            ff_edge_sign = - 2 * (self.bc_edge_side[self.farfield_mask] - 0.5)
+            ff_edge_sign = 2 * (self.bc_edge_side[self.farfield_mask] - 0.5)
             ff_edge_normals = self.normals_hat.squeeze()[self.bc_edge_mask][self.farfield_mask]
             ff_edge_normals = ff_edge_normals * ff_edge_sign.unsqueeze(-1)
             self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge, ff_edge_normals)
@@ -830,7 +826,6 @@ class BoundarySetter:
     n_comp: int
     n_edges_bc: int
 
-    tri_to_bc_edge: torch.Tensor    # shape = [n_edges, 3]
     grad_comps: torch.Tensor          # shape = [n_neum_edges, 2, 1]
     where_neum: tuple[torch.Tensor]      # shape = [2][n_neum_edges, 2]
 

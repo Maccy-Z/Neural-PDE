@@ -1,20 +1,19 @@
 import torch
-from abc import ABC, abstractmethod
+from abc import ABC
 from codetiming import Timer
 from cprint import c_print
-import math
 
 from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges, plot_interp
 from pde.time_fvm.fvm_mesh import FVMMesh
 from pde.time_fvm.edge_process import FVMEdgeInfo
 from pde.time_fvm.t_solvers import FVMCells
-from pde.time_fvm.integrators import Magazenkov, LeapfrogAss, Euler, Adams2, RK2_SSP, RK3_SSP4, Adams3PC, Adams4PC, Butcher, Butcher_adapt, Heuns, ExplMidpoint, Heuns, RK3_SSP, RK2_SSP3, RK2_SSP4, Leapfrog2
+from pde.time_fvm.integrators import Euler, RK3_SSP4, Adams3PC, Adams4PC, Butcher_adapt
 from pde.time_fvm.config_fvm import ConfigFVM
 
 class PhysicalSetup:
     """ Set physical properties of fluid. """
     E_props: FVMEdgeInfo
-    tau: torch.Tensor
+    tau: torch.Tensor       # shape = [n_edges, 2, 2]
     P_face: torch.Tensor    # shape = [n_edges, 2, 1]
     c: torch.Tensor         # shape = [n_edges, 2, 1]
 
@@ -249,17 +248,17 @@ class Viscosity(FVMEdgeFunc):
         #proj_mat = E_props.V_insertion_matrix # create_insertion_matrix(E_props.n_edges, E_props.n_component, [0, 1], device=device).to_sparse_csr()
         # self.visc_mat = flux_mat @ proj_mat
 
-    def divergence(self):
-        """ Viscosity is limited after computing divergence for stability """
-        E_props = self.E_props
-
-        tau = self.stress_calc.tau
-        F = (tau * E_props.normals.unsqueeze(-1)).sum(dim=-2)  # shape = [n_edges, 2]
-
-        div_visc = self.visc_mat @ F.flatten()
-        div_visc = div_visc.view(-1, E_props.n_comp)         # shape = [n_cells, n_comp]
-
-        return div_visc
+    # def divergence(self):
+    #     """ Viscosity is limited after computing divergence for stability """
+    #     E_props = self.E_props
+    #
+    #     tau = self.stress_calc.tau
+    #     F = (tau * E_props.normals.unsqueeze(-1)).sum(dim=-2)  # shape = [n_edges, 2]
+    #
+    #     div_visc = self.visc_mat @ F.flatten()
+    #     div_visc = div_visc.view(-1, E_props.n_comp)         # shape = [n_cells, n_comp]
+    #
+    #     return div_visc
 
     def edge_fluxes(self, fluxes=None):
         E_props = self.E_props
@@ -489,7 +488,7 @@ class KTDiffusion(FVMEdgeFunc):
         # Maximum diffusion distance is a * dt/2 < tri_height -> a < 2 * tri_height / dt
         # Assume tri_height = k * edge_len / 2
         edge_len = E_props.edge_len
-        #a = a.clamp(max=0.75 * edge_len / dt)  # shape = [n_edges, 1]
+        # a = a.clamp(max=0.75 * edge_len / dt)  # shape = [n_edges, 1]
         kt_fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * edge_len  # shape = [n_edges, n_comp]
 
         return kt_fluxes #* 0.25
@@ -516,7 +515,7 @@ class FVMEquation:
         self.E_props = E_props
 
         # Matrix for converting edge fluxes to cell divergence
-        self.flux_mat = self.build_flux_mat(mesh.tri_to_edge, -mesh.tri_edge_signs, mesh.n_edges, mesh.areas)  # shape = [n_cells * n_comp, n_edges * n_comp]
+        self.flux_mat = self.build_flux_mat(mesh.tri_to_edge, -mesh.tri_edge_signs, mesh.n_edges, mesh.areas)  # shape = [n_cells, n_edge]
 
 
         self.P_force = PressureForce(E_props, self.phy_setup, device=device)
@@ -525,8 +524,8 @@ class FVMEquation:
         self.Heat = Heating(E_props, self.phy_setup, cfg=cfg, device=device)
         self.KT_diff = KTDiffusion(cfg.v_factor, self.phy_setup, E_props, device=device)
 
-        self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
-        # self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
+        # self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
+        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP4")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
@@ -600,26 +599,6 @@ class FVMEquation:
         D_shape = [n_tri, n_edges]
         flux_mat = torch.sparse_coo_tensor(D_indices, D_values, size=D_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
 
-        # # "Lift" D to act on the full fluxes (all components) using the Kronecker product.
-        # #    We want M = D ⊗ I_{n_component}, which has shape (n_tri*n_component, n_edges*n_component)
-        # comp_ids = torch.arange(self.n_comp, device="cpu")  # shape: (n_comp,)
-        # new_rows = D_indices[0].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
-        # new_cols = D_indices[1].unsqueeze(1) * self.n_comp + comp_ids.unsqueeze(0)  # shape: (nnz, n_comp)
-        #
-        # # Flatten the new indices.
-        # new_rows = new_rows.reshape(-1)
-        # new_cols = new_cols.reshape(-1)
-        # flux_indices = torch.stack([new_rows, new_cols], dim=0)
-        #
-        # # The values are just the original ones repeated for each component.
-        # flux_values = D_values.unsqueeze(1).expand(-1, self.n_comp).reshape(-1)
-        #
-        # # Define the shape of the lifted matrix:
-        # flux_shape = (n_tri * self.n_comp, n_edges * self.n_comp)
-
-        # # Construct the sparse flux matrix.
-        # flux_mat = torch.sparse_coo_tensor(flux_indices, flux_values, size=flux_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
-
         return flux_mat
 
 
@@ -629,19 +608,9 @@ class FVMEquation:
 
             du/dt = -div(flux) = -sum_i (sign_i * flux_i)
         """
-        # # Vectorised version
-        # fluxes = fluxes.view(-1, self.n_comp)  # shape: (n_edges, n_component)
-        # tri_fluxes = fluxes[self.tri_to_edge]  # shape: [n_cells, 3, n_component]
-        # divergence = torch.sum(-self.tri_edge_sign * tri_fluxes, dim=1).squeeze() / self.areas.unsqueeze(-1)     # shape = [n_cells, N_component]
-
         # Matrix version
-        #fluxes = fluxes.flatten()
         divergence = torch.mm(self.flux_mat, fluxes)  # shape: (n_cells * n_component,)
-        #divergence = divergence_flat.view(-1, self.n_comp)  # shape: (n_cells, n_component)
         return divergence
-
-
-
 
 
     def plot_flux(self, fluxes, title="Fluxes", show_index=False, lims=None, Xlims=None):
@@ -662,11 +631,9 @@ class FVMEquation:
         Mx, My = Vx / c, Vy / c
         M_num = torch.sqrt(Mx ** 2 + My ** 2)
 
-        plot_vals = torch.stack([M_num, P, self.divergence[:, 3] ], dim=0)
+        plot_vals = torch.stack([P, M_num, self.divergence[:, 3] ], dim=0)
 
-        title = [f"Mach number: {title}", f"Pressure: {title}", f'Heating: {title}']
+        title = [f"Pressure: {title}", f"Mach number: {title}", f'Heating: {title}']
         plot_interp(self.mesh.vertices, plot_vals, self.mesh.triangles, title=title, Xlims=Xlims)
-
-        # exit(7)
 
 
