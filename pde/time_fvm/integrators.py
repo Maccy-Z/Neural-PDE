@@ -106,8 +106,9 @@ class Adams3PC(TSolver, Adaptive):
         prim, _ = self.cells.get_values()
         dUdt_0 = self.eq.forward(prim, self.dt, t)
 
-        for _ in range(2):
-            self.prev_dUdt.append(dUdt_0)
+        self.dUdt_m1 = dUdt_0
+        self.dUdt_m2 = dUdt_0
+
 
     def _step(self, t):
         """
@@ -116,14 +117,15 @@ class Adams3PC(TSolver, Adaptive):
         :param t:
         :return:
         """
-        if len(self.prev_dUdt) == 0:
+        if self.need_init:
             self._init_states(t)
+            self.need_init = False
 
         prim_t, U_0 = self.cells.get_values()
 
         dUdt_0 = self.eq.forward(prim_t, self.dt, t)
-        dUdt_m1 = self.prev_dUdt[-1]
-        dUdt_m2 = self.prev_dUdt[-2]
+        dUdt_m1 = self.dUdt_m1
+        dUdt_m2 = self.dUdt_m2
 
         # U_a = U_t + dt/2 * [3 * f(U_t) - f(U_{t-1})]
         # U_ac = U_0 + self.dt * dUdt_0
@@ -137,7 +139,11 @@ class Adams3PC(TSolver, Adaptive):
         dU_high = self.dt/12 * (5 * dUdt_a + 8 * dUdt_0 - dUdt_m1)
         dU_low = self.dt/2 * (dUdt_a + dUdt_0)
         U_1_high =  U_0 + dU_high
-        self.prev_dUdt.append(dUdt_0)
+
+
+        # Update buffer
+        self.dUdt_m2 = dUdt_m1
+        self.dUdt_m1 = dUdt_0
 
         self.update_stepsize(dU_high, dU_low)
 
@@ -153,28 +159,30 @@ class Adams4PC(TSolver, Adaptive):
         self.eq: FVMEquation = equation
 
         self.prev_dUdt = deque(maxlen=2)
-        self._adapt_init(order=4, atol=1e-3, rtol=1e-3, mtol=5e-7, alphas=(0.9, 0.99), dt_min=self.dt/2)
+        self._adapt_init(order=4, atol=1e-3, rtol=1e-3, mtol=1e-6, alphas=(0.9, 0.99), dt_min=self.dt/2)
+        self.need_init = True
 
     def _init_states(self, t):
         prim, _ = self.cells.get_values()
         dUdt_0 = self.eq.forward(prim, self.dt, t)
 
-        for _ in range(2):
-            self.prev_dUdt.append(dUdt_0)
+        self.dUdt_m1 = dUdt_0
+        self.dUdt_m2 = dUdt_0
 
     def _step(self, t):
         """
         U_a = U_t + dt/24 * [55 * f(U_t) - 59 * f(U_{t-1}) + 37 * f(U_{t-2}) - 9 * f(U_{t-3})]  (Or other order predcitor)
         U_{t+1} = U_t + dt/24 * [9 * f(U_a) + 19 * f(U_{t}) - 5 * f(U_{t-1}) + f(U_{t-2})]
         """
-        if len(self.prev_dUdt) == 0:
+        if self.need_init:
             self._init_states(t)
+            self.need_init = False
 
         prim_t, U_0 = self.cells.get_values()
 
         dUdt_0 = self.eq.forward(prim_t, self.dt, t)
-        dUdt_m1 = self.prev_dUdt[-1]
-        dUdt_m2 = self.prev_dUdt[-2]
+        dUdt_m1 = self.dUdt_m1
+        dUdt_m2 = self.dUdt_m2
 
         # Predictor step
         # U_ac = U_t + self.dt  * dUdt_t
@@ -189,7 +197,10 @@ class Adams4PC(TSolver, Adaptive):
         dU_high = self.dt/24 * (9 * dUdt_a + 19 * dUdt_0 - 5 * dUdt_m1 + dUdt_m2)
         dU_low = self.dt / 12 * (5 * dUdt_a + 8 * dUdt_0 - dUdt_m1)
         U_1_high =  U_0 + dU_high
-        self.prev_dUdt.append(dUdt_0)
+
+        # Update buffer
+        self.dUdt_m2 = dUdt_m1
+        self.dUdt_m1 = dUdt_0
 
         self.update_stepsize(dU_high, dU_low, U_0)
         return U_1_high
