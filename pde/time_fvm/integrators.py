@@ -101,6 +101,7 @@ class Adams3PC(TSolver, Adaptive):
 
         self.prev_dUdt = deque(maxlen=2)
         self._adapt_init(order=4, atol=2e-3, rtol=2e-3, mtol=1e-7, alphas=(0.9, 0.99), dt_min=self.dt/2)
+        self.need_init = True
 
     def _init_states(self, t):
         prim, _ = self.cells.get_values()
