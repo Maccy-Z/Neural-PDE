@@ -31,7 +31,7 @@ class PhysicalSetup:
         # Precompute
         self.eye = self.mu_b * torch.eye(2, device=self.device).unsqueeze(0)
 
-    @torch.compile()
+    #@torch.compile()
     def state_to_primative(self, state):
         """ Convert """
         momentum, density, Q = state[:, [0, 1]], state[:,[2]], state[:,[3]]
@@ -68,7 +68,7 @@ class PhysicalSetup:
 
         # assert not torch.any(torch.isnan(self.c))
 
-    @torch.compile()
+    #@torch.compile()
     def update(self):
         # E_props = self.E_props
         #E_props.T_faces = E_props.T_faces.clamp(min=10, max=2000)
@@ -337,7 +337,7 @@ class Heating(FVMEdgeFunc):
         self.kappa = cfg.thermal_cond
         self.device = device
 
-    @torch.compile()
+    #@torch.compile()
     def edge_fluxes(self, fluxes=None):
         E_props = self.E_props
         normals = E_props.normals       # shape = [n_edges, 2]
@@ -467,7 +467,7 @@ class KTDiffusion(FVMEdgeFunc):
         self.phy_setup = phy_setup
 
 
-    @torch.compile()
+    #@torch.compile()
     def edge_fluxes(self, dt):
         E_props = self.E_props
         rho_face = E_props.rho_faces

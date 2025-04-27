@@ -310,7 +310,6 @@ class Butcher_adapt(TSolver, Adaptive):
         self._adapt_init(order=4, atol=2e-3, rtol=2e-3, mtol=1e-6, alphas=(0.8, 0.995), dt_min=self.dt*0.5)
         self.k = torch.zeros((self.stages, *self.cells.state.shape), device=self.A.device)
 
-    @torch.compile()
     def _step(self, t) -> torch.Tensor:
         """
         Take one step of the ODE solver.

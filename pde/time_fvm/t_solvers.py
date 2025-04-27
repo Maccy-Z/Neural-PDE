@@ -91,12 +91,9 @@ class TSolver(ABC):
         t = 0.
         for i in range(self.n_steps):
             t += self.dt
-
-            new_Us = self._step(t)
+            self._solve_step(t)
             dts.append(self.dt)
 
-            # if t > 1.1:
-            #     exit("done ")
             if i % self.print_i == 0:
                 irl_time = (time.time() - st_time)/self.print_i
                 avg_dt = sum(dts[-self.print_i:]) / len(dts[-self.print_i:])
@@ -114,7 +111,7 @@ class TSolver(ABC):
                 titles = ["Vx", "Vy", "rho", "T"]
                 titles = [f'{title} at {t=:4g}' for title in titles]
                 self.eq.plot_interp(primatives[:, :], title=titles, Xlims=Xlims)
-                self.eq.pretty_plot(primatives, [(0.75, 10), (-2.25, 1.5)] , title=f"t={t:.4g}")
+                # self.eq.pretty_plot(primatives, [(0.75, 10), (-2.25, 1.5)] , title=f"t={t:.4g}")
 
                 # self.eq.plot_interp(self.eq.pressure_div[:, :2], Xlims=Xlims, title=f"Pressure div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.advect_div[:, :2], Xlims=Xlims, title=f"advect div at t={t:.4g}")
@@ -123,21 +120,17 @@ class TSolver(ABC):
                 # self.eq.plot_cells(primatives[:, 0], title=f'Vx at t={t:.4g}', Xlims=Xlims, show_index=True)
                 # self.eq.plot_flux(torch.ones_like(E_props.rho_faces[:, 0, 0]), title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
 
+                self._save_meshio(primatives)
 
-                # print()
-                # exit(7)
+
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
-
-                # if t>0.4:
-                #     exit("DONE PLOTTING")
 
             # if t >= 180:
             #     with open("save_state.pt", "wb") as f:
             #         torch.save(self.cells.state, f)
             #     exit(7)
-            self.cells.update_cells(new_Us)
 
         dts = torch.stack(dts).cpu()
         kernel_size = 10
@@ -148,6 +141,43 @@ class TSolver(ABC):
         plt.plot(dts_smooth)
         plt.show()
 
+
+    def _save_meshio(self, primatives):
+        import meshio
+        import glob, os
+
+        # Get save name
+        os.makedirs('./saves', exist_ok=True)
+        vtu_files = glob.glob('./saves/*.vtu')
+        number = [int(file.replace('.vtu', '').split('_')[-1]) for file in vtu_files]
+
+        if len(number) == 0:
+            number = 0
+        else:
+            number = max(number) + 1
+        save_name = f'./saves/save_{number:05d}.vtu'
+        print(f'{save_name = }')
+
+        # Save mesh
+        E_props = self.eq.E_props
+        points = E_props.mesh.vertices.numpy()
+        cells = [("triangle", E_props.mesh.triangles.numpy())]
+        Vx, Vy, rho, T = primatives[:, 0], primatives[:, 1], primatives[:, 2], primatives[:, 3]
+        Vx, Vy, rho, T = Vx.cpu().unsqueeze(0).numpy(), Vy.cpu().unsqueeze(0).numpy(), rho.cpu().unsqueeze(0).numpy(), T.cpu().unsqueeze(0).numpy()
+
+        state = self.cells.state
+        momx, momy, E = state[:, 0], state[:, 1], state[:, 3]
+        momx, momy, E = momx.cpu().unsqueeze(0).numpy(), momy.cpu().unsqueeze(0).numpy(), E.cpu().unsqueeze(0).numpy()
+        P = self.eq.phy_setup.R * rho * T
+        mesh = meshio.Mesh(
+            points,
+            cells,
+            # Optionally provide extra data on points, cells, etc.
+            cell_data={"Vx": Vx, "Vy": Vy, "P": P, "rho": rho, "T": T, "MomX": momx, "MomY": momy, "E": E, },
+        )
+        mesh.write(
+            save_name,  # str, os.PathLike, or buffer/open file
+        )
 
 
     @torch.inference_mode()
@@ -206,6 +236,11 @@ class TSolver(ABC):
         print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
         prof.export_chrome_trace("trace.json")
 
+    @torch.compile()
+    def _solve_step(self, t):
+        new_Us = self._step(t)
+        self.cells.update_cells(new_Us)
+        return
 
     @abstractmethod
     def _step(self, t):
