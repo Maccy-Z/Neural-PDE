@@ -14,12 +14,11 @@ class Adaptive:
         self.rtol = rtol
         self.atol = atol
         self.mtol = mtol
-        self.alphas = alphas
+        self.alphas = torch.tensor(alphas, device="cuda")
 
         self.dt_min = dt_min
         self.dt_max = dt_max
 
-    @torch.compile()
     def update_stepsize(self, dU_high, dU_low, Us):
         """ Update the time step size based on the difference between two solutions.
             U.shape = [n_cells, n_comp]
@@ -34,19 +33,18 @@ class Adaptive:
         E = E.mean()
 
         # If E<1, increase the time step size, otherwise decrease step size
-        if E>1:
-            # print(f'Ratio: {E.cpu():.3g}')
-            factor = 0.9 * (1/E) ** (1/self.order)
-            alpha = self.alphas[0]
-        else:
-            factor = 0.9 * (1/E) ** (1/self.order)
-            alpha = self.alphas[1]
+        factor = 0.9 * (1 / E) ** (1 / self.order)
 
-        #factor = torch.clamp(factor, min=0.8, max=1.1)
+        # if E>1:
+        #     alpha = self.alphas[0]
+        # else:
+        #     alpha = self.alphas[1]
+        alpha = torch.where(E > 1, self.alphas[0], self.alphas[1])
+
         self.dt = self.dt * (alpha  + (1-alpha) * factor)
 
-        if self.dt_min is not None:
-            self.dt = torch.clamp(self.dt, min=self.dt_min, max=self.dt_max)
+        # if self.dt_min is not None:
+        #     self.dt = torch.clamp(self.dt, min=self.dt_min, max=self.dt_max)
 
         # if self.dt == self.dt_min:
         #     print()

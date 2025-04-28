@@ -17,8 +17,9 @@ class FarfieldBC:
         self.cfg = cfg
         self.exit_cfg = cfg.exit_cfg
 
-        self.farfield_mask = farfield_mask
+        # self.farfield_mask = farfield_mask
         self.farfield_normals = farfield_normals
+        self.farfield_idx = torch.where(farfield_mask)[0]
 
         # self.c = 300
         self.R = self.cfg.R
@@ -205,9 +206,9 @@ class FarfieldBC:
         V_t = V - V_n.unsqueeze(-1) * self.farfield_normals
 
         # Outside invariants:
-        R_m_far = self.R_m_far  # 1
-        S_far = self.S_far      # 2
-        R_p_far = self.R_p_far  # 3
+        # R_m_far = self.R_m_far  # 1
+        # S_far = self.S_far      # 2
+        # R_p_far = self.R_p_far  # 3
 
         # Interior invariants:
         a_int = torch.sqrt(self.gamma * self.R * T_int)
@@ -226,9 +227,9 @@ class FarfieldBC:
         alpha3 = 0.5 * (1 - torch.tanh(lambda3))
 
         # Set boundary invariants
-        R_m_bc = alpha1 * R_m_far + (1 - alpha1) * R_m_int
-        S_bc = alpha2 * S_far + (1 - alpha2) * S_int
-        R_p_bc = alpha3 * R_p_far + (1 - alpha3) * R_p_int
+        R_m_bc = alpha1 * self.R_m_far + (1 - alpha1) * R_m_int
+        S_bc = alpha2 * self.S_far + (1 - alpha2) * S_int
+        R_p_bc = alpha3 * self.R_p_far + (1 - alpha3) * R_p_int
 
         # Construct boundary values
         V_n_bc = 1/2 * (R_m_bc + R_p_bc)
@@ -239,8 +240,7 @@ class FarfieldBC:
         V_bc = V_t + V_n_bc.unsqueeze(-1) * self.farfield_normals
 
         U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
-        U_face[self.farfield_mask] = U_face_farfield
-
+        U_face[self.farfield_idx] = U_face_farfield
 
     def _farfield_neuman(self, U_face, Us_bc_cells, dt):
         """Neuman velocity BC """
@@ -372,6 +372,7 @@ class FVMEdgeInfo:
     # Boundary condition
     n_edges_bc: int             # Number of boundary edges
     bc_edge_mask: torch.Tensor  # shape = (n_edges)
+    bc_locations: torch.Tensor  # shape = (n_edges_bc)  # int version of bc_edge_mask
     dirich_mask: torch.Tensor  # shape = (n_edges, n_comp)
     neumann_mask: torch.Tensor  # shape = (n_edges, n_comp)
     edge_to_tri_bc: torch.Tensor  # shape = (n_edges_bc)
@@ -442,8 +443,8 @@ class FVMEdgeInfo:
         face_assigned[self.tri_to_edge, self.tri_edge_signs] = True
         # Step 2: For each boundary edge, find which side (face) is not assigned, with the index (0 or 1) of the unset face
         assigned_boundary = face_assigned[self.bc_edge_mask]  # shape: (n_boundary_edges, 2)
-        self.bc_edge_side = (~assigned_boundary).float().argmax(dim=1)
-
+        self.bc_edge_side = (~assigned_boundary).float().argmax(dim=1).int()
+        self.bc_locations = torch.where(self.bc_edge_mask)[0].int()
         self._init_bc(bc_tags)
         c_print(f'_init_bc done', color="magenta")
 
@@ -456,7 +457,7 @@ class FVMEdgeInfo:
 
     def clear_temp(self):
         del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val, self.cell_disps
-        del self.dirich_mask, self.neumann_mask
+        del self.dirich_mask, self.neumann_mask , self.bc_edge_mask, self.farfield_mask
         # del self.dUf_dUc
 
         torch.cuda.empty_cache()
@@ -505,8 +506,14 @@ class FVMEdgeInfo:
             ff_edge_normals = ff_edge_normals * ff_edge_sign.unsqueeze(-1)
             self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge, ff_edge_normals)
 
+    def test_fn(self, grad_faces_n, cell_grads):
+        grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
+        grad_F = cell_grads[:, :, [0, 1, 3]].reshape(self.n_cells, 6)      # shape = [n_cells, {dx, dy} * {vx, vy, T}]
+        # grad_F_dn = torch.index_select(grad_faces_n, 1, torch.tensor([0, 1, 3], device=self.device))
+        # grad_F = torch.index_select(cell_grads, 2, torch.tensor([0, 1, 3], device=self.device))
+        return grad_F_dn, grad_F.reshape(self.n_cells, 6)
 
-    #@torch.compile()
+    # @torch.compile()
     def precompute_shared(self, Us, dt):
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """
@@ -520,26 +527,30 @@ class FVMEdgeInfo:
         Us_face = Us_face.view(3 * self.n_cells, self.n_comp)
         cell_grads = cell_grads * phi_lim
 
-        # Face gradients of velocity and temperature
-        grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
-        grad_F = cell_grads[:, :, [0, 1, 3]]       # shape = [n_cells, {x, y} , {vx, vy, T}]
-        grad_F_flat = grad_F.repeat_interleave(3, dim=0).view(3*self.n_cells, 6) # [dvx/dx, dvy/dx, dvx/dy, dvy/dy, dT/dx, dT/dy]
-        grad_F_bc = grad_F_flat[self.edge_to_tri_bc]
+        # Face and cell gradients of velocity and temperature
+        grad_F_dn, grad_F = self.test_fn(grad_faces_n, cell_grads)
+
+        # grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
+        # grad_F = cell_grads[:, :, [0, 1, 3]].reshape(self.n_cells, 6)      # shape = [n_cells, {dx, dy} * {vx, vy, T}]
+        grad_F_flat = torch.repeat_interleave(grad_F, 3, dim=0, output_size=3*self.n_cells) # [dvx/dx, dvy/dx, dvx/dy, dvy/dy, dT/dx, dT/dy]
+        # grad_F_flat = grad_F.unsqueeze(1).repeat(1, 3, 1).view(3*self.n_cells, 6) # [dvx/dx, dvy/dx, dvx/dy, dvy/dy, dT/dx, dT/dy]
+        # print(torch.allclose(grad_F_flat, grad_F_flat2))
+        grad_F_bc = grad_F[self.edge_to_tri_bc]
 
         # Limited cell divergence
         div_V = cell_grads[:, 0, 0] + cell_grads[:, 1, 1]        # shape = [n_cells]
         div_V_bc = div_V[self.edge_to_tri_bc].unsqueeze(-1)     # shape = [n_bc_edges, 1]
-        div_V = div_V.repeat_interleave(3).unsqueeze(-1)            # shape = [3*n_cells, 1]
+        div_V = torch.repeat_interleave(div_V, 3, output_size=3*self.n_cells).unsqueeze(-1)            # shape = [3*n_cells, 1]
 
 
         # Prepare projection from cell to edges - (slow step so vectorise over all components)
-        cell_values = torch.cat([Us_face, div_V, grad_F_flat], dim=-1)        # shape = [3*n_cells, n_comp+1]
-        cell_values_bc = torch.cat([U_face_bc, div_V_bc, grad_F_bc], dim=1)      # shape = [n_edges_bc, n_comp+1]
+        cell_values = torch.cat([Us_face, div_V, grad_F_flat], dim=-1)        # shape = [3*n_cells, n_comp+7]
+        cell_values_bc = torch.cat([U_face_bc, div_V_bc, grad_F_bc], dim=1)      # shape = [n_edges_bc, n_comp+7]
 
         # Project to left and right face values
         U_face_all = torch.empty((self.n_edges, 2, self.n_comp + 7), device=self.device)    # [momx, momy, rho, Q, div_V, face_grad X 4]
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = cell_values
-        U_face_all[self.bc_edge_mask, self.bc_edge_side] = cell_values_bc
+        U_face_all[self.bc_locations, self.bc_edge_side] = cell_values_bc
         # U_face_all[self.bc_edge_mask, ~self.bc_edge_side] = cell_values_bc
 
         # """ TEMP TEST """
@@ -554,7 +565,7 @@ class FVMEdgeInfo:
 
 
         # Decompose components back
-        self.Vs_faces = U_face_all[:, :, [0, 1]]  # shape = [n_edges, edges=2, n_comp=2]
+        self.Vs_faces = U_face_all[:, :, :2]  # shape = [n_edges, edges=2, n_comp=2]
         self.rho_faces = U_face_all[:, :, [2]]  # shape = [n_edges, edges=2, dims=1]
         self.T_faces = U_face_all[:, :, [3]]    # shape = [n_edges, edges=2, dims=1]
         self.div_V_faces = U_face_all[:, :, 4]  # shape = [n_edges, edges=2]
@@ -572,7 +583,7 @@ class FVMEdgeInfo:
         grad_F_dot_n = (grad_F_lstsq * self.normals_hat).sum(dim=1, keepdim=True)       # shape = [n_edges, 1, 3]
         grad_F_para = (dFdn_correct.unsqueeze(dim=1) - grad_F_dot_n) * self.normals_hat       # shape = [n_edges, 2, 3]
         grad_F = grad_F_lstsq + grad_F_para             # shape = [n_edges, 2, 3]
-        self.grad_V = grad_F[:, :, [0, 1]]
+        self.grad_V = grad_F[:, :, :2]
         self.grad_T_n = dFdn_correct[:, 2]      # shape = [n_edges]
 
 

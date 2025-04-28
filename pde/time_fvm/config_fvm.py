@@ -25,7 +25,7 @@ class ConfigFVM:
 
     # mesh parameters
     min_A: float = 1e-4
-    max_A: float = 3e-3
+    max_A: float = 1e-3
     lnscale: float = 3
 
     # Physical parameters

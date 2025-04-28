@@ -188,13 +188,18 @@ class TSolver(ABC):
         else:
             self._solve_profile()
 
+    @torch.compile()
+    def _solve_step(self, t):
+        new_Us = self._step(t)
+        self.cells.update_cells(new_Us)
+        return
 
     def _solve_profile(self):
         import torch.profiler
 
-        for _ in range(5):
-            new_Us = self._step(0)
-            self.cells.update_cells(new_Us)
+        for i in range(5):
+            t = i * self.dt
+            self._solve_step(t)
 
         # import gc
         # gc.collect()
@@ -230,17 +235,12 @@ class TSolver(ABC):
             for i in range(10):
                 t = i * self.dt
                 prof.step()
-                new_Us = self._step(t)
-                self.cells.update_cells(new_Us)
+                self._solve_step(t)
 
         print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
         prof.export_chrome_trace("trace.json")
 
-    @torch.compile()
-    def _solve_step(self, t):
-        new_Us = self._step(t)
-        self.cells.update_cells(new_Us)
-        return
+
 
     @abstractmethod
     def _step(self, t):

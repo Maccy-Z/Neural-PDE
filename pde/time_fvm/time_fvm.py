@@ -31,7 +31,6 @@ class PhysicalSetup:
         # Precompute
         self.eye = self.mu_b * torch.eye(2, device=self.device).unsqueeze(0)
 
-    #@torch.compile()
     def state_to_primative(self, state):
         """ Convert """
         momentum, density, Q = state[:, [0, 1]], state[:,[2]], state[:,[3]]
