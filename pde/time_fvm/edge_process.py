@@ -5,8 +5,7 @@ import torch
 from pde.time_fvm.fvm_mesh import FVMMesh
 from pde.graph_grid.fvm_store import Edge
 from pde.time_fvm.config_fvm import ConfigFVM
-from pde.time_fvm.sparse_utils import create_insertion_matrix, lift_sparse_matrix, combine_edge_operators
-
+from pde.time_fvm.sparse_utils import create_insertion_matrix, lift_sparse_matrix, combine_edge_operators, to_csr
 
 class FarfieldBC:
     set_bc_U_face: callable
@@ -187,7 +186,7 @@ class FarfieldBC:
         #     print(f'{T_bc.min() = }')
 
 
-    def __farfield_blended(self, U_face, Us_bc_cells, dt):
+    def __farfield_blended(self, U_face, Us_bc_cells, dt=None):
         """ Compressible farfield:
                 R+ = u + 2a/(gamma - 1)
                 R- = u - 2a/(gamma - 1)
@@ -242,6 +241,7 @@ class FarfieldBC:
         U_face_farfield = torch.cat([V_bc, rho_bc.unsqueeze(-1), T_bc.unsqueeze(-1)], dim=-1)
         U_face[self.farfield_idx] = U_face_farfield
 
+
     def _farfield_neuman(self, U_face, Us_bc_cells, dt):
         """Neuman velocity BC """
         V = Us_bc_cells[:, [0, 1]]                                          # shape = [n_ff_edge, 2]
@@ -261,6 +261,7 @@ class FarfieldBC:
 
         U_face[self.farfield_mask, 2] = rho_bc
         U_face[self.farfield_mask, 3] = T_bc
+
 
     def __farfield_isothermal(self, U_face, Us_bc_cells, dt):
         vx_interior = Us_bc_cells[:, 0]
@@ -382,7 +383,7 @@ class FVMEdgeInfo:
     boundary_setter: any
 
     # Gradients
-    G_mats: list[torch.Tensor]  # shape = [2](n_cells, n_cells)  Gradient matrix for every cell
+    G_mats: torch.Tensor  # shape = (2*n_cells, n_cells)  Gradient matrix for every cell
     edge_dists_bc: torch.Tensor  # shape = (n_bc_edges, n_comp)     Distance between cell centroids, for every edge_bc
     neigh_combine: torch.Tensor # shape = (n_cell, 2). Used for masking neighbors of cell incl boundary edges, in format [Us, U_face_bc]
 
@@ -420,7 +421,8 @@ class FVMEdgeInfo:
 
         (cell_disps, edge_dists_bc, G_mats, neigh_combine, edge_to_tri_comb) = mesh.cell_grad_stuff
         self.edge_dists_bc = edge_dists_bc.to(device).unsqueeze(-1).expand(-1, self.n_comp)
-        self.G_mats = torch.cat([G_mats[0], G_mats[1]], dim=0).to_sparse_csr().to(device)
+        G_mats = torch.cat([G_mats[0], G_mats[1]], dim=0)
+        self.G_mats = to_csr(G_mats, device) #torch.sparse_csr_tensor(G_mats.crow_indices().to(torch.int32), G_mats.col_indices().to(torch.int32), G_mats.values(), G_mats.size())
 
         self.neigh_combine = neigh_combine.to(device)
         self.cell_disps = cell_disps.to(device)
@@ -506,12 +508,6 @@ class FVMEdgeInfo:
             ff_edge_normals = ff_edge_normals * ff_edge_sign.unsqueeze(-1)
             self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge, ff_edge_normals)
 
-    def test_fn(self, grad_faces_n, cell_grads):
-        grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
-        grad_F = cell_grads[:, :, [0, 1, 3]].reshape(self.n_cells, 6)      # shape = [n_cells, {dx, dy} * {vx, vy, T}]
-        # grad_F_dn = torch.index_select(grad_faces_n, 1, torch.tensor([0, 1, 3], device=self.device))
-        # grad_F = torch.index_select(cell_grads, 2, torch.tensor([0, 1, 3], device=self.device))
-        return grad_F_dn, grad_F.reshape(self.n_cells, 6)
 
     # @torch.compile()
     def precompute_shared(self, Us, dt):
@@ -528,20 +524,15 @@ class FVMEdgeInfo:
         cell_grads = cell_grads * phi_lim
 
         # Face and cell gradients of velocity and temperature
-        grad_F_dn, grad_F = self.test_fn(grad_faces_n, cell_grads)
-
-        # grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
-        # grad_F = cell_grads[:, :, [0, 1, 3]].reshape(self.n_cells, 6)      # shape = [n_cells, {dx, dy} * {vx, vy, T}]
+        grad_F_dn = grad_faces_n[:, [0, 1, 3]]   # shape = [n_faces, 3]
+        grad_F = cell_grads[:, :, [0, 1, 3]].reshape(self.n_cells, 6)      # shape = [n_cells, {dx, dy} * {vx, vy, T}]
         grad_F_flat = torch.repeat_interleave(grad_F, 3, dim=0, output_size=3*self.n_cells) # [dvx/dx, dvy/dx, dvx/dy, dvy/dy, dT/dx, dT/dy]
-        # grad_F_flat = grad_F.unsqueeze(1).repeat(1, 3, 1).view(3*self.n_cells, 6) # [dvx/dx, dvy/dx, dvx/dy, dvy/dy, dT/dx, dT/dy]
-        # print(torch.allclose(grad_F_flat, grad_F_flat2))
         grad_F_bc = grad_F[self.edge_to_tri_bc]
 
         # Limited cell divergence
         div_V = cell_grads[:, 0, 0] + cell_grads[:, 1, 1]        # shape = [n_cells]
         div_V_bc = div_V[self.edge_to_tri_bc].unsqueeze(-1)     # shape = [n_bc_edges, 1]
         div_V = torch.repeat_interleave(div_V, 3, output_size=3*self.n_cells).unsqueeze(-1)            # shape = [3*n_cells, 1]
-
 
         # Prepare projection from cell to edges - (slow step so vectorise over all components)
         cell_values = torch.cat([Us_face, div_V, grad_F_flat], dim=-1)        # shape = [3*n_cells, n_comp+7]
@@ -955,8 +946,8 @@ class BoundarySetter:
         A_vals = torch.ones_like(A_rows, dtype=torch.float32, device=device)
 
         size_A = (N, n_cells * n_comp)
-        A_bc = torch.sparse_coo_tensor(torch.stack([A_rows, A_cols], dim=0), A_vals, size=size_A).coalesce().to_sparse_csr()
-
+        A_bc = torch.sparse_coo_tensor(torch.stack([A_rows, A_cols], dim=0), A_vals, size=size_A)# .coalesce().to_sparse_csr()
+        A_bc = to_csr(A_bc, device=device)
         # Build the offset vector b.
         b_bc = torch.empty(N, device=device, dtype=torch.float32)
         # For Dirichlet entries, the prescribed value should override any extracted value.

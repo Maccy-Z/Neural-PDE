@@ -9,6 +9,7 @@ from pde.time_fvm.edge_process import FVMEdgeInfo
 from pde.time_fvm.t_solvers import FVMCells
 from pde.time_fvm.integrators import Euler, RK3_SSP4, Adams3PC, Adams4PC, Butcher_adapt
 from pde.time_fvm.config_fvm import ConfigFVM
+from pde.time_fvm.sparse_utils import to_csr
 
 class PhysicalSetup:
     """ Set physical properties of fluid. """
@@ -74,7 +75,6 @@ class PhysicalSetup:
 
         self._tau()
         self._pressure()
-
 
 
 class FVMEdgeFunc(ABC):
@@ -596,8 +596,8 @@ class FVMEquation:
         D_indices = torch.stack([row_indices, col_indices])
 
         D_shape = [n_tri, n_edges]
-        flux_mat = torch.sparse_coo_tensor(D_indices, D_values, size=D_shape, device="cpu", dtype=dtype).coalesce().cuda().to_sparse_csr()
-
+        flux_mat = torch.sparse_coo_tensor(D_indices, D_values, size=D_shape, device="cpu", dtype=dtype).coalesce()# .cuda().to_sparse_csr()
+        flux_mat = to_csr(flux_mat, self.device)
         return flux_mat
 
 

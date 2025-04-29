@@ -192,7 +192,7 @@ class TSolver(ABC):
     def _solve_step(self, t):
         new_Us = self._step(t)
         self.cells.update_cells(new_Us)
-        return
+
 
     def _solve_profile(self):
         import torch.profiler

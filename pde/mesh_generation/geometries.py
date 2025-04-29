@@ -45,7 +45,7 @@ class Circle(MeshFacet):
 
 
 class Ellipse(MeshFacet):
-    def __init__(self, center, semi_major_axis, eccentricity, rotation_angle, lengthscale, lims=None,
+    def __init__(self, center, semi_major_axis, eccentricity, angle, lengthscale, lims=None,
                  hole: bool = False, dist_req: bool = True, name = None):
         """
         Generate points and segments for an ellipse boundary using eccentricity and rotation angle.
@@ -53,7 +53,7 @@ class Ellipse(MeshFacet):
         :param semi_major_axis: Length of the semi-major axis (along the x-axis before rotation).
         :param eccentricity: Eccentricity of the ellipse (0 <= eccentricity < 1).
         :param lengthscale: Size of segments
-        :param rotation_angle: Angle in radians to rotate the ellipse (counterclockwise).
+        :param angle: Angle in radians to rotate the ellipse (counterclockwise).
         :param hole: Boolean indicating if the ellipse is a hole.
         :return: Arrays of points and segments defining the ellipse boundary.
         """
@@ -76,8 +76,8 @@ class Ellipse(MeshFacet):
 
         # Rotation matrix for the specified angle
         rotation_matrix = np.array([
-            [np.cos(rotation_angle), -np.sin(rotation_angle)],
-            [np.sin(rotation_angle), np.cos(rotation_angle)]
+            [np.cos(angle), -np.sin(angle)],
+            [np.sin(angle), np.cos(angle)]
         ])
 
         # Rotate the points
@@ -91,12 +91,9 @@ class Ellipse(MeshFacet):
         # Generate the segments to connect the points
         self.segments = np.column_stack((np.arange(num_segments), (np.arange(num_segments) + 1) % num_segments))
 
-        # print(f'{self.points.shape = }, {self.segments.shape = }')
-        # print(self.points)
-        # exit(7)
         # Handle the hole parameter
         if hole:
-            self.hole = center
+            self.hole = [center]
         else:
             self.hole = False
 

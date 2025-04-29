@@ -168,6 +168,7 @@ class Adams4PC(TSolver, Adaptive):
         self.dUdt_m1 = dUdt_0
         self.dUdt_m2 = dUdt_0
 
+    @torch.compile()
     def _step(self, t):
         """
         U_a = U_t + dt/24 * [55 * f(U_t) - 59 * f(U_{t-1}) + 37 * f(U_{t-2}) - 9 * f(U_{t-3})]  (Or other order predcitor)
