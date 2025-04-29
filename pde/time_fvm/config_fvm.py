@@ -29,9 +29,10 @@ class ConfigFVM:
     lnscale: float = 3
 
     # Physical parameters
-    viscosity: float = 3e-5
+    viscosity: float = 3e-5     # At room temp
     visc_bulk: float = 1e-5
     thermal_cond: float = 1e-6
+    S_const: float = 110.4       # Sutherland's constant
 
     gamma: float = 1.4  # Ratio of specific heats
     C_v: float = 700     # Specific heat at constant volume

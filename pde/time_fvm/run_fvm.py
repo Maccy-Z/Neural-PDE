@@ -89,7 +89,7 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
 def main():
     import pickle
     torch.manual_seed(0)
-    new = True
+    new = False
     load_state = False
 
     cfg = ConfigFVM()
