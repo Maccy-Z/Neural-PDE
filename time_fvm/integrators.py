@@ -1,11 +1,10 @@
 from collections import deque
-from matplotlib import pyplot as plt
 import torch
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from time_fvm import FVMEquation
 
-from pde.time_fvm.t_solvers import TSolver, FVMCells
+from t_solvers import TSolver, FVMCells
 
 
 class Adaptive:

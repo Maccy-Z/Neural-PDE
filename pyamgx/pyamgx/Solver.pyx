@@ -67,21 +67,21 @@ cdef class Solver:
             If `True`, use an initial guess of zero for the solution,
             regardless of the values in `x`.
         """
-        if self.A is None:
-            raise RuntimeError, "solve() cannot be called before setup()"
 
-        A_size, _ = self.A.get_size()
-        b_size, _ = b.get_size()
-        x_size, _ = x.get_size()
+        # if self.A is None:
+        #     raise RuntimeError, "solve() cannot be called before setup()"
+        # A_size, _ = self.A.get_size()
+        # b_size, _ = b.get_size()
+        # x_size, _ = x.get_size()
 
-        if self.A.shape[0] != self.A.shape[1]:
-            raise ValueError, "Matrix is not square: {} != {}".format(self.A.shape[0], self.A.shape[1])
-        if A_size != b_size:
-            raise ValueError, "Matrix - RHS dimension mismatch: {} != {}".format(
-                A_size, b_size)
-        if b_size != x_size:
-            raise ValueError, "RHS - solution dimension mismatch: {} != {}".format(
-                b_size, x_size)
+        # if self.A.shape[0] != self.A.shape[1]:
+        #     raise ValueError, "Matrix is not square: {} != {}".format(self.A.shape[0], self.A.shape[1])
+        # if A_size != b_size:
+        #     raise ValueError, "Matrix - RHS dimension mismatch: {} != {}".format(
+        #         A_size, b_size)
+        # if b_size != x_size:
+        #     raise ValueError, "RHS - solution dimension mismatch: {} != {}".format(
+        #         b_size, x_size)
 
         if zero_initial_guess:
              check_error(AMGX_solver_solve_with_0_initial_guess(

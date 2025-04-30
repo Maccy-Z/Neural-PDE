@@ -1,15 +1,14 @@
 import torch
 from abc import ABC
-from codetiming import Timer
 from cprint import c_print
 
-from pde.graph_grid.graph_utils import plot_points, plot_interp_graph, plot_edges, plot_interp
-from pde.time_fvm.fvm_mesh import FVMMesh
-from pde.time_fvm.edge_process import FVMEdgeInfo
-from pde.time_fvm.t_solvers import FVMCells
-from pde.time_fvm.integrators import Euler, RK3_SSP4, Adams3PC, Adams4PC, Butcher_adapt
-from pde.time_fvm.config_fvm import ConfigFVM
-from pde.time_fvm.sparse_utils import to_csr
+from pde.graph_grid.graph_utils import plot_points, plot_edges, plot_interp
+from fvm_mesh import FVMMesh
+from edge_process import FVMEdgeInfo
+from t_solvers import FVMCells
+from integrators import Butcher_adapt
+from config_fvm import ConfigFVM
+from sparse_utils import to_csr
 
 class PhysicalSetup:
     """ Set physical properties of fluid. """

@@ -9,7 +9,7 @@ from pde.cartesian_grid.PDE_Grad import PDEForward
 from pde.solvers.jacobian import JacobCalc
 from pde.solvers.linear_solvers import LinearSolver
 
-I = 0
+
 class SolverNewton:
     def __init__(self,  sol_grid: UBase, lin_solver: LinearSolver, jac_calc: JacobCalc, cfg: FwdConfig):
         #self.pde_func = pde_func
@@ -23,7 +23,7 @@ class SolverNewton:
         self.jac_calc = jac_calc
         self.device = sol_grid.device
 
-        self.logging = self.new_log()
+        self.logging = {"time": 0.0, "residual": 0.}
 
     def find_pde_root(self, aux_input=None):
         """
@@ -40,12 +40,24 @@ class SolverNewton:
             with Timer(text="Time to solve: : {:.4f}", logger=logging.debug):
                 # Convert jacobian to sparse here instead of in lin_solver, so we can delete the dense Jacobian asap.
                 jac_preproc = self.lin_solver.preproc_tensor(jacobian)
-                # del jacobian # torch.cuda.empty_cache()
-                deltas = self.lin_solver.solve(jac_preproc, residuals)
+                del jacobian # torch.cuda.empty_cache()
+                deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, residuals)
 
-            # error = jacobian @ deltas - residuals
-            # max_err = torch.max(torch.abs(error)).item()
-            # print(f'{max_err = }')
+            deltas *= self.lr
+            self.sol_grid.update_grid(deltas)
+
+            # Error from PDE
+            pde_resid = self.jac_calc.residuals(aux_input).abs()
+            pde_resid_norm = torch.mean(pde_resid)
+            max_abs_residual = torch.max(pde_resid)
+
+            logging.debug(f'Linear solver Iteration {i}')
+            logging.debug(f'    Linear residual: {lin_resid_norm:.3g}')
+            logging.debug(f'    Mean residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
+
+
+
+
             # self.residuals = residuals
             # global I
             # I += 1
@@ -67,24 +79,8 @@ class SolverNewton:
             #     print(f'{max_err = }')
             #     exit("Newton Solver")
 
-            deltas *= self.lr
-            self.sol_grid.update_grid(deltas)
-
-            resid_new = self.jac_calc.residuals(aux_input).squeeze()
-            mean_abs_residual = torch.mean(torch.abs(resid_new))
-            max_abs_residual = torch.max(torch.abs(resid_new))
-            self.logging["residual"] = mean_abs_residual
-            logging.debug(f'Iteration {i}, Mean residual: {mean_abs_residual:.4g}, Max residual: {max_abs_residual:.4g}')
-
-
+            self.logging["residual"] = pde_resid_norm
 
             if torch.mean(torch.abs(residuals)) < self.solve_acc:
                 logging.info(f"Newton solver converged early at iteration {i+1}")
                 break
-
-
-
-
-
-    def new_log(self):
-        return {"time": 0.0, "residual": 0.}

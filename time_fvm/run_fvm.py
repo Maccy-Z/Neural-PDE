@@ -1,14 +1,12 @@
 from cprint import c_print
 import pickle
 import torch
-import numpy as np
 
 from pde.graph_grid.fvm_store import EdgeBCTypes as E
 from pde.graph_grid.fvm_store import Edge
 from pde.mesh_generation.generate_mesh import gen_mesh_fvm
-from pde.time_fvm.time_fvm import FVMMesh, FVMEquation
-from pde.graph_grid.graph_utils import plot_edges
-from pde.time_fvm.config_fvm import ConfigFVM
+from time_fvm import FVMMesh, FVMEquation
+from config_fvm import ConfigFVM
 
 def mesh_graph(cfg: ConfigFVM, new):
     N_comp = 4
@@ -89,7 +87,7 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
 def main():
     import pickle
     torch.manual_seed(0)
-    new = False
+    new = True
     load_state = False
 
     cfg = ConfigFVM()

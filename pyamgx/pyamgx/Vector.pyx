@@ -216,13 +216,10 @@ cdef class Vector:
         self : Vector
         """
         n = tensor.numel()
-
         cdef unsigned long long ptr = tensor.data_ptr()
         cdef float* c_ptr = <float*>ptr
-
-        # print(f"Uploading CUDA pointer (float*): {<unsigned long long> c_ptr:#x}")
-
         AMGX_vector_upload(self.vec, n, 1, <void *> c_ptr)
+
         return
 
     def download_torch(self, tensor=None):
@@ -237,8 +234,6 @@ cdef class Vector:
 
         cdef unsigned long long ptr = tensor.data_ptr()
         cdef float* c_ptr = <float*>ptr
-
-        # print(f"Donwloading CUDA pointer (float*): {<unsigned long long> c_ptr:#x}")
         AMGX_vector_download(self.vec, <void *> c_ptr)
 
         return tensor

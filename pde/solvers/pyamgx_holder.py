@@ -64,8 +64,8 @@ class PyAMGXSolver:
 
         self.x.download_torch(x)
         # x = self.x.download_torch_zerocopy()
-
-        return x
+        resid_norm = self.solver.get_residual()
+        return x, resid_norm
 
     def __del__(self):
         logger.info("Destroying solver AMGX objects.")

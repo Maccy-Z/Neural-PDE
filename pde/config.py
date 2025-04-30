@@ -22,13 +22,13 @@ class FwdConfig:
     lin_solve_cfg: dict = None
 
     # Jacobian mode
-    num_blocks: int = 4
+    # num_blocks: int = 4
     jac_mode: JacMode = JacMode.GRAPH
 
     # Newton Raphson PDE solver settings
-    lin_mode: LinMode = LinMode.SPARSE
-    #lin_mode: LinMode = LinMode.AMGX
-    N_iter: int = 3
+    # lin_mode: LinMode = LinMode.SPARSE
+    lin_mode: LinMode = LinMode.AMGX
+    N_iter: int = 20
     lr: float = 1.
     acc: float = 0.
 
@@ -43,27 +43,27 @@ class FwdConfig:
                 #"print_solve_stats": 1,
                 "solver": "FGMRES",  #"PBICGSTAB", #
                 "convergence": "RELATIVE_INI_CORE",
-                "max_iters": 500,
-                "gmres_n_restart": 500,
-                "gram_schmidt_options": "REORTHOGONALIZED",   # REORTHOGONALIZED
-                "gs_reorthog_repeat": 2,
+                "max_iters": 50,
+                "gmres_n_restart": 50,
+                "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
+                "gs_reorthog_repeat": 0,
 
                 "preconditioner": "NOSOLVER",
 
-                "preconditioner": {
-                    "smoother": {"solver": "JACOBI_L1",
-                                 "relaxation_factor": 1,
-                                 },
-                    "solver": "AMG",
-                    "coarse_solver": "DENSE_LU_SOLVER",
-                    "algorithm": "AGGREGATION",
-                    "selector": "SIZE_4",
-                    "max_iters": 2,
-                    "presweeps": 8,
-                    "postsweeps": 6,
-                    "cycle": "V",
-                    "max_levels": 3,
-                },
+                # "preconditioner": {
+                #     "solver": "AMG",
+                #     "smoother": {"solver": "JACOBI_L1",
+                #                  "relaxation_factor": 1.5,
+                #                  },
+                #     "coarse_solver": "DENSE_LU_SOLVER",
+                #     "algorithm": "AGGREGATION",
+                #     "selector": "SIZE_4",
+                #     "max_iters": 2,
+                #     "presweeps": 1,
+                #     "postsweeps": 1,
+                #     "cycle": "V",
+                #     "max_levels": 4,
+                # },
 
             }
             # "solver": "DENSE_LU_SOLVER",
@@ -81,7 +81,7 @@ class AdjointConfig:
     jac_mode: JacMode = JacMode.GRAPH
 
     # Linear solver settings
-    lin_mode: LinMode = LinMode.DENSE
+    lin_mode: LinMode = LinMode.AMGX
     maxiter: int = 500
     restart: int = 100
     rtol: float = 1e-4

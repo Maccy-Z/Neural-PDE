@@ -9,38 +9,38 @@ from pde.graph_grid.graph_store import P_Types as T
 from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, NeumanBCCalc
 
-class UTemp(UBase):
-    _Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
-    _us: Tensor   # [N_us_tot, N_component]                   # Value at node
-    deriv_calc: FinDerivCalcSPMV
-
-    def __init__(self, Xs, us, deriv_calc, pde_mask, updt_mask, deriv_calc_eval):
-        self._Xs = Xs
-        self._us = us
-        self.deriv_calc = deriv_calc
-        self.pde_mask = pde_mask
-        self.updt_mask = updt_mask
-        self.deriv_calc_eval = deriv_calc_eval
-
-    def reset(self):
-        self._us = torch.zeros_like(self._us)
-
-    def get_grads(self):
-        grad_dict = self.deriv_calc.derivative(self._us)
-
-        return grad_dict
-    def _cuda(self):
-        pass
-
-    def set_grid(self, new_us):
-        """
-        Set grid to new values. Used for Jacobian computation.
-        """
-        self._us[self.updt_mask] = new_us
-
-    def get_eval_grads(self):
-        grad_dict = self.deriv_calc_eval.derivative(self._us)
-        return grad_dict
+# class UTemp(UBase):
+#     _Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
+#     _us: Tensor   # [N_us_tot, N_component]                   # Value at node
+#     deriv_calc: FinDerivCalcSPMV
+#
+#     def __init__(self, Xs, us, deriv_calc, pde_mask, updt_mask, deriv_calc_eval):
+#         self._Xs = Xs
+#         self._us = us
+#         self.deriv_calc = deriv_calc
+#         self.pde_mask = pde_mask
+#         self.updt_mask = updt_mask
+#         self.deriv_calc_eval = deriv_calc_eval
+#
+#     def reset(self):
+#         self._us = torch.zeros_like(self._us)
+#
+#     def get_grads(self):
+#         grad_dict = self.deriv_calc.derivative(self._us)
+#
+#         return grad_dict
+#     def _cuda(self):
+#         pass
+#
+#     def set_grid(self, new_us):
+#         """
+#         Set grid to new values. Used for Jacobian computation.
+#         """
+#         self._us[self.updt_mask] = new_us
+#
+#     def get_eval_grads(self):
+#         grad_dict = self.deriv_calc_eval.derivative(self._us)
+#         return grad_dict
 
 class UGraph(UBase):
     """ Holder for graph structure. """
@@ -166,77 +166,78 @@ class UGraph(UBase):
             self.deriv_calc_bc = NeumanBCCalc(self.graphs, self.neumann_mask, self.updt_mask, self.deriv_orders_bc, N_component, device=self.device)
 
 
-    def get_subgraph(self):
-        subraph_copy = UTemp(self._Xs.clone(), self._us.clone(), self.deriv_calc, self.pde_mask.clone(),
-                             self.updt_mask.clone(), self.deriv_calc_eval)
-        return subraph_copy
-
-    def copy(self):
-        new_instance = self.__class__.__new__(self.__class__)
-
-        new_instance.device = self.device
-        new_instance._Xs = self._Xs.clone()
-        new_instance._us = self._us.clone()
-        new_instance.deriv_val = self.deriv_val.clone()
-        new_instance.pde_mask = self.pde_mask.clone()
-
-        new_instance.updt_mask = self.updt_mask.clone()
-        new_instance.dirich_mask = self.dirich_mask.clone()
-        new_instance.neumann_mask = self.neumann_mask.clone()
-        new_instance.neumann_mode = self.neumann_mode
-        new_instance.N_us_tot = self.N_us_tot
-        new_instance.N_us_grad = self.N_us_grad
-        new_instance.N_pdes = self.N_pdes
-        new_instance.N_component = self.N_component
-        new_instance.N_deriv = self.N_deriv
-        new_instance.N_dirich = self.N_dirich
-        new_instance.row_perm = self.row_perm.clone()
-        # Keep deriv calc
-        new_instance.deriv_calc = self.deriv_calc
-        new_instance.deriv_calc_bc = self.deriv_calc_bc
-        new_instance.deriv_calc_eval = self.deriv_calc_eval
-
-        return new_instance
-
     def reset(self):
         self._us = torch.zeros_like(self._us)
 
-    def set_bc(self, dirich_bc=None, neuman_bc=None):
-        """ Set boundary conditions. """
-        if dirich_bc is not None:
-            dirich_bc = dirich_bc.to(self.device, non_blocking=True)
-            assert dirich_bc.sum() == self.N_dirich, "Dirichlet BC must match number of Dirichlet points."
-            assert dirich_bc.sum() == self.N_dirich, "Dirichlet BC must match number of Dirichlet points."
-            self._us[self.dirich_mask] = dirich_bc
+    # def get_subgraph(self):
+    #     subraph_copy = UTemp(self._Xs.clone(), self._us.clone(), self.deriv_calc, self.pde_mask.clone(),
+    #                          self.updt_mask.clone(), self.deriv_calc_eval)
+    #     return subraph_copy
 
-        # if neuman_bc is not None:
-        #     neuman_bc = neuman_bc.to(self.device, non_blocking=True)
-        #     self.deriv_val = neuman_bc
-        #     self.neumann_mask = torch.tensor([True for _ in range(len(neuman_bc))], device=self.device)
+    # def copy(self):
+    #     new_instance = self.__class__.__new__(self.__class__)
+    #
+    #     new_instance.device = self.device
+    #     new_instance._Xs = self._Xs.clone()
+    #     new_instance._us = self._us.clone()
+    #     new_instance.deriv_val = self.deriv_val.clone()
+    #     new_instance.pde_mask = self.pde_mask.clone()
+    #
+    #     new_instance.updt_mask = self.updt_mask.clone()
+    #     new_instance.dirich_mask = self.dirich_mask.clone()
+    #     new_instance.neumann_mask = self.neumann_mask.clone()
+    #     new_instance.neumann_mode = self.neumann_mode
+    #     new_instance.N_us_tot = self.N_us_tot
+    #     new_instance.N_us_grad = self.N_us_grad
+    #     new_instance.N_pdes = self.N_pdes
+    #     new_instance.N_component = self.N_component
+    #     new_instance.N_deriv = self.N_deriv
+    #     new_instance.N_dirich = self.N_dirich
+    #     new_instance.row_perm = self.row_perm.clone()
+    #     # Keep deriv calc
+    #     new_instance.deriv_calc = self.deriv_calc
+    #     new_instance.deriv_calc_bc = self.deriv_calc_bc
+    #     new_instance.deriv_calc_eval = self.deriv_calc_eval
+    #
+    #     return new_instance
 
-    def set_eval_deriv_calc(self, mask):
-        assert self.deriv_calc_eval is None, "Already set eval deriv calc"
-        self.deriv_calc_eval = FinDerivCalcSPMV(self.graphs, mask, mask, self.N_component, device=self.device)
+
+    # def set_bc(self, dirich_bc=None, neuman_bc=None):
+    #     """ Set boundary conditions. """
+    #     if dirich_bc is not None:
+    #         dirich_bc = dirich_bc.to(self.device, non_blocking=True)
+    #         assert dirich_bc.sum() == self.N_dirich, "Dirichlet BC must match number of Dirichlet points."
+    #         assert dirich_bc.sum() == self.N_dirich, "Dirichlet BC must match number of Dirichlet points."
+    #         self._us[self.dirich_mask] = dirich_bc
+    #
+    #     if neuman_bc is not None:
+    #         neuman_bc = neuman_bc.to(self.device, non_blocking=True)
+    #         self.deriv_val = neuman_bc
+    #         self.neumann_mask = torch.tensor([True for _ in range(len(neuman_bc))], device=self.device)
+
+    # def set_eval_deriv_calc(self, mask):
+    #     assert self.deriv_calc_eval is None, "Already set eval deriv calc"
+    #     self.deriv_calc_eval = FinDerivCalcSPMV(self.graphs, mask, mask, self.N_component, device=self.device)
 
 
-    def get_grads(self):
-        grad_dict = self.deriv_calc.derivative(self._us)
-        return grad_dict
+    # def get_grads(self):
+    #     grad_dict = self.deriv_calc.derivative(self._us)
+    #     return grad_dict
+    #
+    # def get_neuman_grads(self):
+    #     grad_dict = self.deriv_calc_bc.derivative(self._us)
+    #     return grad_dict
 
-    def get_neuman_grads(self):
-        grad_dict = self.deriv_calc_bc.derivative(self._us)
-        return grad_dict
-
-    def get_grads_all(self):
-        grad_dict = self.deriv_calc.derivative(self._us)
-        bc_grad_dict = self.deriv_calc_bc.derivative(self._us)
-
-        full_grad_dict = {}
-        for name, deriv in grad_dict.items():
-            a = torch
-            full_grad_dict[name] = deriv
-
-        return full_grad_dict
+    # def get_grads_all(self):
+    #     grad_dict = self.deriv_calc.derivative(self._us)
+    #     bc_grad_dict = self.deriv_calc_bc.derivative(self._us)
+    #
+    #     full_grad_dict = {}
+    #     for name, deriv in grad_dict.items():
+    #         a = torch
+    #         full_grad_dict[name] = deriv
+    #
+    #     return full_grad_dict
 
     def _cuda(self):
         """ Move graph data to CUDA. """

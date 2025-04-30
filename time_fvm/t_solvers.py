@@ -2,15 +2,12 @@ from __future__ import annotations
 from cprint import c_print
 import torch
 from abc import ABC, abstractmethod
-from codetiming import Timer
 from matplotlib import pyplot as plt
 import time
 
-from pde.time_fvm.config_fvm import ConfigFVM
-
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from time_fvm import FVMEquation, PhysicalSetup
+    from time_fvm.time_fvm import FVMEquation, PhysicalSetup
 
 
 class FVMCells:
@@ -147,7 +144,7 @@ class TSolver(ABC):
         import glob, os
 
         # Get save name
-        os.makedirs('./saves', exist_ok=True)
+        os.makedirs('saves', exist_ok=True)
         vtu_files = glob.glob('./saves/*.vtu')
         number = [int(file.replace('.vtu', '').split('_')[-1]) for file in vtu_files]
 

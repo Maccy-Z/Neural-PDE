@@ -2,10 +2,10 @@ import math
 from cprint import c_print
 import torch
 
-from pde.time_fvm.fvm_mesh import FVMMesh
+from fvm_mesh import FVMMesh
 from pde.graph_grid.fvm_store import Edge
-from pde.time_fvm.config_fvm import ConfigFVM
-from pde.time_fvm.sparse_utils import create_insertion_matrix, lift_sparse_matrix, combine_edge_operators, to_csr
+from config_fvm import ConfigFVM
+from sparse_utils import lift_sparse_matrix, combine_edge_operators, to_csr
 
 class FarfieldBC:
     set_bc_U_face: callable

@@ -8,6 +8,7 @@ from pde.solvers.linear_solvers import LinearSolver
 from pde.solvers.solver_newton import SolverNewton
 from pde.config import Config
 from pde.loss import Loss
+from pde.graph_grid.graph_utils import plot_interp_graph
 
 class NeuralPDEGraph:
     us_graph: UGraph
@@ -61,3 +62,12 @@ class NeuralPDEGraph:
         self.adjoint = None
 
         return residuals
+
+    def plot_interp(self, Xs=None, us=None):
+        """ Plot the interpolated solution. """
+        if Xs is None:
+            Xs = self.us_graph.Xs
+        if us is None:
+            us = self.us_graph.us
+
+        plot_interp_graph(Xs, us[:, 0])
