@@ -8,7 +8,6 @@ from pde.graph_grid.graph_store import DerivGraph, Point, Deriv
 from pde.graph_grid.graph_store import P_Types as T
 from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, NeumanBCCalc
-from pde.utils import AdjMatSelector
 
 
 def tri_to_n_hop(tris, hops=6):

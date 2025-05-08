@@ -45,7 +45,7 @@ class Poisson(PDEFunc):
         dudx, dudy = u_dus[1], u_dus[2]
         d2udx2, d2udxdy, d2udy2 = u_dus[3], u_dus[4], u_dus[5]
 
-        resid = d2udy2 + d2udx2 + 0 * dudx + 0 * dudy - 5 * u + 5
+        resid = d2udy2 + d2udx2 + 0 * dudx + 0 * dudy #- 5 * u #+ 5
         return resid
 
 class MagneticField(PDEFunc):

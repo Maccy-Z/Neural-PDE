@@ -271,7 +271,7 @@ def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
     for i, ax in enumerate(axes):
         ax.set_title(f"{title[i]}")
         v = np.ma.array(values[i], mask=~vertex_mask)
-        tc = ax.tripcolor(triang, v, shading='gouraud', cmap='viridis')
+        tc = ax.tripcolor(triang, v, shading='flat', cmap='viridis')
         fig.colorbar(tc, ax=ax)
 
         ax.set_xlim(xlim)

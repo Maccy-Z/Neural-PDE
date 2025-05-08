@@ -82,8 +82,8 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
 
 
 def gen_points_full():
-    min_area = 2e-3
-    max_area = 10e-3
+    min_area = 1e-3
+    max_area = 5e-3
     xmin, xmax = 0, 3
     ymin, ymax = 0.0, 1.5
     circle_center = (0.5, 0.4)
@@ -93,33 +93,33 @@ def gen_points_full():
 
     mesh_props = MeshProps(min_area, max_area, lengthscale=0.4)
 
+    coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
+              Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
+              Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
+              Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
+              Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
+              # Circle(circle_center, circle_radius, lengthscale, True, name="circle"),
+              Circle((1.5, 0.75), 0.2, lengthscale, True, name="circle"),
+              # Circle((1.0, 0.8), circle_radius, lengthscale, True, name=PT.DirichBC),
+              # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
+              ]
+
     # coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
-    #           Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
-    #           Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
-    #           Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
-    #           Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
+    #             Line([[xmin, ymin], [1.6, ymin]], dist_req=True, name="wall_bottom"),
+    #             Line([[xmin, ymax], [1.6, ymax]], True, name="wall_top"),
+    #             Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
+    #             Line([[1.6, ymax], [1.6, ymin]], True, name="wall_right"),
+    #
+    #             Line([[1.625, ymin], [2., ymin]], dist_req=True, name="wall_bottom"),
+    #             Line([[1.625, ymax], [2, ymax]], True, name="wall_top"),
+    #             Line([[1.625, ymin], [1.625, ymax]], True, name="wall_left"),
+    #             Line([[2, ymax], [2, ymin]], True, name="wall_right"),
+    #
     #           # Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
     #           Circle((1.5, 0.75), 0.2, lengthscale, True, name="circle"),
     #           # Circle((1.0, 0.8), circle_radius, lengthscale, True, name=PT.DirichBC),
     #           # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
     #           ]
-
-    coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
-                Line([[xmin, ymin], [1.6, ymin]], dist_req=True, name="wall_bottom"),
-                Line([[xmin, ymax], [1.6, ymax]], True, name="wall_top"),
-                Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
-                Line([[1.6, ymax], [1.6, ymin]], True, name="wall_right"),
-
-                Line([[1.625, ymin], [2., ymin]], dist_req=True, name="wall_bottom"),
-                Line([[1.625, ymax], [2, ymax]], True, name="wall_top"),
-                Line([[1.625, ymin], [1.625, ymax]], True, name="wall_left"),
-                Line([[2, ymax], [2, ymin]], True, name="wall_right"),
-
-              # Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
-              # Circle((1.5, 0.75), 0.2, lengthscale, True, name="circle"),
-              # Circle((1.0, 0.8), circle_radius, lengthscale, True, name=PT.DirichBC),
-              # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
-              ]
 
     mesh, marker_tags = create_mesh(coords, mesh_props)
     point_props, markers, _edges = extract_mesh_data(mesh)
