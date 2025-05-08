@@ -37,14 +37,17 @@ class P_TimeTypes(Flag):
 @dataclass
 class Deriv:
     """ Stores all derivative boundary conditions on a point.
-        sum{ d^n u_k / dx_i dx_j } = value
+        sum{ w_m * d^n u_k / dx_i dx_j } = value
     """
     comp: list[int]     # Which components of us to apply derivative to.
     orders: list[tuple[int, int]]       # Derivative orders. (i, j) = d^i/dx_i d^j/dx_j
     value: float            # Sum values
+    weights: list[float] = None # Weights for each derivative order. If None, all weights are 1.
 
     def __post_init__(self):
         assert len(self.comp) == len(self.orders), "Number of components must equal number of derivative orders."
+        if self.weights is None:
+            self.weights = [1.0] * len(self.comp)
 
 @dataclass
 class Point:
@@ -60,21 +63,7 @@ class Point:
         if P_Types.DERIV in self.point_type:
             assert self.derivatives is not None, "Derivatives must be provided for DERIV points."
 
-    def __repr__(self):
-        if self.value is None:
-            return f'\033[33mPoint:\n     X={self.X}, \n     Type={self.point_type})\n\033[0m'
-        else:
-            return f'\033[33mPoint:\n     X={self.X}, \n     Type={self.point_type}, \n     Value={self.value})\n\033[0m'
 
-@dataclass
-class T_Point:
-    """ value:  If NORMAL, value = initial value.
-                If BOUNDARY, value = boundary value.
-        derivatives: Sum of derivatives = value. """
-    point_type: list[P_TimeTypes]   # [N_component]
-    X: torch.Tensor
-    init_val: float|list[float]
-    derivatives: list[Deriv] = None
 
 
 class DerivGraph:

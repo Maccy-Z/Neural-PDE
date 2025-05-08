@@ -26,9 +26,9 @@ class FwdConfig:
     jac_mode: JacMode = JacMode.GRAPH
 
     # Newton Raphson PDE solver settings
-    # lin_mode: LinMode = LinMode.SPARSE
-    lin_mode: LinMode = LinMode.AMGX
-    N_iter: int = 20
+    lin_mode: LinMode = LinMode.SPARSE
+    # lin_mode: LinMode = LinMode.AMGX
+    N_iter: int = 2
     lr: float = 1.
     acc: float = 0.
 
@@ -43,8 +43,8 @@ class FwdConfig:
                 #"print_solve_stats": 1,
                 "solver": "FGMRES",  #"PBICGSTAB", #
                 "convergence": "RELATIVE_INI_CORE",
-                "max_iters": 50,
-                "gmres_n_restart": 50,
+                "max_iters": 100,
+                "gmres_n_restart": 100,
                 "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
                 "gs_reorthog_repeat": 0,
 

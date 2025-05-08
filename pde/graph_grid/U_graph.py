@@ -9,38 +9,6 @@ from pde.graph_grid.graph_store import P_Types as T
 from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, NeumanBCCalc
 
-# class UTemp(UBase):
-#     _Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
-#     _us: Tensor   # [N_us_tot, N_component]                   # Value at node
-#     deriv_calc: FinDerivCalcSPMV
-#
-#     def __init__(self, Xs, us, deriv_calc, pde_mask, updt_mask, deriv_calc_eval):
-#         self._Xs = Xs
-#         self._us = us
-#         self.deriv_calc = deriv_calc
-#         self.pde_mask = pde_mask
-#         self.updt_mask = updt_mask
-#         self.deriv_calc_eval = deriv_calc_eval
-#
-#     def reset(self):
-#         self._us = torch.zeros_like(self._us)
-#
-#     def get_grads(self):
-#         grad_dict = self.deriv_calc.derivative(self._us)
-#
-#         return grad_dict
-#     def _cuda(self):
-#         pass
-#
-#     def set_grid(self, new_us):
-#         """
-#         Set grid to new values. Used for Jacobian computation.
-#         """
-#         self._us[self.updt_mask] = new_us
-#
-#     def get_eval_grads(self):
-#         grad_dict = self.deriv_calc_eval.derivative(self._us)
-#         return grad_dict
 
 class UGraph(UBase):
     """ Holder for graph structure. """
@@ -71,11 +39,7 @@ class UGraph(UBase):
 
     # If Neumann:
     deriv_val: Tensor # [N_deriv_BC]            # Derivative values at nodes for BC
-    row_perm: Tensor # [N_us_grad] # Permutation for Jacobian matrix
     deriv_calc_bc: FinDerivCalcSPMV
-
-    # Get all gradients if needed
-    deriv_calc_eval: FinDerivCalcSPMV = None
 
     def _check(self, setup_dict):
         """ Check problem is well specified """
@@ -84,10 +48,11 @@ class UGraph(UBase):
         assert types.count(T.Ghost) == types.count(T.NeumCentralBC), "Number of ghost points must equal central Neumann BC points."
 
 
-    def __init__(self, setup_dict: dict[int, Point], N_component, grad_acc:int = 2, max_degree:int = 2, device="cpu"):
+    def __init__(self, setup_dict: dict[int, Point], N_component, grad_acc:int = 2, max_degree:int = 2, tri=None, device="cpu"):
         """ Initialize the graph with a set of points.
             setup_dict: dict[node_id, Point]. Dictionary of each type of point
          """
+        self.tri = tri
         self.device = device
         self.N_us_tot = len(setup_dict)
         self.N_us_grad = len([P for P in setup_dict.values() if T.GRAD in P.point_type])
@@ -95,10 +60,7 @@ class UGraph(UBase):
         self.N_component = N_component
 
         self._check(setup_dict)
-        # 1) Reorder points. Redefines node values.
-        sorted_points = sorted(setup_dict.values(), key=lambda x: x.X[1])
-        setup_dict = {i: point for i, point in enumerate(sorted_points)}
-        # 1.1) Node properties and masks
+        # 1) Node properties and masks
         dirich_mask = [T.DirichBC in P.point_type for P in setup_dict.values()]
         self.dirich_mask = torch.tensor(dirich_mask, dtype=torch.bool)
         self.N_dirich = self.dirich_mask.sum().item()
@@ -132,9 +94,7 @@ class UGraph(UBase):
                 self.graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_us_tot, self.N_us_tot))
 
         # 2.1) Add additional stencils
-        #edge_mask = torch.tensor([point.edge_mask for point in setup_dict.values()], dtype=torch.float32)
         edge_mask = torch.ones(len(neum_mask))
-        #edge_mask = 1 - torch.tensor(neum_mask, dtype=torch.float32)
         laplacian = DerivGraph.add(DerivGraph.compose(self.graphs[(1, 0)], self.graphs[(1, 0)], mask=edge_mask),
                                    DerivGraph.compose(self.graphs[(0, 1)], self.graphs[(0, 1)], mask=edge_mask)
                                    )
@@ -148,16 +108,6 @@ class UGraph(UBase):
 
         # 3) Derivative boundary conditions. Linear equations N X derivs - value = 0
         if self.neumann_mode:
-            # 3.1) Compute jacobian permutation
-            jacob_dict = {i: point for i, point in enumerate(v for v in setup_dict.values() if T.GRAD in v.point_type)}
-            jacob_main_pos = {i: point for i, point in jacob_dict.items() if (T.NeumOffsetBC not in point.point_type and T.GRAD in point.point_type)}
-            jacob_neum_pos = {i: point for i, point in jacob_dict.items() if T.NeumOffsetBC in point.point_type}
-            # 3.2) Repeat for each component. Ordering:  [p0_0, p1_0, ..., p0_1, p1_1, ..., ..., b0_0, b0_1, ..., b1_0, b_1_1, ...]
-            pde_perm, bc_perm = torch.tensor(list(jacob_main_pos.keys())), torch.tensor( list(jacob_neum_pos.keys()))
-            pde_perm = torch.cat([pde_perm + i * self.N_us_grad for i in range(self.N_component)])
-            bc_perm = torch.stack([bc_perm + i * self.N_us_grad for i in range(self.N_component)], dim=-1).flatten(0)
-            self.row_perm = torch.cat([pde_perm, bc_perm])
-
             self.deriv_val = torch.tensor(deriv_val).flatten()
             self.deriv_orders_bc = deriv_orders
             self.neumann_mask = torch.tensor(neum_mask)
@@ -168,39 +118,6 @@ class UGraph(UBase):
 
     def reset(self):
         self._us = torch.zeros_like(self._us)
-
-    # def get_subgraph(self):
-    #     subraph_copy = UTemp(self._Xs.clone(), self._us.clone(), self.deriv_calc, self.pde_mask.clone(),
-    #                          self.updt_mask.clone(), self.deriv_calc_eval)
-    #     return subraph_copy
-
-    # def copy(self):
-    #     new_instance = self.__class__.__new__(self.__class__)
-    #
-    #     new_instance.device = self.device
-    #     new_instance._Xs = self._Xs.clone()
-    #     new_instance._us = self._us.clone()
-    #     new_instance.deriv_val = self.deriv_val.clone()
-    #     new_instance.pde_mask = self.pde_mask.clone()
-    #
-    #     new_instance.updt_mask = self.updt_mask.clone()
-    #     new_instance.dirich_mask = self.dirich_mask.clone()
-    #     new_instance.neumann_mask = self.neumann_mask.clone()
-    #     new_instance.neumann_mode = self.neumann_mode
-    #     new_instance.N_us_tot = self.N_us_tot
-    #     new_instance.N_us_grad = self.N_us_grad
-    #     new_instance.N_pdes = self.N_pdes
-    #     new_instance.N_component = self.N_component
-    #     new_instance.N_deriv = self.N_deriv
-    #     new_instance.N_dirich = self.N_dirich
-    #     new_instance.row_perm = self.row_perm.clone()
-    #     # Keep deriv calc
-    #     new_instance.deriv_calc = self.deriv_calc
-    #     new_instance.deriv_calc_bc = self.deriv_calc_bc
-    #     new_instance.deriv_calc_eval = self.deriv_calc_eval
-    #
-    #     return new_instance
-
 
     # def set_bc(self, dirich_bc=None, neuman_bc=None):
     #     """ Set boundary conditions. """

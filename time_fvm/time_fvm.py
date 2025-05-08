@@ -2,7 +2,7 @@ import torch
 from abc import ABC
 from cprint import c_print
 
-from pde.graph_grid.graph_utils import plot_points, plot_edges, plot_interp
+from sparse_utils import plot_points, plot_edges, plot_interp
 from fvm_mesh import FVMMesh
 from edge_process import FVMEdgeInfo
 from t_solvers import FVMCells

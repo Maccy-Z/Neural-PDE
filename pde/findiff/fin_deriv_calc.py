@@ -6,48 +6,6 @@ from pde.BaseDerivCalc import BaseDerivCalc
 from pde.utils_sparse import coo_row_select, coo_col_select, CSRToInt32, block_repeat_csr, plot_sparsity
 
 
-# class FinDerivCalc(MessagePassing, BaseDerivCalc):
-#     """ Compute Grad^n(u) using finite differences. """
-#
-#     def __init__(self, fd_graphs: dict[tuple, DerivGraph], pde_mask):
-#         """ edge_index (dict[tuple, Tensor]): Graph connectivity in COO format with shape [2, E].
-#             edge_coeffs (dict[tuple, Tensor]): Finite difference coefficients for each edge."""
-#         super().__init__(aggr='add')  # Aggregation method can be 'add', 'mean', etc.
-#
-#         self.fd_graphs = fd_graphs
-#         self.pde_mask = pde_mask
-#
-#     def derivative(self, Xs) -> dict[tuple, torch.Tensor]:
-#         return self(Xs)
-#
-#     def forward(self, Xs) -> dict[tuple, torch.Tensor]:
-#         """
-#         Args:
-#             x (Tensor): Node feature matrix of shape [N, F].
-#         """
-#         # Include original node value
-#         derivatives = {(0, 0): Xs[self.pde_mask]}
-#         for order, graph in self.fd_graphs.items():
-#             edge_idx = graph.edge_idx
-#             coeff = graph.weights
-#
-#             derivatives[order] = self.propagate(edge_idx, x=Xs.unsqueeze(-1), edge_coeff=coeff.unsqueeze(-1))[self.pde_mask].squeeze()
-#         return derivatives
-#
-#     def message(self, x_j, edge_coeff):
-#         """
-#         Constructs messages from source nodes to target nodes.
-#
-#         Args:
-#             x_j (Tensor): Source node features for each edge of shape [E, F].
-#             edge_coeff (Tensor): Edge coefficients for each edge of shape [E, 1] or [E, F].
-#
-#         Returns:
-#             Tensor: Messages to be aggregated.
-#         """
-#         return  edge_coeff * x_j
-
-
 class FinDerivCalcSPMV(BaseDerivCalc):
     """ Using sparse matrix-vector multiplication to compute Grad^n(u) using finite differences. """
     def __init__(self, fd_graphs: dict[tuple, DerivGraph], eq_mask: torch.Tensor, grad_mask: torch.Tensor, N_component, device="cpu"):
@@ -136,10 +94,13 @@ class NeumanBCCalc(FinDerivCalcSPMV):
         # Construct all required derivatives and jacobian.
         super().__init__(fd_graphs, eq_mask, grad_mask, N_comp, device=device)
         N_bc_eqs = sum(eq_mask)
+        N_us_tot = eq_mask.shape[0]
 
         # self.fd_spms[(1, 0)].shape = [N_bc_eqs, N_us_tot]
         # Reshape to blocks, which allows for mixing up the derivatives.
         self.fd_spms = {order: block_repeat_csr(spm, N_comp) for order, spm in self.fd_spms.items()}    # shape = [N_derivs][N_bc_eqs*N_comp, N_us_tot*N_comp]
+        # For (0, 0) component, make diagonal matrix x
+        zeroth_order_idx = torch.where(self.eq_mask.repeat(N_comp))[0]
 
         # Build up full derivative matrix, combining all derivatives. [sum_n(deriv_n)] u - N = 0
         deriv_mat = []          # shape = [N_bc_points*N_comp, N_us_tot*N_comp]. Ordered in component major (points grouped).
@@ -148,9 +109,16 @@ class NeumanBCCalc(FinDerivCalcSPMV):
             for deriv_bc in derivs:
                 deriv_row = []
                 # For each component of boundary condition:
-                for component, order in zip(deriv_bc.comp, deriv_bc.orders):
+                for component, order, weight in zip(deriv_bc.comp, deriv_bc.orders, deriv_bc.weights):
                     us_idx = eq_idx + component * N_bc_eqs
-                    deriv_row.append(self.fd_spms[order][us_idx])
+                    if order == (0, 0):
+                        indices = torch.tensor([[zeroth_order_idx[us_idx]]])
+                        row_val = torch.sparse_coo_tensor(indices=indices, values=torch.tensor([weight], dtype=torch.float32), device=self.device, size=(N_us_tot * N_comp,))
+                        deriv_row.append(row_val)
+                    else:
+                        # Get the derivative matrix for this component and order.
+                        spm = self.fd_spms[order][us_idx] * weight
+                        deriv_row.append(spm)
 
                 deriv_row = torch.stack(deriv_row, dim=0)
                 deriv_row_sum = torch.sparse.sum(deriv_row, dim=0)
@@ -171,6 +139,7 @@ class NeumanBCCalc(FinDerivCalcSPMV):
             return.shape = [N_neumann*N_components]
         """
         Us = Us.T.flatten()
+        self.deriv_mat = self.deriv_mat.to(Us.device)
         bc_grads = torch.mv(self.deriv_mat, Us)
         return bc_grads
 

@@ -48,6 +48,29 @@ class Poisson(PDEFunc):
         resid = d2udy2 + d2udx2 + 0 * dudx + 0 * dudy - 5 * u + 5
         return resid
 
+class MagneticField(PDEFunc):
+    def __init__(self, cfg: Config, device='cpu'):
+        super().__init__(cfg=cfg, device=device)
+        self.to(device)
+
+    def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
+        """ u_dus.shape = [n_grads, n_comp]
+            Xs.shape = [2]
+
+            return.shape = [n_comp]
+        """
+        print(f'{u_dus.shape = }')
+
+        u = u_dus[0]
+        dudx, dudy = u_dus[1], u_dus[2]
+        d2udx2, d2udxdy, d2udy2 = u_dus[3], u_dus[4], u_dus[5]
+
+        resid_0 = dudx[0] + dudy[1]
+        resid_1 = dudx[1] - dudy[0]
+
+        resid = torch.stack([resid_0, resid_1], dim=-1)
+        return resid
+
 
 class LearnedFunc(PDEFunc):
     def __init__(self, cfg, device='cpu'):

@@ -82,7 +82,7 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
 
 
 def gen_points_full():
-    min_area = 7e-3
+    min_area = 2e-3
     max_area = 10e-3
     xmin, xmax = 0, 3
     ymin, ymax = 0.0, 1.5
@@ -90,69 +90,27 @@ def gen_points_full():
     circle_radius = 0.1
 
     lengthscale = np.sqrt(2*min_area)
-    # print(lengthscale)
 
     mesh_props = MeshProps(min_area, max_area, lengthscale=0.4)
 
     coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
-              Line([xmin, ymin], [xmax, ymin], True, name=PT.DirichBC),
-              Line([xmin, ymax], [xmax, ymax], True, name=PT.DirichBC),
-              Line([xmin, ymin], [xmin, ymax], True, name=PT.NeumOffsetBC),
-              Line([xmax, ymax], [xmax, ymin], True, name=PT.DirichBC),
-              Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
-              Circle((1.0, 0.5), circle_radius, lengthscale, True, name=PT.DirichBC),
-              Circle((1.0, 0.8), circle_radius, lengthscale, True, name=PT.DirichBC),
-              Ellipse((2.0, 1), 0.2, 0.75, np.pi/3, lengthscale, True, dist_req=True, name=PT.DirichBC),
-        # Line([1, 0.1], [1, 0.5], name="Inlet1")
+              Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
+              Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
+              Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
+              Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
+              # Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
+              Circle((1.5, 0.75), 0.2, lengthscale, True, name="circle"),
+              # Circle((1.0, 0.8), circle_radius, lengthscale, True, name=PT.DirichBC),
+              # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
               ]
     mesh, marker_tags = create_mesh(coords, mesh_props)
-    point_props, markers, _ = extract_mesh_data(mesh)
-    points, _ = point_props
+    point_props, markers, _edges = extract_mesh_data(mesh)
+    points, triangles = point_props
     p_markers, _ = markers
+    int_edges, bound_edges = _edges
 
     p_tags = [marker_tags[int(i)] for i in p_markers]
-
-    #plot_mesh(mesh)
-    return points, p_tags
-
-
-def generate_box_points_spacing(xmax, ymax, spacing=1.0):
-    """
-    Generates an array of 2D points outlining a box from [0, 0] to [xmax, ymax],
-    with approximately the specified spacing between consecutive points.
-
-    Parameters:
-    - xmax (float): The maximum x-coordinate of the box.
-    - ymax (float): The maximum y-coordinate of the box.
-    - spacing (float, optional): Desired spacing between points. Default is 1.0.
-
-    Returns:
-    - numpy.ndarray: An array of shape (N, 2) containing the 2D points,
-                     where N depends on the spacing and box dimensions.
-    """
-    if spacing <= 0:
-        raise ValueError("Spacing must be a positive number.")
-
-    def compute_num_points(length, _spacing):
-        return max(int(np.ceil(length / _spacing)), 1)  # At least 1 point
-
-    num_points_bottom = compute_num_points(xmax, spacing)
-    num_points_right = compute_num_points(ymax, spacing)
-    num_points_top = compute_num_points(xmax, spacing)
-    num_points_left = compute_num_points(ymax, spacing)
-
-    # Bottom edge: from (0, 0) to (xmax, 0)
-    bottom = np.linspace([0, 0], [xmax, 0], num=num_points_bottom, endpoint=True)
-    # Right edge: from (xmax, 0) to (xmax, ymax)
-    right = np.linspace([xmax, spacing], [xmax, ymax], num=num_points_right, endpoint=False)
-    # Top edge: from (xmax, ymax) to (0, ymax)
-    top = np.linspace([xmax, ymax], [0, ymax], num=num_points_top, endpoint=True)
-    # Left edge: from (0, ymax) to (0, 0)
-    left = np.linspace([0, spacing], [0, ymax], num=num_points_left, endpoint=False)
-
-    box_points = np.vstack((bottom, right, top, left))
-    idxs = ["Wall" for _ in range(len(bottom))] + ["Right" for _ in range(len(right))] + ["Wall" for _ in range(len(top))] + ["Left" for _ in range(len(left))]
-    return box_points, idxs
+    return points, triangles, p_tags, bound_edges
 
 
 def gen_mesh_fvm(areas, cell_lnscale=2):

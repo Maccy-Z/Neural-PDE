@@ -74,7 +74,7 @@ class LinearSolver:
         x = sp_linalg.spsolve(A_cp, b_cupy)
 
         x = torch.from_dlpack(x).float()
-        return x
+        return x, 0
 
     def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
         A = A.to_dense()

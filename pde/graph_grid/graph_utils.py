@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import torch
 from torch import Tensor
 from cprint import c_print
-import matplotlib.tri as tri
+import matplotlib.tri as mtri
 
 from scipy.sparse.csgraph import reverse_cuthill_mckee
 from scipy.sparse import csr_matrix
@@ -163,108 +163,81 @@ def test_grid(xmin: float, xmax: float, N: Tensor, device='cpu'):
     return Xs
 
 
-def plot_interp_graph(points, values, resolution=1000, title='Nearest Neighbor Interpolation', lim=None):
-    # Create a grid over the coordinate space
-    # Convert points and values to numpy arrays if they aren't already
-    points, values = points.detach().cpu().numpy(), values.detach().squeeze().cpu().numpy()
-    if lim is not None:
-        values = np.clip(values, lim[0], lim[1])
-    # Automatically determine the range for x and y
-    x_min, x_max = points[:, 0].min(), points[:, 0].max()
-    y_min, y_max = points[:, 1].min(), points[:, 1].max()
-
-    # Create a grid based on the ranges of x and y with the specified resolution
-    grid_x, grid_y = np.mgrid[x_min:x_max:complex(resolution), y_min:y_max:complex(resolution)]
-
-    # Interpolate the scalar values using nearest neighbors
-    grid_z = griddata(points, values, (grid_x, grid_y), method='nearest')
-
-    # Plot the interpolated data
-    plt.figure(figsize=(16, 16))
-    if lim is not None:
-        plt.imshow(grid_z.T, extent=(x_min, x_max, y_min, y_max), origin='lower', cmap='viridis', vmin=lim[0], vmax=lim[1])
-    else:
-        plt.imshow(grid_z.T, extent=(x_min, x_max, y_min, y_max), origin='lower', cmap='viridis')
-    plt.colorbar()
-
-    # Scatter plot of the original points
-    plt.scatter(points[:, 0], points[:, 1], marker='.', s=40)
-
-    # Title and axis labels
-    plt.title(title, fontsize=30)
-    plt.xlabel('X')
-    plt.ylabel('Y')
-
-    # Show the plot
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_points(Xs, values, lims=None, title="", show_index=False, Xlims=None):
-    Xs = Xs.cpu()
-    values = values.cpu()
-
-    if len(values.shape) == 1:
-        values = values.unsqueeze(0)
-        fig, axes = plt.subplots(1, 1, figsize=(12, 9))
-        axes = [axes]
-    else:
-        n_plots = values.shape[0]
-        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots*4))
-
-    # Loop over each batch
-    if Xlims is None:
-        Xlims = (Xs[:, 0].min(), Xs[:, 0].max()), (Xs[:, 1].min(), Xs[:, 1].max())
-
-    for i, ax in enumerate(axes):
-        ax.set_title(f"{title} - Batch {i}")
-        if lims is None:
-            sc = ax.scatter(Xs[:, 0], Xs[:, 1], c=values[i], cmap='viridis')
-        else:
-            sc = ax.scatter(Xs[:, 0], Xs[:, 1], c=values[i], cmap='viridis',
-                            vmin=lims[0], vmax=lims[1])
-
-        if show_index:
-            for i, X in enumerate(Xs):
-                x, y = X
-                if (Xlims[0][0] <= x <= Xlims[0][1]) and (Xlims[1][0] <= y <= Xlims[1][1]):
-                    ax.text(x, y, f"{i}", fontsize=8)
-        fig.colorbar(sc, ax=ax)
-        ax.set_aspect('equal', adjustable='box')
-
-        ax.set_xlim(Xlims[0])
-        ax.set_ylim(Xlims[1])
-
-    #plt.tight_layout()
-    plt.show()
+# def plot_interp_points(Xs, values, resolution=1000, Xlims=None, title=""):
+#     """
+#     Xs:     shape = [n, 2] Tensor of vertex coordinates (N x 2)
+#     values: Tensor of face-based values.
+#             If values is 1D, it's assumed to be defined on the triangulation faces.
+#             If 2D, each row is treated as a separate batch. shape = [2, n]
+#     lims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
+#     title: Plot title.
+#     resolution: (Unused here; kept for interface consistency)
+#     """
+#
+#     # Convert to numpy arrays.
+#     Xs = Xs.cpu().numpy()
+#     values = values.cpu().numpy()
+#
+#     # If values is 1D, expand to a batch of one.
+#     if len(values.shape) == 1:
+#         values = values[None, :]
+#         fig, axes = plt.subplots(1, 1, figsize=(2, 9))
+#         axes = [axes]
+#     else:
+#         n_plots = values.shape[0]
+#         fig, axes = plt.subplots(n_plots, 1, figsize=(6, n_plots * 4))
+#         if n_plots == 1:
+#             axes = [axes]
+#
+#     if isinstance(title, str):
+#         title = [title] * len(axes)
+#
+#     # Determine plot limits.
+#     if Xlims is not None:
+#         xlim, ylim = Xlims
+#     else:
+#         xlim = (Xs[:, 0].min(), Xs[:, 0].max())
+#         ylim = (Xs[:, 1].min(), Xs[:, 1].max())
+#     grid_x, grid_y = np.mgrid[xlim[0]:xlim[1]:complex(resolution), ylim[0]:ylim[1]:complex(resolution)]
+#
+#     # Loop over each batch and plot only the triangles inside the region.
+#     for i, ax in enumerate(axes):
+#         ax.set_title(f"{title[i]}")
+#         grid_z = griddata(Xs, values[i], (grid_x, grid_y), method='nearest')
+#         tc = ax.imshow(grid_z.T)
+#         fig.colorbar(tc, ax=ax)
+#         ax.set_aspect('equal', adjustable='box')
+#
+#     plt.tight_layout()
+#     plt.show()
 
 
-def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
+def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
     """
-    Xs: Tensor of vertex coordinates (N x 2)
+    Xs:     shape = [n, 2] Tensor of vertex coordinates (N x 2)
     values: Tensor of face-based values.
             If values is 1D, it's assumed to be defined on the triangulation faces.
-            If 2D, each row is treated as a separate batch.
+            If 2D, each row is treated as a separate batch. shape = [2, n]
     lims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
     title: Plot title.
     resolution: (Unused here; kept for interface consistency)
     """
+
     # Convert to numpy arrays.
     Xs = Xs.cpu().numpy()
     values = values.cpu().numpy()
-    triangles = triangles.cpu().numpy()
+
 
     # If values is 1D, expand to a batch of one.
     if len(values.shape) == 1:
         values = values[None, :]
-        fig, axes = plt.subplots(1, 1, figsize=(12, 9))
+        fig, axes = plt.subplots(1, 1, figsize=(2, 9))
         axes = [axes]
     else:
         n_plots = values.shape[0]
-        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
-
-    # Create a triangulation from the vertex locations.
-    triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles)
+        fig, axes = plt.subplots(n_plots, 1, figsize=(6, n_plots * 4))
+        if n_plots == 1:
+            axes = [axes]
 
     if isinstance(title, str):
         title = [title] * len(axes)
@@ -276,131 +249,35 @@ def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
         xlim = (Xs[:, 0].min(), Xs[:, 0].max())
         ylim = (Xs[:, 1].min(), Xs[:, 1].max())
 
-    in_region = []
+
+    triang = mtri.Triangulation(Xs[:, 0], Xs[:, 1], triangles)
+    # Filter out triangles that are outside the specified region.
+    tri_mask = []
     for tri_indices in triang.triangles:
         verts = np.column_stack((Xs[tri_indices, 0], Xs[tri_indices, 1]))
-        if np.all((verts[:, 0] >= xlim[0]) & (verts[:, 0] <= xlim[1]) &
-                  (verts[:, 1] >= ylim[0]) & (verts[:, 1] <= ylim[1])):
-            in_region.append(True)
+        x_vert, y_vert = Xs[tri_indices, 0], Xs[tri_indices, 1]
+        if np.all((x_vert[0] >= xlim[0]) & (x_vert[0] <= xlim[1]) &
+                  (y_vert[1] >= ylim[0]) & (y_vert[1] <= ylim[1])):
+            tri_mask.append(True)
         else:
-            in_region.append(False)
-    in_region = np.array(in_region)
-
-    # Create a new triangulation using only the triangles inside the region.
-    new_triangles = triang.triangles[in_region]
-    new_triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles=new_triangles)
+            tri_mask.append(False)
+    tri_mask = np.array(tri_mask)
+    vert_idx = np.unique(triang.triangles[tri_mask])
+    vertex_mask = np.zeros(Xs.shape[0], dtype=bool)
+    vertex_mask[vert_idx] = True
+    triang.set_mask(~tri_mask)
 
     # Loop over each batch and plot only the triangles inside the region.
     for i, ax in enumerate(axes):
         ax.set_title(f"{title[i]}")
-
-        # Filter the face-based values for the triangles inside the region.
-        new_facecolors = values[i][in_region]
-
-        # Plot using the new triangulation and corresponding facecolors.
-        tc = ax.tripcolor(new_triang, facecolors=new_facecolors, edgecolors='none',
-                          cmap='viridis', shading='flat')
+        v = np.ma.array(values[i], mask=~vertex_mask)
+        tc = ax.tripcolor(triang, v, shading='gouraud', cmap='viridis')
         fig.colorbar(tc, ax=ax)
+
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
         ax.set_aspect('equal', adjustable='box')
 
     plt.tight_layout()
     plt.show()
-
-
-def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=None, Xlims=None):
-    """ Plot the edges of the mesh.
-        coords.shape = (n, 2)
-        edge_idx.shape = (m, 2)
-        If 'color' is provided, it should be a torch tensor. In the case that
-        'color' is 1D, it is assumed to be (m,) and converted to (m,1) for plotting.
-    """
-    # Convert inputs from torch tensors to numpy arrays.
-    coords = coords.cpu().detach().numpy()
-    edge_idx = edge_idx.cpu().detach().numpy()
-
-    if colors is None:
-        colors = torch.zeros(len(edge_idx))
-        
-    # If color is a 1D tensor, unsqueeze to (m, 1) and create a single subplot.
-    if len(colors.shape) == 1:
-        colors = colors.unsqueeze(-1)
-        fig, axes = plt.subplots(1, 1, figsize=(16, 12))
-        axes = [axes]
-    else:
-        n_plots = colors.shape[1]
-        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
-
-    colormap = plt.get_cmap("viridis")
-    edge_colors = colors.cpu().detach().numpy().T  # shape = (n_plots, m)
-
-    # Extract the coordinates of each edge. Each row in 'points' is an edge defined
-    # by its two endpoints (shape: (m, 2, 2)).
-    points = coords[edge_idx]
-
-    # Plot each batch (subplot).
-    for i, ax in enumerate(axes):
-        ax.set_aspect('equal', adjustable='box')
-
-        # Plot each edge using the corresponding color.
-        if Xlims is None:
-            xmin, xmax = coords[:, 0].min(), coords[:, 0].max()
-            ymin, ymax = coords[:, 1].min(), coords[:, 1].max()
-        else:
-            (xmin, xmax), (ymin, ymax) = Xlims
-
-        edge_nums, edge_scalars = [], []
-        for j, (edge, s) in enumerate(zip(points, edge_colors[i], strict=True)):
-            midpoint = edge.mean(axis=0)
-            if not ((xmin <= midpoint[0] <= xmax) and (ymin <= midpoint[1] <= ymax)):
-                continue
-            edge_scalars.append(s)
-            edge_nums.append(j)
-
-        edge_scalars = np.array(edge_scalars)
-        min_c, max_c = edge_scalars.min(), edge_scalars.max()
-        edge_scalars = (edge_scalars - min_c) / (max_c - min_c + 1e-9)
-
-        for j, s in zip(edge_nums, edge_scalars, strict=True):
-            c = colormap(s)
-            edge = points[j]
-            ax.plot(edge[:, 0], edge[:, 1], color=c)
-            if show_index:
-                midpoint = edge.mean(axis=0)
-                ax.text(midpoint[0], midpoint[1], f"{j}", fontsize=8)
-                ax.annotate(
-                    '',  # No text
-                    xy=(edge[1]),  # Arrow tip (end of the line)
-                    xytext=midpoint,  # Arrow tail (start of the line)
-                    arrowprops=dict(arrowstyle='->', lw=.5)
-                )
-
-            ax.set_xlim([xmin, xmax])
-            ax.set_ylim([ymin, ymax])
-
-
-        # If colors are provided, create a ScalarMappable for the colorbar.
-        ax.set_title(f"{title} - Batch {i}, [min={min_c.item():.3g}, max={max_c.item():.3g}]")
-
-        # Use the original scalar range for this batch.
-        norm = plt.Normalize(vmin=min_c.item(), vmax=max_c.item())
-        sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
-        # Optional: attach the actual scalar array (could also use an empty array)
-        cbar = fig.colorbar(sm, ax=ax)
-    plt.tight_layout()
-    plt.show()
-
-
-
-if __name__ == "__main__":
-    # Sample data: list of (x, y) coordinates and their scalar values
-    points = np.array([
-        (0, 0), (1, 0), (1, 1), (0, 1),
-        (0.5, 0.5), (0.75, 0.75), (0.25, 0.25)
-    ])
-    values = np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-
-    # Plot the interpolation graph
-    plot_interp_graph(points, values)
 

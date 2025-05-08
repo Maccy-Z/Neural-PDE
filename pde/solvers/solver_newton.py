@@ -48,7 +48,7 @@ class SolverNewton:
 
             # Error from PDE
             pde_resid = self.jac_calc.residuals(aux_input).abs()
-            pde_resid_norm = torch.mean(pde_resid)
+            pde_resid_norm = pde_resid.norm()
             max_abs_residual = torch.max(pde_resid)
 
             logging.debug(f'Linear solver Iteration {i}')
