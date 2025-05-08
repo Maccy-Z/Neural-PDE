@@ -93,16 +93,34 @@ def gen_points_full():
 
     mesh_props = MeshProps(min_area, max_area, lengthscale=0.4)
 
+    # coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
+    #           Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
+    #           Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
+    #           Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
+    #           Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
+    #           # Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
+    #           Circle((1.5, 0.75), 0.2, lengthscale, True, name="circle"),
+    #           # Circle((1.0, 0.8), circle_radius, lengthscale, True, name=PT.DirichBC),
+    #           # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
+    #           ]
+
     coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
-              Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
-              Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
-              Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
-              Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
+                Line([[xmin, ymin], [1.6, ymin]], dist_req=True, name="wall_bottom"),
+                Line([[xmin, ymax], [1.6, ymax]], True, name="wall_top"),
+                Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
+                Line([[1.6, ymax], [1.6, ymin]], True, name="wall_right"),
+
+                Line([[1.625, ymin], [2., ymin]], dist_req=True, name="wall_bottom"),
+                Line([[1.625, ymax], [2, ymax]], True, name="wall_top"),
+                Line([[1.625, ymin], [1.625, ymax]], True, name="wall_left"),
+                Line([[2, ymax], [2, ymin]], True, name="wall_right"),
+
               # Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
-              Circle((1.5, 0.75), 0.2, lengthscale, True, name="circle"),
+              # Circle((1.5, 0.75), 0.2, lengthscale, True, name="circle"),
               # Circle((1.0, 0.8), circle_radius, lengthscale, True, name=PT.DirichBC),
               # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
               ]
+
     mesh, marker_tags = create_mesh(coords, mesh_props)
     point_props, markers, _edges = extract_mesh_data(mesh)
     points, triangles = point_props
@@ -110,7 +128,7 @@ def gen_points_full():
     int_edges, bound_edges = _edges
 
     p_tags = [marker_tags[int(i)] for i in p_markers]
-    return points, triangles, p_tags, bound_edges
+    return points, triangles, (int_edges, bound_edges), p_tags
 
 
 def gen_mesh_fvm(areas, cell_lnscale=2):

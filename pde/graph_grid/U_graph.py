@@ -8,7 +8,52 @@ from pde.graph_grid.graph_store import DerivGraph, Point, Deriv
 from pde.graph_grid.graph_store import P_Types as T
 from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, NeumanBCCalc
+from pde.utils import AdjMatSelector
 
+
+def tri_to_n_hop(tris, hops=6):
+    """
+    Build an (undirected) n-hop adjacency matrix from a [n_tri,3] triangle index tensor.
+
+    Returns vertices reachable within n hops.
+    """
+    n_verts = int(tris.max().item()) + 1
+
+    # same edge stacking
+    e0 = tris[:, [0, 1]]
+    e1 = tris[:, [1, 2]]
+    e2 = tris[:, [2, 0]]
+    edges = torch.cat([e0, e1, e2], dim=0)
+
+    # mirror for undirected
+    rev_edges = edges[:, [1, 0]]
+    all_edges = torch.cat([edges, rev_edges], dim=0).t()  # shape [2, 6*n_tri]
+
+    # values are all 1
+    vals = torch.ones(all_edges.shape[1], dtype=torch.float32, device=tris.device)
+
+    adj_mat = torch.sparse_coo_tensor(all_edges, vals, (n_verts, n_verts)).to_sparse_csr()
+
+    M = adj_mat
+    n_hop_idx = {}
+    for n in range(2, hops + 1):
+        M = M @ adj_mat
+
+        n_hop_idx[n] = ((M.crow_indices(), M.col_indices()))
+
+    # Get n-hop neighbours
+    n_hop_reach_cols = {}
+    for hop in range(3, hops):
+        crow_idxs, col_idxs = n_hop_idx[hop]
+        reached_cols = {}
+        for i in range(n_verts):
+            start = crow_idxs[i]
+            stop = crow_idxs[i + 1]
+            reached_cols[i] = col_idxs[start:stop].to(torch.int32).numpy()
+
+        n_hop_reach_cols[hop] = reached_cols
+
+    return n_hop_reach_cols
 
 class UGraph(UBase):
     """ Holder for graph structure. """
@@ -83,22 +128,25 @@ class UGraph(UBase):
         self._Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
         self._us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
 
-        # 2) Compute finite difference stencils / graphs.
+        # 2.1) Get the neighborhood graph
+        # n_hop_adj = triangle_to_adjacency(self.tri, hops=5)
+        n_hop_adj = tri_to_n_hop(self.tri)
+        # 2.2) Compute finite difference stencils / graphs.
         # Each gradient type has its own stencil and graph.
         diff_degrees = gen_multi_idx_tuple(max_degree)[1:] # 0th order is just itself.
         self.graphs = {}
         for degree in diff_degrees:
             c_print(f"Generating graph for degree {degree}", color="black")
             with Timer(text="Time to solve: : {:.4f}"):
-                edge_idx, fd_weights = calc_coeff(setup_dict, grad_acc, degree)
+                edge_idx, fd_weights = calc_coeff(setup_dict, grad_acc, degree, n_hop_adj)
                 self.graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_us_tot, self.N_us_tot))
 
-        # 2.1) Add additional stencils
-        edge_mask = torch.ones(len(neum_mask))
-        laplacian = DerivGraph.add(DerivGraph.compose(self.graphs[(1, 0)], self.graphs[(1, 0)], mask=edge_mask),
-                                   DerivGraph.compose(self.graphs[(0, 1)], self.graphs[(0, 1)], mask=edge_mask)
-                                   )
-        self.graphs["laplacian"] = laplacian
+        # # 2.1) Add additional stencils
+        # edge_mask = torch.ones(len(neum_mask))
+        # laplacian = DerivGraph.add(DerivGraph.compose(self.graphs[(1, 0)], self.graphs[(1, 0)], mask=edge_mask),
+        #                            DerivGraph.compose(self.graphs[(0, 1)], self.graphs[(0, 1)], mask=edge_mask)
+        #                            )
+        # self.graphs["laplacian"] = laplacian
 
         if device == "cuda":
             self._cuda()
@@ -119,42 +167,6 @@ class UGraph(UBase):
     def reset(self):
         self._us = torch.zeros_like(self._us)
 
-    # def set_bc(self, dirich_bc=None, neuman_bc=None):
-    #     """ Set boundary conditions. """
-    #     if dirich_bc is not None:
-    #         dirich_bc = dirich_bc.to(self.device, non_blocking=True)
-    #         assert dirich_bc.sum() == self.N_dirich, "Dirichlet BC must match number of Dirichlet points."
-    #         assert dirich_bc.sum() == self.N_dirich, "Dirichlet BC must match number of Dirichlet points."
-    #         self._us[self.dirich_mask] = dirich_bc
-    #
-    #     if neuman_bc is not None:
-    #         neuman_bc = neuman_bc.to(self.device, non_blocking=True)
-    #         self.deriv_val = neuman_bc
-    #         self.neumann_mask = torch.tensor([True for _ in range(len(neuman_bc))], device=self.device)
-
-    # def set_eval_deriv_calc(self, mask):
-    #     assert self.deriv_calc_eval is None, "Already set eval deriv calc"
-    #     self.deriv_calc_eval = FinDerivCalcSPMV(self.graphs, mask, mask, self.N_component, device=self.device)
-
-
-    # def get_grads(self):
-    #     grad_dict = self.deriv_calc.derivative(self._us)
-    #     return grad_dict
-    #
-    # def get_neuman_grads(self):
-    #     grad_dict = self.deriv_calc_bc.derivative(self._us)
-    #     return grad_dict
-
-    # def get_grads_all(self):
-    #     grad_dict = self.deriv_calc.derivative(self._us)
-    #     bc_grad_dict = self.deriv_calc_bc.derivative(self._us)
-    #
-    #     full_grad_dict = {}
-    #     for name, deriv in grad_dict.items():
-    #         a = torch
-    #         full_grad_dict[name] = deriv
-    #
-    #     return full_grad_dict
 
     def _cuda(self):
         """ Move graph data to CUDA. """

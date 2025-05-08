@@ -5,7 +5,7 @@ import numpy as np
 from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph
-from pde.graph_grid.graph_utils import test_grid, gen_perim
+from pde.graph_grid.graph_utils import plot_edges
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pdes.PDEs import Poisson, MagneticField
@@ -22,6 +22,9 @@ def boundary_normals(points, triangles, bc_edges):
     bc_edges: (nE, 2) array of integer vertex indices for boundary edges
     returns: (nE, 2) array of outward unit normals
     """
+    points = points.numpy()
+    triangles = triangles.numpy()
+
     # 1) Build adjacency: map each undirected edge to its triangle and opposite vertex
     edge_to_tri = {}
     for tri in triangles:
@@ -59,9 +62,15 @@ def boundary_normals(points, triangles, bc_edges):
 def mesh_graph(cfg):
     cfg = Config()
     N_comp = 1
-    points, triangles, p_tags, bc_edges = gen_points_full()
-    normals = boundary_normals(points, triangles, bc_edges)
-    points = torch.from_numpy(points).float()
+    Xs, triangles, (int_edges, bc_edges), p_tags  = gen_points_full()
+    Xs = torch.from_numpy(Xs).float()
+    triangles = torch.from_numpy(triangles).int()
+    all_tags = np.concatenate([np.zeros(len(int_edges)), np.ones(len(bc_edges))], axis=0, dtype=np.float32)
+    all_tags = torch.from_numpy(all_tags)
+    all_edgs = torch.from_numpy(np.concatenate([int_edges, bc_edges], axis=0, dtype=np.int32))
+    # plot_edges(Xs, all_edgs, all_tags)
+    # exit(7)
+    normals = boundary_normals(Xs, triangles, bc_edges)
 
     # Process boundary points
     bc_edges = torch.from_numpy(bc_edges)
@@ -69,25 +78,25 @@ def mesh_graph(cfg):
 
     deriv = [Deriv(comp=[0], orders=[(1, 0)], value=0.)]#, Deriv(comp=[1], orders=[(1, 0)], value=1.)]
     Xs_all = {}
-    for i, (point, tag) in enumerate(zip(points, p_tags)):
+    for i, (X, tag) in enumerate(zip(Xs, p_tags)):
         value = [0. for _ in range(N_comp)]
         if tag == "Normal":
-            Xs_all[i] = Point(PT.Normal, point, value=value)
+            Xs_all[i] = Point(PT.Normal, X, value=value)
             assert i not in bc_points, "Normal point is also a boundary point"
         elif tag == "wall_bottom":
-            Xs_all[i] = Point(PT.DirichBC, point, value=value, derivatives=deriv)
+            Xs_all[i] = Point(PT.DirichBC, X, value=value, derivatives=deriv)
         elif tag == "wall_top":
-            Xs_all[i] = Point(PT.DirichBC, point, value=value, derivatives=deriv)
+            Xs_all[i] = Point(PT.DirichBC, X, value=value, derivatives=deriv)
         elif tag == "wall_left":
-            Xs_all[i] = Point(PT.DirichBC, point, value=value, derivatives=deriv)
+            Xs_all[i] = Point(PT.DirichBC, X, value=value, derivatives=deriv)
         elif tag == "wall_right":
             value = [1. for _ in range(N_comp)]
-            Xs_all[i] = Point(PT.DirichBC, point, value=value, derivatives=deriv)
+            Xs_all[i] = Point(PT.DirichBC, X, value=value, derivatives=deriv)
         elif tag == "circle":
             n_hat = normals[i].tolist()
 
             deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]])]
-            Xs_all[i] = Point(PT.NeumOffsetBC, point, value=value, derivatives=deriv)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         else:
             raise ValueError(f"Unknown point tag {tag}")
 

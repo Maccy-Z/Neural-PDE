@@ -281,3 +281,83 @@ def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
     plt.tight_layout()
     plt.show()
 
+def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=None, Xlims=None):
+    """ Plot the edges of the mesh.
+        coords.shape = (n, 2)
+        edge_idx.shape = (m, 2)
+        If 'color' is provided, it should be a torch tensor. In the case that
+        'color' is 1D, it is assumed to be (m,) and converted to (m,1) for plotting.
+    """
+    # Convert inputs from torch tensors to numpy arrays.
+    coords = coords.cpu().detach().numpy()
+    edge_idx = edge_idx.cpu().detach().numpy()
+
+    if colors is None:
+        colors = torch.zeros(len(edge_idx))
+
+    # If color is a 1D tensor, unsqueeze to (m, 1) and create a single subplot.
+    if len(colors.shape) == 1:
+        colors = colors.unsqueeze(-1)
+        fig, axes = plt.subplots(1, 1, figsize=(16, 12))
+        axes = [axes]
+    else:
+        n_plots = colors.shape[1]
+        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+
+    colormap = plt.get_cmap("viridis")
+    edge_colors = colors.cpu().detach().numpy().T  # shape = (n_plots, m)
+
+    # Extract the coordinates of each edge. Each row in 'points' is an edge defined
+    # by its two endpoints (shape: (m, 2, 2)).
+    points = coords[edge_idx]
+
+    # Plot each batch (subplot).
+    for i, ax in enumerate(axes):
+        ax.set_aspect('equal', adjustable='box')
+
+        # Plot each edge using the corresponding color.
+        if Xlims is None:
+            xmin, xmax = coords[:, 0].min(), coords[:, 0].max()
+            ymin, ymax = coords[:, 1].min(), coords[:, 1].max()
+        else:
+            (xmin, xmax), (ymin, ymax) = Xlims
+
+        edge_nums, edge_scalars = [], []
+        for j, (edge, s) in enumerate(zip(points, edge_colors[i], strict=True)):
+            midpoint = edge.mean(axis=0)
+            if not ((xmin <= midpoint[0] <= xmax) and (ymin <= midpoint[1] <= ymax)):
+                continue
+            edge_scalars.append(s)
+            edge_nums.append(j)
+
+        edge_scalars = np.array(edge_scalars)
+        min_c, max_c = edge_scalars.min(), edge_scalars.max()
+        edge_scalars = (edge_scalars - min_c) / (max_c - min_c + 1e-9)
+
+        for j, s in zip(edge_nums, edge_scalars, strict=True):
+            c = colormap(s)
+            edge = points[j]
+            ax.plot(edge[:, 0], edge[:, 1], color=c)
+            if show_index:
+                midpoint = edge.mean(axis=0)
+                ax.text(midpoint[0], midpoint[1], f"{j}", fontsize=8)
+                ax.annotate(
+                    '',  # No text
+                    xy=(edge[1]),  # Arrow tip (end of the line)
+                    xytext=midpoint,  # Arrow tail (start of the line)
+                    arrowprops=dict(arrowstyle='->', lw=.5)
+                )
+
+            ax.set_xlim([xmin, xmax])
+            ax.set_ylim([ymin, ymax])
+
+        # If colors are provided, create a ScalarMappable for the colorbar.
+        ax.set_title(f"{title} - Batch {i}, [min={min_c.item():.3g}, max={max_c.item():.3g}]")
+
+        # Use the original scalar range for this batch.
+        norm = plt.Normalize(vmin=min_c.item(), vmax=max_c.item())
+        sm = plt.cm.ScalarMappable(cmap=colormap, norm=norm)
+        # Optional: attach the actual scalar array (could also use an empty array)
+        cbar = fig.colorbar(sm, ax=ax)
+    plt.tight_layout()
+    plt.show()

@@ -11,8 +11,10 @@ from pde.graph_grid.graph_store import Point, P_Types
 
 diff_options = Literal["pinv", "sq_weight_norm", "abs_weight_norm"]
 
+
 class ConvergenceError(Exception):
     pass
+
 
 def lru_cache_tensor(maxsize=128):
     """
@@ -190,17 +192,28 @@ def fin_diff_weights(center, points, derivative_order, m, method: diff_options, 
                #'mean_err': err.abs().mean(), 'abs_res': lambda: w.abs() @ weights, 'sq_res': lambda: w.unsqueeze(0) @ torch.diag(weights) @ w}
 
 
-def _calc_coeff_single(j, X, diff_order, diff_acc, N_us_tot, min_points, max_points):
+def _calc_coeff_single(j, X, param_dict):
     """ Inner loop for multiprocessing"""
-    global global_kdtree, global_Xs_all
-    kdtree, Xs_all = global_kdtree, global_Xs_all
+    global global_Xs_all, global_adj_mat
+    Xs_all, adj_mat = global_Xs_all, global_adj_mat
+
+
+    diff_order = param_dict["order"]
+    diff_acc = param_dict["acc"]
+    N_us_tot = param_dict["N_us_tot"]
+    min_points = param_dict["min_points"]
+    max_points = param_dict["max_points"]
 
     # Find the nearest neighbors and calculate coefficients.
     # If the calculation fails (not enough points for given accuracy), increase the number of neighbors until it succeeds.
-    for i in range(min_points, max_points, 25):
+    for i in adj_mat.keys(): #range(min_points, max_points, 25):
         try:
-            _, neigh_idx = kdtree.query(X, k=i)
+            # _, neigh_idx = kdtree.query(X, k=i)
+            # where_neigh = np.where(adj_idx[0] == j)[0]
+            # neigh_idx = adj_idx[1, where_neigh]
+            neigh_idx = adj_mat[i][j]
             neigh_Xs = Xs_all[neigh_idx]
+
             w, _ = fin_diff_weights(X, neigh_Xs, diff_order, diff_acc, "abs_weight_norm", atol=1e-3, eps=6e-8)
         except ConvergenceError:
             print(f"{j} Adding more points")
@@ -210,15 +223,15 @@ def _calc_coeff_single(j, X, diff_order, diff_acc, N_us_tot, min_points, max_poi
         c_print(f"Using looser tolerance for point {j}, {X=}", color="bright_magenta")
         # Using Try again with looser tolerance, probably from fp64 -> fp32 rounding.
         try:
-            _, neigh_idx = kdtree.query(X, k=min(max_points, N_us_tot))
+            # _, neigh_idx = kdtree.query(X, k=min(max_points, N_us_tot))
+            # neigh_Xs = Xs_all[neigh_idx]
+            neigh_idx = adj_mat[max(adj_mat.keys())][j]
             neigh_Xs = Xs_all[neigh_idx]
             w, _ = fin_diff_weights(X, neigh_Xs, diff_order, diff_acc, "abs_weight_norm", atol=2e-3, eps=18e-8)
         except ConvergenceError as e:
             # Unable to find suitable weights.
             status, err_msg = e.args
             c_print(f'{i = }, {err_msg = }, {status = }', color='bright_magenta')
-
-            # print(neigh_Xs)
             raise ConvergenceError(f'Could not find weights for {X.tolist()}') from None
 
     # # Only create edge if weight is not 0
@@ -234,13 +247,13 @@ def _calc_coeff_single(j, X, diff_order, diff_acc, N_us_tot, min_points, max_poi
     return edge_idx, w_want
 
 
-global_kdtree, global_Xs_all = None, None
-def _init_pool(kdtree, Xs_all):
-    global global_kdtree, global_Xs_all
-    global_kdtree, global_Xs_all = kdtree, Xs_all
+global_kdtree, global_Xs_all, global_adj_mat = None, None, None
+def _init_pool(Xs_all, adj_mat):
+    global global_kdtree, global_Xs_all, global_adj_mat
+    global_Xs_all, global_adj_mat = Xs_all, adj_mat
 
 
-def calc_coeff(point_dict: dict[int, Point], diff_acc: int, diff_order: tuple[int, int]):
+def calc_coeff(point_dict: dict[int, Point], diff_acc: int, diff_order: tuple[int, int], adj_mat: dict):
     """ Calculate finite difference coefficients.
     Xs_all: torch.Tensor [N_nodes, 2]. All nodes in the graph.
     point_dict: dict[int, Point]. Dictionary of points where gradients are calculated
@@ -248,18 +261,19 @@ def calc_coeff(point_dict: dict[int, Point], diff_acc: int, diff_order: tuple[in
     diff_acc: int
     diff_order: Tuple[int, int]
     """
+
     Xs_all = torch.stack([point.X for point in point_dict.values()])
-    kdtree = KDTree(Xs_all)
     N_us_tot = len(point_dict)
     min_points = min(50, N_us_tot)
     max_points = min(251, N_us_tot + 1)
 
-    pde_dict = point_dict#{idx: point for idx, point in point_dict.items()}
+    param_dict = {"order": diff_order, "acc": diff_acc, "N_us_tot": N_us_tot, "min_points": min_points, "max_points": max_points}
 
-    mp_args = [(j, point.X, diff_order, diff_acc, N_us_tot, min_points, max_points) for j, point in pde_dict.items()]
+    mp_args = [(j, point.X, param_dict) for j, point in point_dict.items()]
 
-    with Pool(processes=16, initializer=_init_pool, initargs=(kdtree, Xs_all)) as pool:
+    with Pool(processes=16, initializer=_init_pool, initargs=(Xs_all, adj_mat)) as pool:
         results = pool.starmap(_calc_coeff_single, mp_args)
+
 
     edge_idxs, weights = zip(*results)
     # Pytorch multiprocessing bug
