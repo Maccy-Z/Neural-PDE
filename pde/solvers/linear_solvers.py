@@ -74,7 +74,19 @@ class LinearSolver:
         x = sp_linalg.spsolve(A_cp, b_cupy)
 
         x = torch.from_dlpack(x).float()
-        return x, 0
+        values = torch.from_dlpack(A_cp.data)
+        col_indices = torch.from_dlpack(A_cp.indices)
+        crow_indices = torch.from_dlpack(A_cp.indptr)
+
+        A = torch.sparse_csr_tensor(
+                                    crow_indices,
+                                    col_indices,
+                                    values,
+                                    size=A_cp.shape,
+                                    device='cuda'
+                                    ).float()
+        residual = torch.linalg.norm(A @ x - b)
+        return x, residual
 
     def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
         A = A.to_dense()
@@ -104,6 +116,7 @@ class LinearSolver:
     def preproc_sparse(self, A: torch.Tensor) -> sp.csr_matrix:
         """ Convert a torch tensor to a cupy sparse tensor """
         if A.is_sparse_csr:
+            # A = A.to_dense().to_sparse_csr()
             values = A.values()
             indices = A.col_indices()
             indptr = A.crow_indices()

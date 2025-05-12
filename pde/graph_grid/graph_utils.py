@@ -214,10 +214,10 @@ def test_grid(xmin: float, xmax: float, N: Tensor, device='cpu'):
 
 def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
     """
-    Xs:     shape = [n, 2] Tensor of vertex coordinates (N x 2)
+    Xs:     shape = [n_points, 2] Tensor of vertex coordinates
     values: Tensor of face-based values.
             If values is 1D, it's assumed to be defined on the triangulation faces.
-            If 2D, each row is treated as a separate batch. shape = [2, n]
+            If 2D, each row is treated as a separate batch. shape = [n_plots, n_points]
     lims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
     title: Plot title.
     resolution: (Unused here; kept for interface consistency)
@@ -231,7 +231,7 @@ def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
     # If values is 1D, expand to a batch of one.
     if len(values.shape) == 1:
         values = values[None, :]
-        fig, axes = plt.subplots(1, 1, figsize=(2, 9))
+        fig, axes = plt.subplots(1, 1, figsize=(6, 4))
         axes = [axes]
     else:
         n_plots = values.shape[0]
@@ -254,7 +254,6 @@ def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
     # Filter out triangles that are outside the specified region.
     tri_mask = []
     for tri_indices in triang.triangles:
-        verts = np.column_stack((Xs[tri_indices, 0], Xs[tri_indices, 1]))
         x_vert, y_vert = Xs[tri_indices, 0], Xs[tri_indices, 1]
         if np.all((x_vert[0] >= xlim[0]) & (x_vert[0] <= xlim[1]) &
                   (y_vert[1] >= ylim[0]) & (y_vert[1] <= ylim[1])):
@@ -280,6 +279,7 @@ def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
 
     plt.tight_layout()
     plt.show()
+
 
 def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=None, Xlims=None):
     """ Plot the edges of the mesh.
@@ -361,3 +361,46 @@ def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=N
         cbar = fig.colorbar(sm, ax=ax)
     plt.tight_layout()
     plt.show()
+
+
+def plot_points(Xs, values, lims=None, title="", show_index=False, Xlims=None):
+    """ Xs.shape = [n_points, 2]
+        values.shape = [n_plots, n_points] or [n_points]
+    """
+    Xs = Xs.cpu()
+    values = values.cpu()
+
+    if len(values.shape) == 1:
+        values = values.unsqueeze(0)
+        fig, axes = plt.subplots(1, 1, figsize=(12, 9))
+        axes = [axes]
+    else:
+        n_plots = values.shape[0]
+        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+
+    # Loop over each batch
+    if Xlims is None:
+        Xlims = (Xs[:, 0].min(), Xs[:, 0].max()), (Xs[:, 1].min(), Xs[:, 1].max())
+
+    for i, ax in enumerate(axes):
+        ax.set_title(f"{title} - Batch {i}")
+        if lims is None:
+            sc = ax.scatter(Xs[:, 0], Xs[:, 1], c=values[i], cmap='viridis')
+        else:
+            sc = ax.scatter(Xs[:, 0], Xs[:, 1], c=values[i], cmap='viridis',
+                            vmin=lims[0], vmax=lims[1])
+
+        if show_index:
+            for i, X in enumerate(Xs):
+                x, y = X
+                if (Xlims[0][0] <= x <= Xlims[0][1]) and (Xlims[1][0] <= y <= Xlims[1][1]):
+                    ax.text(x, y, f"{i}", fontsize=8)
+        fig.colorbar(sc, ax=ax)
+        ax.set_aspect('equal', adjustable='box')
+
+        ax.set_xlim(Xlims[0])
+        ax.set_ylim(Xlims[1])
+
+    # plt.tight_layout()
+    plt.show()
+

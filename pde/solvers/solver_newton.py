@@ -44,18 +44,19 @@ class SolverNewton:
                 deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, residuals)
 
             deltas *= self.lr
+
+            print(deltas)
+
             self.sol_grid.update_grid(deltas)
 
             # Error from PDE
-            pde_resid = self.jac_calc.residuals(aux_input).abs()
+            pde_resid = self.jac_calc.residuals(aux_input)
             pde_resid_norm = pde_resid.norm()
-            max_abs_residual = torch.max(pde_resid)
+            max_abs_residual = torch.max(pde_resid.abs())
 
             logging.debug(f'Linear solver Iteration {i}')
             logging.debug(f'    Linear residual: {lin_resid_norm:.3g}')
             logging.debug(f'    Mean residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
-
-
 
 
             # self.residuals = residuals

@@ -1,9 +1,8 @@
 import torch
-# from torch_geometric.nn import MessagePassing
 
 from pde.graph_grid.graph_store import DerivGraph, Deriv
 from pde.BaseDerivCalc import BaseDerivCalc
-from pde.utils_sparse import coo_row_select, coo_col_select, CSRToInt32, block_repeat_csr, plot_sparsity
+from pde.utils_sparse import coo_row_select, coo_col_select, CSRToInt32, block_repeat_csr, plot_sparsity, stack_coo, csr_col_shift
 
 
 class FinDerivCalcSPMV(BaseDerivCalc):
@@ -20,18 +19,19 @@ class FinDerivCalcSPMV(BaseDerivCalc):
         """
         self.eq_mask = eq_mask
         self.grad_mask = grad_mask
+        self.N_us_grad = self.grad_mask.sum()
         self.device = device
 
         N_us_tot = self._check(fd_graphs)
 
         self.fd_spms = {}       # shape = [N_deriv], [N_eqs, N_us_tot]
-        self.jac_spms = []      # shape = [N_deriv], [N_eqs, N_grad]
+        jac_spms = []      # shape = [N_deriv], [N_eqs, N_grad]
 
         # Order (0, 0) is original node value
         only_us = torch.eye(N_us_tot, device=self.device).to_sparse_coo()
         only_us = coo_row_select(only_us, self.eq_mask)
         only_us = coo_col_select(only_us, self.grad_mask)
-        self.jac_spms.append(only_us.to_sparse_csr())   # shape = [N_deriv], [N_eqs, N_us_tot]
+        jac_spms.append(only_us)   # shape = [N_deriv], [N_eqs, N_us_tot]
 
         for order, graph in fd_graphs.items():
             sp_mat = graph.coo().T.coalesce()
@@ -39,14 +39,22 @@ class FinDerivCalcSPMV(BaseDerivCalc):
             self.fd_spms[order] = CSRToInt32(sp_mat.to_sparse_csr())
 
             sp_mat_jac = coo_col_select(sp_mat, self.grad_mask)   # shape = [N_eqs, N_grad]
-            sp_mat_jac = CSRToInt32(sp_mat_jac.to_sparse_csr())
-            self.jac_spms.append(sp_mat_jac)
+            jac_spms.append(sp_mat_jac)
 
         # Repeat jacobian to shape [N_deriv][N_eqs*N_comp, N_grad*N_comp]
-        for i, jac_deriv in enumerate(self.jac_spms):
-            self.jac_spms[i] = block_repeat_csr(jac_deriv, N_component)
+        for i, jac_deriv in enumerate(jac_spms):
+            spm = stack_coo(jac_deriv, N_component)
+            jac_spms[i] = spm.to_sparse_csr()
+
+        self.jac_spms = []
+        # Jacobians need to be modified for each component
+        for U_comp in range(N_component):
+            for d_comp, jac_single in enumerate(jac_spms):
+                new_jac = csr_col_shift(jac_single, U_comp * self.N_us_grad)
+                self.jac_spms.append(CSRToInt32(new_jac))
 
         self.N_deriv = len(self.fd_spms)
+
 
     def _check(self, fd_graphs):
         """ Check that all graphs have the same shape. """
@@ -64,14 +72,14 @@ class FinDerivCalcSPMV(BaseDerivCalc):
             return.shape = {N_deriv: [N_pde, N_components]}
         """
         derivatives = {(0, 0): Us[self.eq_mask]}
+        Us = Us.contiguous()
+
         if get_orders is None:
             for order, spm in self.fd_spms.items():
-                Us = Us.contiguous()
                 derivatives[order] = torch.mm(spm, Us)
         else:
             for order in get_orders:
                 spm = self.fd_spms[order]
-                Us = Us.contiguous()
                 derivatives[order] = torch.mm(spm, Us)
         return derivatives
 

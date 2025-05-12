@@ -62,6 +62,8 @@ class Point:
     def __post_init__(self):
         if P_Types.DERIV in self.point_type:
             assert self.derivatives is not None, "Derivatives must be provided for DERIV points."
+        else:
+            assert self.derivatives is None, "Derivatives must be None for non-DERIV points."
 
 
 

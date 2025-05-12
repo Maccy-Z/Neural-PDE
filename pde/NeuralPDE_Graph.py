@@ -9,26 +9,26 @@ from pde.solvers.linear_solvers import LinearSolver
 from pde.solvers.solver_newton import SolverNewton
 from pde.config import Config
 from pde.loss import Loss
-from pde.graph_grid.graph_utils import plot_interp
+from pde.graph_grid.graph_utils import plot_interp, plot_points
 
 class NeuralPDEGraph:
-    us_graph: UGraph
+    u_graph: UGraph
     loss_fn: Loss
     adjoint: torch.Tensor
 
-    def __init__(self, pde_fn: PDEFunc, us_graph: UGraph, cfg: Config, loss_fn:Loss = None, triangles=None):
+    def __init__(self, pde_fn: PDEFunc, u_graph: UGraph, cfg: Config, loss_fn:Loss = None, triangles=None):
         adj_cfg = cfg.adj_cfg
         fwd_cfg = cfg.fwd_cfg
         self.loss_fn = loss_fn
         self.cfg = cfg
         self.DEVICE = cfg.DEVICE
 
-        pde_forward = PDEForward(us_graph, pde_fn)
+        pde_forward = PDEForward(u_graph, pde_fn)
 
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
-        fwd_jacob_calc = get_jac_calc(us_graph, pde_forward, fwd_cfg)
-        newton_solver = SolverNewton(us_graph, fwd_lin_solver, jac_calc=fwd_jacob_calc, cfg=fwd_cfg)
+        fwd_jacob_calc = get_jac_calc(u_graph, pde_forward, fwd_cfg)
+        newton_solver = SolverNewton(u_graph, fwd_lin_solver, jac_calc=fwd_jacob_calc, cfg=fwd_cfg)
 
         # Adjoint solver
         # adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
@@ -36,7 +36,7 @@ class NeuralPDEGraph:
         # pde_adjoint = PDEAdjoint(us_graph, pde_fn, adj_jacob_calc, adj_lin_solver, loss_fn)
 
         self.pde_fn = pde_fn
-        self.us_graph = us_graph
+        self.u_graph = u_graph
         self.newton_solver = newton_solver
         # self.pde_adjoint = pde_adjoint
 
@@ -68,9 +68,30 @@ class NeuralPDEGraph:
     def plot_interp(self, Us=None, Xlims=None):
         """ Plot the interpolated solution. """
         if Us is None:
-            Us = self.us_graph._us
-            _, Xs = self.us_graph.get_all_us_Xs()
+            Us, Xs = self.u_graph.get_all_us_Xs()
         else:
-            Us, Xs = self.us_graph.get_all_us_Xs()
+            _, Xs = self.u_graph.get_all_us_Xs()
 
-        plot_interp(Xs, Us.T, Xlims=Xlims, title="Interpolated solution", triangles=self.us_graph.tri)
+        plot_interp(Xs, Us.T, Xlims=Xlims, title="Interpolated solution", triangles=self.u_graph.tri)
+
+    def plot_derivs(self, order):
+        us_all, Xs = self.u_graph.get_all_us_Xs()
+
+        deriv_dict = self.u_graph.deriv_calc_eval.derivative(us_all)
+        derivs = deriv_dict[order]
+
+        divergence = deriv_dict[(1, 0)][:, 0] + deriv_dict[(0, 1)][:, 1]
+
+        deriv_mats = self.u_graph.deriv_calc_eval.fd_spms
+
+        plot_interp(Xs, derivs.T, title=str(order), triangles=self.u_graph.tri)
+
+
+
+        # exit(7)
+
+    def plot_points(self, values, Xlims=None, show_index=False):
+        _, Xs = self.u_graph.get_all_us_Xs()
+
+        plot_points(Xs, values, Xlims=Xlims, show_index=show_index)
+

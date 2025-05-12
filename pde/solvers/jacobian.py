@@ -63,6 +63,7 @@ class GraphJacobCalc(JacobCalc):
         super().__init__(u_graph, pde_fwd)
         self.u_graph = u_graph
         self.N_pdes = u_graph.N_pdes
+        self.N_us_grad = u_graph.N_us_grad
         self.N_component = u_graph.N_component
         self.N_deriv = u_graph.N_deriv
 
@@ -72,8 +73,8 @@ class GraphJacobCalc(JacobCalc):
 
         # Precompute transforms with jacobian structure
         deriv_jac_list = self.u_graph.deriv_calc.jacobian()
-        self.row_multipliers = [CSRRowMultiplier(spm) for spm in deriv_jac_list]
-        self.csr_summer = CSRSummer(deriv_jac_list*self.N_component, check_sparsity=True)
+        self.row_multipliers = [CSRRowMultiplier(spm, check_sparsity=True) for spm in deriv_jac_list]
+        self.csr_summer = CSRSummer(deriv_jac_list, check_sparsity=True)
 
         dummy_jac = self.csr_summer.blank_csr()
         self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
@@ -97,7 +98,7 @@ class GraphJacobCalc(JacobCalc):
 
             dR_i/dU_j = sum_k dR_i/dD_k * dD_ik/dU_j
 
-            Vector derivatives are handled as batches of [N, N_comp], then merged into a column concatenated vector [N*N_comp].
+            Vector derivatives are handled as batches of [N_comp, N_pde], then merged into a column-concatenated vector [N_comp*N_pde]. Components are grouped together.
         """
         us_all, _ = self.u_graph.get_all_us_Xs()  # Shape = [N_total, N_comp].
         _, Xs = self.u_graph.get_us_Xs_pde()  # Shape = [N_total, 2].
@@ -107,10 +108,10 @@ class GraphJacobCalc(JacobCalc):
         u_dus = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
 
         # 2) dD/dU. shape = [N_derivs, N_u_grad]
-        dDdU = self.deriv_calc.jacobian() # shape = [N_derivs][N_pde_, N_total_]
+        dDdU = self.deriv_calc.jacobian() # shape = [N_derivs][N_pde_, N_u_grad_]
 
         # 3) dR/dD. shape = [N_pde*N_comp, N_derivs*N_comp] = [N_pde_, N_derivs_]
-        dRdD, residuals = self.resid_jac_val(u_dus, Xs) if (pde_aux_input is None) else self.resid_jac_val(u_dus, Xs, pde_aux_input)# [N_pde, N_component, N_deriv, N_component]
+        dRdD, residuals = self.resid_jac_val(u_dus, Xs) if (pde_aux_input is None) else self.resid_jac_val(u_dus, Xs, pde_aux_input) # [N_pde, N_component, N_deriv, N_component]
                                                                                                                     # residuals.shape = [N_pde, N_component]
         dRdD = dRdD.permute(1, 0, 3, 2).reshape(self.N_pdes*self.N_component, (self.N_deriv+1)*self.N_component)   # [N_pde_, N_deriv_]
         residuals = residuals.T.reshape(self.N_pdes*self.N_component)    # [N_pde_]
@@ -118,8 +119,7 @@ class GraphJacobCalc(JacobCalc):
         # 4.1) Take product over i: dD_ik/dU_j * dR_i/dD_k . shape = [N_deriv_][N_pde_, N_u_grad_]
         partials = []
         for d in range(self.N_component*(self.N_deriv+1)):
-            d_comp = d % (self.N_deriv+1)
-            prod = self.row_multipliers[d_comp].mul(dDdU[d_comp], dRdD[:, d])
+            prod = self.row_multipliers[d].mul(dDdU[d], dRdD[:, d])   # shape = [N_pde_, N_u_grad_]
             partials.append(prod)
 
         # 4.2) Sum over k: sum_k partials_ijk
@@ -130,7 +130,6 @@ class GraphJacobCalc(JacobCalc):
             bc_deriv_pred = self.deriv_calc_bc.derivative(us_all)  # shape = [N_bc_derivs, N_comp]
             bc_deriv_true = self.u_graph.deriv_val
             bc_residuals = bc_deriv_pred - bc_deriv_true
-
             # 5.2_ Neumann jacobian: dR/dD = 1, so select corresponding rows of jacobian.
             bc_deriv_jac = self.deriv_calc_bc.jac_mat       # shape = [N_bc_derivs_, N_u_grad_]
 
@@ -138,6 +137,7 @@ class GraphJacobCalc(JacobCalc):
             # residuals = [p0_0, p1_0, ..., p0_1, p1_1, ..., b0_0, b0_1, ..., b0_1, b_1_1, ...]
             residuals = torch.cat([residuals, bc_residuals])        # shape = [N_pde_+N_bc_]
             jacobian = self.concatenator.cat(jacobian, bc_deriv_jac)  # shape = [N_pde_+N_bc_, N_total_]
+
 
         return jacobian, residuals
 

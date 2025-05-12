@@ -18,3 +18,5 @@ Thumbs.db
 *.cache
 /meshpy/
 meshpy/
+
+*.vtu

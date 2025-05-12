@@ -355,12 +355,14 @@ class CSRSummer:
 
 
 class CSRRowMultiplier:
-    def __init__(self, A_csr: torch.Tensor):
+    def __init__(self, A_csr: torch.Tensor, check_sparsity=False):
         """
         Initialize the CSRRowMultiplier with a CSR tensor.
         Args:
             A_csr (torch.Tensor): A sparse CSR tensor with fixed sparsity pattern.
+            check_sparsity (bool): Whether to check if the input matrix has the same sparsity pattern. False saves memory.
         """
+        self.check_sparsity = check_sparsity
         self.A_csr = A_csr
         self.crow_indices = A_csr.crow_indices()
         self.col_indices = A_csr.col_indices()
@@ -374,6 +376,12 @@ class CSRRowMultiplier:
         """
         Multiply the CSR tensor A row-wise by vector b.
         """
+        if self.check_sparsity:
+            # Ensure the matrix has the same sparsity pattern
+            crow_indices = A.crow_indices()
+            col_indices = A.col_indices()
+            assert torch.equal(crow_indices, self.crow_indices) and torch.equal(col_indices, self.col_indices), "Matrix has different sparsity pattern"
+
         # Scale the values by the corresponding row elements
         scaled_values = A.values() * b[self.row_indices]
 
@@ -466,6 +474,13 @@ class CSRPermuter:
         """ Precomputed permutation of a vector."""
         return b[self.perm_from]
 
+
+def csr_col_shift(csr_mat, n_cols):
+    crow_indices, col_indices, values = csr_mat.crow_indices(), csr_mat.col_indices(), csr_mat.values()
+    col_indices = col_indices + n_cols
+    deriv_mat_new = torch.sparse_csr_tensor(crow_indices, col_indices, values, size=csr_mat.size(), device=csr_mat.device)
+
+    return deriv_mat_new
 
 def coo_row_select(sparse_coo: torch.sparse_coo_tensor, row_mask) -> torch.sparse_coo_tensor:
     """
@@ -685,6 +700,51 @@ def block_repeat_csr(A: torch.Tensor, k: int) -> torch.Tensor:
     # Construct the final CSR matrix B
     B = torch.sparse_csr_tensor(B_indptr, B_indices, B_data, size=(B_m, B_n))
     return B
+
+
+def stack_coo(X: torch.Tensor, n: int) -> torch.Tensor:
+    """
+    Vertically stack a sparse COO tensor X with itself n times, and extend column size by n.
+
+    Args:
+        X: a torch.sparse_coo_tensor of shape (m, k)
+        n: number of times to replicate X vertically
+
+    Returns:
+        a torch.sparse_coo_tensor of shape (m*n, k)
+    """
+    if not X.is_sparse:
+        raise ValueError("Input must be a sparse COO tensor")
+    if n <= 0:
+        raise ValueError("n must be a positive integer")
+
+    # Ensure coalesced for unique indices
+    X = X.coalesce()
+    indices = X.indices()    # shape (2, nnz)
+    values = X.values()      # shape (nnz,)
+    m, k = X.size()
+
+    # Prepare lists to collect all replications
+    all_indices = []
+    all_values = []
+
+    for i in range(n):
+        # Copy the indices and shift the row indices by i*m
+        idx = indices.clone()
+        idx[0] += i * m      # shift row dimension
+        all_indices.append(idx)
+        all_values.append(values)
+
+    # Concatenate across all replications
+    new_indices = torch.cat(all_indices, dim=1)  # now shape (2, n*nnz)
+    new_values  = torch.cat(all_values, dim=0)   # shape (n*nnz,)
+
+    # Build the new sparse tensor and coalesce
+    result = torch.sparse_coo_tensor(
+        new_indices, new_values, size=(m * n, k * n)
+    ).coalesce()
+
+    return result
 
 # Example Usage
 if __name__ == "__main__":

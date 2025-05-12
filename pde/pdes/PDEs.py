@@ -48,7 +48,7 @@ class Poisson(PDEFunc):
         resid = d2udy2 + d2udx2 + 0 * dudx + 0 * dudy #- 5 * u #+ 5
         return resid
 
-class MagneticField(PDEFunc):
+class Fluid(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
         super().__init__(cfg=cfg, device=device)
         self.to(device)
@@ -59,16 +59,30 @@ class MagneticField(PDEFunc):
 
             return.shape = [n_comp]
         """
-        print(f'{u_dus.shape = }')
+        # print(f'{u_dus.shape = }')
 
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]
-        d2udx2, d2udxdy, d2udy2 = u_dus[3], u_dus[4], u_dus[5]
+        d2udx2, d2udy2 = u_dus[3], u_dus[5]
 
-        resid_0 = dudx[0] + dudy[1]
-        resid_1 = dudx[1] - dudy[0]
+        # Momentum equations
+        laplace_Vx = d2udx2[0] + d2udy2[0]
+        laplace_Vy = d2udx2[1] + d2udy2[1]
+        dpdx = dudx[2]
+        dpdy = dudy[2]
 
-        resid = torch.stack([resid_0, resid_1], dim=-1)
+        resid_x = -dpdx + laplace_Vx
+        resid_y = -dpdy + laplace_Vy
+
+        divergence = dudx[0] + dudy[1]
+
+
+        # resid_x = 2 * u[0] - u[1] - 1
+        #
+        # # resid_y = u[1] - 1
+        # divergence = - u[0] + 1.5 * u[1]
+
+        resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
         return resid
 
 

@@ -99,11 +99,11 @@ class UGraph(UBase):
         self.tri = tri
         self.device = device
         self.N_us_tot = len(setup_dict)
-        self.N_us_grad = len([P for P in setup_dict.values() if T.GRAD in P.point_type])
-        self.N_pdes = len([P for P in setup_dict.values() if T.PDE in P.point_type])
+        self.N_us_grad = sum(T.GRAD in P.point_type for P in setup_dict.values())
+        self.N_pdes = sum(T.PDE in P.point_type for P in setup_dict.values())
         self.N_component = N_component
-
         self._check(setup_dict)
+
         # 1) Node properties and masks
         dirich_mask = [T.DirichBC in P.point_type for P in setup_dict.values()]
         self.dirich_mask = torch.tensor(dirich_mask, dtype=torch.bool)
@@ -128,7 +128,6 @@ class UGraph(UBase):
         self._us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
 
         # 2.1) Get the neighborhood graph
-        # n_hop_adj = triangle_to_adjacency(self.tri, hops=5)
         n_hop_adj = tri_to_n_hop(self.tri)
         # 2.2) Compute finite difference stencils / graphs.
         # Each gradient type has its own stencil and graph.
@@ -155,12 +154,26 @@ class UGraph(UBase):
 
         # 3) Derivative boundary conditions. Linear equations N X derivs - value = 0
         if self.neumann_mode:
+            # 3.1) Compute jacobian permutation
+            jacob_dict = {i: point for i, point in enumerate(v for v in setup_dict.values() if T.GRAD in v.point_type)}
+            jacob_main_pos = {i: point for i, point in jacob_dict.items() if (T.NeumOffsetBC not in point.point_type and T.GRAD in point.point_type)}
+            jacob_neum_pos = {i: point for i, point in jacob_dict.items() if T.NeumOffsetBC in point.point_type}
+            # 3.2) Repeat for each component. Ordering:  [p0_0, p1_0, ..., p0_1, p1_1, ..., ..., b0_0, b0_1, ..., b1_0, b_1_1, ...]
+            pde_perm, bc_perm = torch.tensor(list(jacob_main_pos.keys())), torch.tensor( list(jacob_neum_pos.keys()))
+            pde_perm = torch.cat([pde_perm + i * self.N_us_grad for i in range(self.N_component)])
+            bc_perm = torch.stack([bc_perm + i * self.N_us_grad for i in range(self.N_component)], dim=-1).flatten(0)
+            self.row_perm = torch.cat([pde_perm, bc_perm])
+
             self.deriv_val = torch.tensor(deriv_val).flatten()
             self.deriv_orders_bc = deriv_orders
             self.neumann_mask = torch.tensor(neum_mask)
 
             self._cuda_bc()
             self.deriv_calc_bc = NeumanBCCalc(self.graphs, self.neumann_mask, self.updt_mask, self.deriv_orders_bc, N_component, device=self.device)
+
+        # TODO: Testing
+        mask = torch.ones_like(self.updt_mask)
+        self.deriv_calc_eval = FinDerivCalcSPMV(self.graphs, mask, mask, self.N_component, device=self.device)
 
 
     def reset(self):

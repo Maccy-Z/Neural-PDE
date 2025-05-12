@@ -1,13 +1,10 @@
 import torch
+torch.set_printoptions(profile="full")
 
-indices = torch.zeros(2, 1, dtype=torch.long)
-indices[0, 0] = 0  # Row index (always 0 for a single row)
-indices[1, 0] = 450  # Column index
-print(f'{indices = }')
-row_val = torch.sparse_coo_tensor(
-    indices=indices,
-    values=torch.ones(1),
-    size=(1, 1744), device="cuda"
-)
-print(indices)
-print(row_val)
+jacobian = torch.load("jacobian.pt").coalesce()
+jacobian = jacobian.to_dense().to_sparse_csr()
+jac_T = jacobian.transpose(0, 1)
+
+print(f'{jacobian.shape = }, {jac_T.shape = }')
+print(jacobian._nnz())
+print(jacobian)
