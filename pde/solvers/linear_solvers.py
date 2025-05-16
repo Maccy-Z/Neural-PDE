@@ -49,8 +49,8 @@ class LinearSolver:
         # Cupy to sparse is faster than torch to sparse
         self.amgx_solver.init_solver_cp(A_cp)
         x = torch.zeros_like(b)
-        x = self.amgx_solver.solve(b, x)
-        return x
+        x, resid = self.amgx_solver.solve(b, x)
+        return x, resid
 
     def cuda_iterative(self, A_cp: cp.array, b: torch.Tensor):
         b_cp = cp.from_dlpack(b)
@@ -61,7 +61,7 @@ class LinearSolver:
         # Solve the sparse linear system Ax = b using CuPy
         x, info = gmres(A_sparse_cupy, b_cp, **self.cfg)
         x = torch.from_dlpack(x)
-        return x
+        return x, 0
 
     def cuda_sparse(self, A_cp: cp.array, b: torch.Tensor):
         #A_cupy = cp.from_dlpack(A)
@@ -106,17 +106,44 @@ class LinearSolver:
         deltas = torch.linalg.solve(A, b)
         return deltas
 
-    def preproc_tensor(self, A: torch.Tensor):
+    def preproc_tensor(self, A: torch.Tensor, b: torch.Tensor):
         """ Preprocess A matrix before solving, convert to sparse if needed so original can be deleted. """
-        return self.preproc(A)
+        return self.preproc(A, b)
 
-    def preproc_default(self, A: torch.Tensor):
-        return A
+    def preproc_default(self, A: torch.Tensor, b: torch.Tensor):
+        """ Default preprocessing, no conversion. """
+        return A, b
 
-    def preproc_sparse(self, A: torch.Tensor) -> sp.csr_matrix:
+    def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> sp.csr_matrix:
         """ Convert a torch tensor to a cupy sparse tensor """
+        from scipy.sparse.csgraph import reverse_cuthill_mckee
+        import scipy.sparse as spsp
+
+        A_sp = A.to_sparse_coo().coalesce()
+
+        # 2) pull out the three 1-D arrays
+        row = A_sp.indices()[0].cpu().numpy().ravel()  # shape (nnz,)
+        col = A_sp.indices()[1].cpu().numpy().ravel()  # shape (nnz,)
+        data = A_sp.values().cpu().numpy().ravel()  # shape (nnz,)
+
+        # sanity check
+        assert row.ndim == col.ndim == data.ndim == 1, "Must be 1-D!"
+
+        # 3) build SciPy COO and convert to CSR (or keep COO if you like)
+        A_sp = spsp.coo_matrix((data, (row, col)), shape=A.shape).tocsr()
+        perm = reverse_cuthill_mckee(A_sp, symmetric_mode=True)
+        perm = torch.tensor(perm.copy(), dtype=torch.int64)
+
         if A.is_sparse_csr:
-            # A = A.to_dense().to_sparse_csr()
+            A = A.to_dense()
+
+            # A = A[perm][:, perm]
+            r = A.norm(dim=1)
+            A = A / r.unsqueeze(1)  * r.mean()
+            b = b.squeeze() / r * r.mean()
+
+            A = A.to_sparse_csr()
+
             values = A.values()
             indices = A.col_indices()
             indptr = A.crow_indices()
@@ -126,11 +153,37 @@ class LinearSolver:
             indptr_cp = cp.from_dlpack(indptr)
 
             A_sparse_cp = sp.csr_matrix((values_cp, indices_cp, indptr_cp), shape=A.size())
+
+            # self._est_cond_num(A, A_sparse_cp)
+            # exit(7)
+
+
         else:
             A_cp = cp.from_dlpack(A)
             A_sparse_cp = sp.csr_matrix(A_cp)
-        return A_sparse_cp
+        return A_sparse_cp, b
 
+    def _est_cond_num(self, A, A_cp):
+        x = torch.randn(A.shape[0], device=A.device)
+        for _ in range(100):
+            y = A.matmul(x)  # y = A x
+            x = A.t().matmul(y)  # x = Aᵀ(A x)
+            x = x / x.norm()
+        # Rayleigh quotient gives σₘₐₓ² ≈ xᵀ (AᵀA) x
+        sigma_max = (A.matmul(x)).norm().item()
+        print(f'{sigma_max = }')
+
+        v = torch.randn(A.shape[0], device=A.device)
+        for _ in range(20):
+            v_new, _ = self.cuda_sparse((A_cp.T @ A_cp), v)
+            v = v_new
+            v = v / v.norm()
+        sigma_min = (A @ v).norm().item()
+        print(f'{sigma_min = }')
+
+        cond_num = sigma_max / sigma_min
+        print(f'{cond_num = }')
+        exit(7)
 
 
 

@@ -74,24 +74,42 @@ class NeuralPDEGraph:
 
         plot_interp(Xs, Us.T, Xlims=Xlims, title="Interpolated solution", triangles=self.u_graph.tri)
 
+
     def plot_derivs(self, order):
         us_all, Xs = self.u_graph.get_all_us_Xs()
 
         deriv_dict = self.u_graph.deriv_calc_eval.derivative(us_all)
         derivs = deriv_dict[order]
 
-        divergence = deriv_dict[(1, 0)][:, 0] + deriv_dict[(0, 1)][:, 1]
-
-        deriv_mats = self.u_graph.deriv_calc_eval.fd_spms
 
         plot_interp(Xs, derivs.T, title=str(order), triangles=self.u_graph.tri)
-
-
-
+        #
+        divergence = deriv_dict[(1, 0)][:, 0] + deriv_dict[(0, 1)][:, 1]
+        laplace_y = deriv_dict[(2, 0)][:, 1] + deriv_dict[(0, 2)][:, 1]
+        laplace_x = deriv_dict[(0, 2)][:, 0] + deriv_dict[(2, 0)][:, 0]
+        deriv_mats = self.u_graph.deriv_calc_eval.fd_spms
+        #
+        # x, y = Xs[:, 0], Xs[:, 1]
+        # u_test = 0.14 - 0.25*(y - 0.75) ** 2
+        # deriv_test = self.u_graph.deriv_calc_eval.derivative(u_test.unsqueeze(-1))
+        # div_test = deriv_test[(1, 0)][:, 0]
         # exit(7)
+        # plot_interp(Xs, divergence, title=str(order), triangles=self.u_graph.tri)
+        pass
 
-    def plot_points(self, values, Xlims=None, show_index=False):
+
+    def _plot_interp(self, value):
+        us_all, Xs = self.u_graph.get_all_us_Xs()
+        plot_interp(Xs, value, triangles=self.u_graph.tri)
+
+    def plot_points(self, values, Xlims=None, show_index=False, title=""):
+        Xlims = None # [(0,0.2), (0, 1.5)]
         _, Xs = self.u_graph.get_all_us_Xs()
 
-        plot_points(Xs, values, Xlims=Xlims, show_index=show_index)
+        plot_points(Xs, values, Xlims=Xlims, show_index=show_index, title=title)
+
+    def _plot_points(self, values, Xlims=None):
+        _, Xs = self.u_graph.get_all_us_Xs()
+        plot_points(Xs, values, Xlims=Xlims)
+
 

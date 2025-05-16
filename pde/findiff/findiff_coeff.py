@@ -5,6 +5,8 @@ from scipy.spatial import KDTree
 from cprint import c_print
 from torch.multiprocessing import Pool
 import numpy as np
+from rbf.pde import fd
+from matplotlib import pyplot as plt
 
 from pde.findiff.min_norm import min_sq_norm, min_abs_norm
 from pde.graph_grid.graph_store import Point, P_Types
@@ -253,87 +255,122 @@ def _init_pool(Xs_all, adj_mat):
     global_Xs_all, global_adj_mat = Xs_all, adj_mat
 
 
-def calc_coeff(point_dict: dict[int, Point], diff_acc: int, diff_order: tuple[int, int], adj_mat: dict):
-    """ Calculate finite difference coefficients.
-    Xs_all: torch.Tensor [N_nodes, 2]. All nodes in the graph.
-    point_dict: dict[int, Point]. Dictionary of points where gradients are calculated
-    N_nodes: int
-    diff_acc: int
-    diff_order: Tuple[int, int]
+# def calc_coeff(point_dict: dict[int, Point], diff_acc: int, diff_order: tuple[int, int], adj_mat: dict):
+#     """ Calculate finite difference coefficients.
+#     Xs_all: torch.Tensor [N_nodes, 2]. All nodes in the graph.
+#     point_dict: dict[int, Point]. Dictionary of points where gradients are calculated
+#     N_nodes: int
+#     diff_acc: int
+#     diff_order: Tuple[int, int]
+#     """
+#     Xs_all = torch.stack([point.X for point in point_dict.values()])
+#
+#     N_us_tot = len(point_dict)
+#     min_points = min(50, N_us_tot)
+#     max_points = min(251, N_us_tot + 1)
+#
+#     param_dict = {"order": diff_order, "acc": diff_acc, "N_us_tot": N_us_tot, "min_points": min_points, "max_points": max_points}
+#
+#     mp_args = [(j, point.X, param_dict) for j, point in point_dict.items()]
+#
+#     with Pool(processes=16, initializer=_init_pool, initargs=(Xs_all, adj_mat)) as pool:
+#         results = pool.starmap(_calc_coeff_single, mp_args)
+#
+#
+#     edge_idxs, weights = zip(*results)
+#     # Pytorch multiprocessing bug
+#     edge_idxs = np.concatenate(edge_idxs, axis=1)
+#     weights = np.concatenate(weights)
+#     edge_idxs, weights = torch.from_numpy(edge_idxs), torch.from_numpy(weights)
+#
+#     return edge_idxs, weights
+
+def sparse_numpy_to_torch(sparse_np):
     """
+    Convert a scipy sparse matrix to a torch sparse tensor.
 
-    Xs_all = torch.stack([point.X for point in point_dict.values()])
-    N_us_tot = len(point_dict)
-    min_points = min(50, N_us_tot)
-    max_points = min(251, N_us_tot + 1)
+    Args:
+        sparse_np: scipy.sparse matrix in COO, CSR, or CSC format
 
-    param_dict = {"order": diff_order, "acc": diff_acc, "N_us_tot": N_us_tot, "min_points": min_points, "max_points": max_points}
-
-    mp_args = [(j, point.X, param_dict) for j, point in point_dict.items()]
-
-    with Pool(processes=16, initializer=_init_pool, initargs=(Xs_all, adj_mat)) as pool:
-        results = pool.starmap(_calc_coeff_single, mp_args)
+    Returns:
+        torch.sparse_coo_tensor
+    """
+    import scipy.sparse as sp
 
 
-    edge_idxs, weights = zip(*results)
-    # Pytorch multiprocessing bug
-    edge_idxs = np.concatenate(edge_idxs, axis=1)
-    weights = np.concatenate(weights)
-    edge_idxs, weights = torch.from_numpy(edge_idxs), torch.from_numpy(weights)
+    # Convert to COO format if not already
+    if not isinstance(sparse_np, sp.coo_matrix):
+        sparse_np = sparse_np.tocoo()
 
-    return edge_idxs, weights
+    # Get indices and values
+    indices = torch.LongTensor(np.vstack((sparse_np.row, sparse_np.col)))
+    values = torch.FloatTensor(sparse_np.data)
+    shape = torch.Size(sparse_np.shape)
 
+    return torch.sparse_coo_tensor(indices, values, shape)
+
+#
+def calc_coeff(point_dict: dict[int, Point], diff_acc: int, diff_order: tuple[int, int], adj_mat: dict):
+    Xs_all = torch.stack([point.X for point in point_dict.values()])#.numpy()
+    w = fd.weight_matrix(Xs_all, Xs_all, n=16, diffs=np.array(diff_order), order=2, phi="phs3", eps=1)
+    w = sparse_numpy_to_torch(w)
+
+    indices = w.coalesce().indices().to(torch.float32)[[1, 0], :]
+    weights = w.coalesce().values().to(torch.float32)
+
+    return indices, weights
 
 def main():
-    import pickle
 
-    torch.set_printoptions(precision=3, sci_mode=False)
+    # 2D grid
+    plot_num = 0
+    Xs_all = torch.load("../Xs_all.pt", weights_only=True)
+    values = 1 - 0.5*Xs_all[:, 0]
 
-    with open("../save.pkl", "rb") as f:
-        error_point = pickle.load(f)
+    w = fd.weight_matrix(Xs_all, Xs_all, n=8, diffs=np.array((1, 0)), order=1, phi="phs3", eps=0.1)
+    w = sparse_numpy_to_torch(w)
 
-    c_print(f"Error point: {error_point['X']}", color="bright_cyan")
-    c_print(f"Error: {error_point['err']}", color="bright_cyan")
+    print(f'{w[plot_num] = }')
+    indices = w.coalesce().indices()
+    weights = w.coalesce().values()
 
-    # Define the center point coordinates
-    x0, y0 = error_point['X']  # Center point
+    idx_mask = indices[0] == plot_num
+    indices = indices[:, idx_mask]
+    weights = weights[idx_mask]
 
-    points = error_point['neigh_Xs']  # List of (x, y) coordinates of neighboring points
-    print(points.shape)
-
-    # Specify the derivative order to approximate (e.g., first derivative with respect to x)
-    derivative_order = (0,2)  # (k_x, k_y)
-
-    # Set the maximum total degree of the monomials (order of accuracy)
-    m = 4   # Should be at least the sum of the derivative orders
-
-    # Compute the finite difference weights
-    from matplotlib import pyplot as plt
-    plt.scatter(*zip(*points))
-    xmin, xmax = points[:, 0].min(), points[:, 0].max()
-    ymin, ymax = points[:, 1].min(), points[:, 1].max()
-    plt.xlim(xmin, xmax)
-    plt.ylim(ymin, ymax)
+    plt.scatter(Xs_all[:, 0], Xs_all[:, 1], s=10, c='blue')
+    plt.scatter(Xs_all[plot_num, 0], Xs_all[plot_num, 1], s=100, c='red', label='Center Point')
+    plt.scatter(Xs_all[indices, 0], Xs_all[indices, 1], s=50, c='green', label='Neighbors')
     plt.show()
 
-    center = torch.tensor([x0, y0], dtype=torch.float32)
+    # plt.scatter(Xs_all[:, 0], Xs_all[:, 1], s=10, c=values)
+    # plt.show()
 
-    # Compute the finite difference weights
-    weights, status = fin_diff_weights(center, points, derivative_order, m, method="abs_weight_norm", atol=100e-4, eps=6e-8)
+    derivative = w @ values
 
-    # # Display the computed weights
-    # print()
-    print(f'err = {status["mean_err"]:.3g}, {status["max_err"] = :.3g}, {status["abs_res"] = :.3g}')
-    for w, p in zip(weights, points):
-        if w.abs() > 1e-5:
-            print(f"{p}: {w:.3f}")
-            plt.scatter(*p, c='r')
+    # plt.scatter(Xs_all[:, 0], Xs_all[:, 1], s=10, c=derivative)
+    # plt.show()
+
+    # print(derivative)
 
 
-    plt.scatter(x0, y0, c='g')
-    plt.xlim(xmin, xmax)
-    plt.ylim(ymin, ymax)
+    indices, weights = torch.load("../coeffs.pt")
+    w_old = torch.sparse_coo_tensor(indices, weights, w.shape).T.coalesce()
+
+    print(f'{w_old[plot_num] = }')
+    derivative_old = w_old @ values
+
+    idx_mask = indices[0] == plot_num
+    indices = indices[:, idx_mask]
+    weights = weights[idx_mask]
+
+    plt.scatter(Xs_all[:, 0], Xs_all[:, 1], s=10, c='blue')
+    plt.scatter(Xs_all[plot_num, 0], Xs_all[plot_num, 1], s=100, c='red', label='Center Point')
+    plt.scatter(Xs_all[indices, 0], Xs_all[indices, 1], s=50, c='green', label='Neighbors')
     plt.show()
+    #
+    # for p, w in zip(points, w[0]):
+    #     print(f"Point: {p[0].item():.3g}, Weight: {w:.3g}")
 
 
 # Example usage

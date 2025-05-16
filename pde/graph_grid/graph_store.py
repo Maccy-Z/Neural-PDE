@@ -45,7 +45,7 @@ class Deriv:
     weights: list[float] = None # Weights for each derivative order. If None, all weights are 1.
 
     def __post_init__(self):
-        assert len(self.comp) == len(self.orders), "Number of components must equal number of derivative orders."
+        assert len(self.comp) == len(self.orders), f"Number of components must equal number of derivative orders, {len(self.comp) = }, {len(self.orders) = }."
         if self.weights is None:
             self.weights = [1.0] * len(self.comp)
 

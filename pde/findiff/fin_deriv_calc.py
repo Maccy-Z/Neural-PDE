@@ -117,7 +117,7 @@ class NeumanBCCalc(FinDerivCalcSPMV):
             for deriv_bc in derivs:
                 deriv_row = []
                 # For each component of boundary condition:
-                for component, order, weight in zip(deriv_bc.comp, deriv_bc.orders, deriv_bc.weights):
+                for component, order, weight in zip(deriv_bc.comp, deriv_bc.orders, deriv_bc.weights, strict=True):
                     us_idx = eq_idx + component * N_bc_eqs
                     if order == (0, 0):
                         indices = torch.tensor([[zeroth_order_idx[us_idx]]])

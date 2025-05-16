@@ -136,7 +136,6 @@ def gmres(A, b, x0=None, rtol=1e-5, restart=None, maxiter=None, M=None, atol=Non
     .. seealso:: :func:`scipy.sparse.linalg.gmres`
     """
     assert M is None, "Preconditioner is not supported"
-
     A, M, x, b = _make_system(A, M, x0, b)
     matvec = A.matvec
     psolve = M.matvec

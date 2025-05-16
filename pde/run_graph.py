@@ -190,7 +190,7 @@ def mesh_graph(cfg):
     # all_tags = np.concatenate([np.zeros(len(int_edges)), np.ones(len(bc_edges))], axis=0, dtype=np.float32)
     # all_tags = torch.from_numpy(all_tags)
     # all_edgs = torch.from_numpy(np.concatenate([int_edges, bc_edges], axis=0, dtype=np.int32))
-    # plot_edges(Xs, all_edgs, all_tags)
+    # plot_edges(Xs, all_edgs, colors=all_tags)
     # exit(7)
 
     # Process boundary points
@@ -202,7 +202,7 @@ def mesh_graph(cfg):
     for i, (X, tag) in enumerate(zip(Xs, p_tags)):
         value = [0. for _ in range(N_comp)]
 
-        # x, y = X
+        x, y = X
         # value[1] = 10#1 - 1 / 2 * x
 
         if tag == "Normal":
@@ -212,85 +212,73 @@ def mesh_graph(cfg):
 
         # Boundary conditions
         n_hat = normals[i].tolist()
-        if tag == "wall_bottom" or tag == "wall_top":
+        if tag == "wall_bottom" or tag == "wall_top" or y <= 0 or y >= 1.5:
             deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0.),
                      Deriv(comp=[1], orders=[(0, 0)], value=0.),
-                     Deriv(comp=[2], orders=[(0, 1)], value=0., weights=[n_hat[1]]),
-                     # Deriv(comp=[1], orders=[(0, 0)], value=0., weights=[1]),
+                     # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0],n_hat[1]]),
+                     # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
+                     Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0., weights=[-1, 1, 1]),
+                     # Deriv(comp=[2, 1, 1, 0], orders=[(1, 0), (0, 2), (2, 0), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
+                     # Deriv(comp=[2, ], orders=[(0, 1)], value=0., weights=[1]),
                      ]
-            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
 
-            # Xs_all[i] = Point(PT.DirichBC, X, value=value)
-        elif tag == "wall_left":
-            deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
-                     Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
-                     Deriv(comp=[2], orders=[(0, 0)], value=1.),
-                     ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
+        elif tag == "wall_left":
+            deriv = [
+                        # Deriv(comp=[0], orders=[(1, 0)], value=0, weights=[1]),
+
+                        # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
+                        # Deriv(comp=[1], orders=[(0, 1)], value=0., weights=[1]),
+
+                # Deriv(comp=[2, 0, 0, 1], orders=[(1, 0), (2, 0), (0, 2), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
+                Deriv(comp=[2, 0, 0], orders=[(1, 0), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+
+                        # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+                        Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
+
+                # Pressure
+                        Deriv(comp=[2], orders=[(0, 0)], value=1.),
+                     ]
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=[0, 0, 1], derivatives=deriv)
 
         elif tag == "wall_right":
-            deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
-                     Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
-                     Deriv(comp=[2], orders=[(0, 0)], value=0.),
+            deriv = [
+                        # Deriv(comp=[0], orders=[(1, 0)], value=0., weights=[1]),
+                        # Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0]]),
+
+                        # Deriv(comp=[0, 2], orders=[(1, 0), (0, 0)], value=0, weights=[1, -1]),
+                        # Deriv(comp=[0, 1], orders=[(0, 1), (1, 0)], value=0, weights=[1, 1]),
+
+                        # Deriv(comp=[2, 0, 0], orders=[(1, 0), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+                Deriv(comp=[2, 0, 0, 1], orders=[(1, 0), (2, 0), (0, 2), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
+
+                        # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+                        Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
+                        # Pressure
+                        Deriv(comp=[2], orders=[(0, 0)], value=0.),
                      ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
 
-            # value = [1. for _ in range(N_comp)]
-            # Xs_all[i] = Point(PT.DirichBC, X, value=value)
-        # elif tag == "circle":
-        #     deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0.),
-        #              # Deriv(comp=[1], orders=[(0, 0)], value=0.),
-        #              Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
-        #              ]
+        elif tag == "circle":
+            deriv = [   Deriv(comp=[0], orders=[(0, 0)], value=0.),
+                        Deriv(comp=[1], orders=[(0, 0)], value=0.),
+
+                        # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
+                        Deriv(comp=[2, 2, 0, 0, 1, 1, 1, 0], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (1, 1), (2, 0), (0, 2), (1, 1)], value=0,
+                            weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[0], n_hat[1], n_hat[1], n_hat[1]]),
+                     ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         else:
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    u_graph = UGraph(Xs_all, N_component=N_comp, grad_acc=3, max_degree=2, tri=triangles, device=cfg.DEVICE)
+    u_graph = UGraph(Xs_all, N_component=N_comp, grad_acc=2, max_degree=2, tri=triangles, device=cfg.DEVICE)
 
     with open("save_u_graph.pth", "wb") as f:
         torch.save((u_graph, triangles), f)
 
     # exit("Done")
     return u_graph, triangles
-
-def new_graph(cfg):
-    cfg = Config()
-    N_comp = 2
-
-    n_grid = 20
-    spacing = 1/(n_grid + 1)
-
-
-    Xs_perim = gen_perim(1, 1, spacing)
-    perim_mask = (Xs_perim[:, 1] > 0) & (Xs_perim[:, 1] < 1) & (Xs_perim[:, 0] ==0)
-    Xs_neumann = Xs_perim[perim_mask]
-    #print(Xs_neumann)
-    Xs_dirich = Xs_perim[~perim_mask]
-
-    Xs_ghost = Xs_neumann.clone()
-    Xs_ghost[:, 0] = Xs_ghost[:, 0] - spacing
-    Xs_bulk = test_grid(spacing, (1- spacing), torch.tensor([n_grid, n_grid]), device="cpu")
-
-    deriv = [Deriv(comp=[0], orders=[(1, 0)], value=1.), Deriv(comp=[1], orders=[(1, 0)], value=0.)]
-    deriv_test = [Deriv(comp=[0], orders=[(0, 0)], value=0.), Deriv(comp=[1], orders=[(0, 0)], value=0.)]
-
-    # Xs_fix = [Point(PT.DirichBC, X, value=[0. for _ in range(N_comp)]) for X in Xs_dirich]
-    Xs_fix = [Point(PT.NeumOffsetBC, X, value=[0. for _ in range(N_comp)], derivatives=deriv_test) for X in Xs_dirich]
-    Xs_deriv = [Point(PT.NeumCentralBC , X, value=[0. for _ in range(N_comp)], derivatives=deriv) for X in Xs_neumann]
-    Xs_ghost = [Point(PT.Ghost, X, value=[0. for _ in range(N_comp)]) for X in Xs_ghost]
-    Xs_bulk = [Point(PT.Normal, X, value= [0. for _ in range(N_comp)]) for X in Xs_bulk]
-
-
-    Xs_all = {i: X for i, X in enumerate(Xs_deriv + Xs_fix + Xs_bulk + Xs_ghost)}
-    u_graph = UGraph(Xs_all, N_component=N_comp, grad_acc=3, device=cfg.DEVICE)
-
-    with open("save_u_graph.pth", "wb") as f:
-        torch.save(u_graph, f)
-
-    return u_graph
-
 
 def load_graph(cfg):
     u_graph, triangles = torch.load("save_u_graph.pth")
@@ -299,8 +287,8 @@ def load_graph(cfg):
 
 def true_pde():
     cfg = Config()
-    # u_graph, triangles = load_graph(cfg)
-    u_graph, triangles = mesh_graph(cfg)
+    u_graph, triangles = load_graph(cfg)
+    # u_graph, triangles = mesh_graph(cfg)
     # u_graph = new_graph(cfg)
 
     us_all, _ = u_graph.get_all_us_Xs()
@@ -308,14 +296,14 @@ def true_pde():
 
     pde_fn = Fluid(cfg, device=cfg.DEVICE)
     pde_adj = NeuralPDEGraph(pde_fn, u_graph, cfg, DummyLoss(), triangles)
-    # pde_adj.plot_derivs((1, 0))
     pde_adj.forward_solve()
 
     pde_adj.plot_interp()
+    # pde_adj.plot_derivs((1, 0))
+    # pde_adj.plot_derivs((0, 1))
 
-    pde_adj.plot_derivs((1, 0))
-    pde_adj.plot_derivs((0, 1))
-
+    us_all, Xs_all = u_graph.get_all_us_Xs()
+    # torch.save((us_all, Xs_all), "us_all.pth")
 
 
 # def main():
@@ -357,7 +345,7 @@ def true_pde():
 
 if __name__ == "__main__":
     setup_logging(debug=True)
-    torch.manual_seed(1)
+    # torch.manual_seed(1)
 
     true_pde()
 

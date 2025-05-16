@@ -234,10 +234,16 @@ def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
         fig, axes = plt.subplots(1, 1, figsize=(6, 4))
         axes = [axes]
     else:
-        n_plots = values.shape[0]
+        n_plots, n_points = values.shape
+        if n_plots > n_points:
+            print("Warning ")
+            raise ValueError(f"Number of plots ({n_plots}) exceeds number of points ({n_points}).")
+
         fig, axes = plt.subplots(n_plots, 1, figsize=(6, n_plots * 4))
         if n_plots == 1:
             axes = [axes]
+
+
 
     if isinstance(title, str):
         title = [title] * len(axes)
@@ -337,7 +343,7 @@ def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=N
         for j, s in zip(edge_nums, edge_scalars, strict=True):
             c = colormap(s)
             edge = points[j]
-            ax.plot(edge[:, 0], edge[:, 1], color=c)
+            ax.plot(edge[:, 0], edge[:, 1], color=c, thickness=1.5)
             if show_index:
                 midpoint = edge.mean(axis=0)
                 ax.text(midpoint[0], midpoint[1], f"{j}", fontsize=8)
@@ -375,9 +381,15 @@ def plot_points(Xs, values, lims=None, title="", show_index=False, Xlims=None):
         fig, axes = plt.subplots(1, 1, figsize=(12, 9))
         axes = [axes]
     else:
-        n_plots = values.shape[0]
-        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+        n_plots, n_points = values.shape
+        print(f'{n_points = } {n_plots = }')
+        if n_plots > n_points:
+            print("Warning ")
+            raise ValueError(f"Number of plots ({n_plots}) exceeds number of points ({n_points}).")
 
+        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+        if n_plots == 1:
+            axes = [axes]
     # Loop over each batch
     if Xlims is None:
         Xlims = (Xs[:, 0].min(), Xs[:, 0].max()), (Xs[:, 1].min(), Xs[:, 1].max())

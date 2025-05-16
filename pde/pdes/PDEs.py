@@ -60,6 +60,7 @@ class Fluid(PDEFunc):
             return.shape = [n_comp]
         """
         # print(f'{u_dus.shape = }')
+        x, y = Xs
 
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]
@@ -75,12 +76,7 @@ class Fluid(PDEFunc):
         resid_y = -dpdy + laplace_Vy
 
         divergence = dudx[0] + dudy[1]
-
-
-        # resid_x = 2 * u[0] - u[1] - 1
-        #
-        # # resid_y = u[1] - 1
-        # divergence = - u[0] + 1.5 * u[1]
+        # divergence = 1 - 1 / 2 * x - u[2]
 
         resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
         return resid
