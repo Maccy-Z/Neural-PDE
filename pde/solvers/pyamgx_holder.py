@@ -89,7 +89,6 @@ class PyAMGXManager:
     _instance = None
     _initialized = False
 
-    mode: str = "dFFI"
     solvers = []
 
     def __new__(cls):

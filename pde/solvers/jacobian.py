@@ -83,8 +83,8 @@ class GraphJacobCalc(JacobCalc):
             self.deriv_calc_bc = u_graph.deriv_calc_bc
             self.concatenator = CSRConcatenator(dummy_jac, self.deriv_calc_bc.jac_mat)
 
-            # dummy_jac_full = self.concatenator.blank_csr()
-            # self.permuter = CSRPermuter(u_graph.row_perm, dummy_jac_full)
+            dummy_jac_full = self.concatenator.blank_csr()
+            self.permuter = CSRPermuter(u_graph.row_perm, dummy_jac_full)
 
     @torch.no_grad()        # Gradient explicity handled.
     def jacobian(self, pde_aux_input=None):
@@ -137,6 +137,9 @@ class GraphJacobCalc(JacobCalc):
             # residuals = [p0_0, p1_0, ..., p0_1, p1_1, ..., b0_0, b0_1, ..., b0_1, b_1_1, ...]
             residuals = torch.cat([residuals, bc_residuals])        # shape = [N_pde_+N_bc_]
             jacobian = self.concatenator.cat(jacobian, bc_deriv_jac)  # shape = [N_pde_+N_bc_, N_total_]
+            # 6)  Neuman Jacobian is concatenated onto the end of the main Jacobian. Permute it back to correct order
+            jacobian = self.permuter.matrix_permute(jacobian)
+            residuals = self.permuter.vector_permute(residuals)
 
 
         return jacobian, residuals

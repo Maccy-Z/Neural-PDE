@@ -18,17 +18,16 @@ class FwdConfig:
     # Forward linear solver settings
     maxiter: int = 250
     restart: int = 250
-    rtol: float = 1e-4
+    rtol: float = 1e-9
     lin_solve_cfg: dict = None
 
     # Jacobian mode
-    # num_blocks: int = 4
     jac_mode: JacMode = JacMode.GRAPH
 
     # Newton Raphson PDE solver settings
     # lin_mode: LinMode = LinMode.SPARSE
     lin_mode: LinMode = LinMode.AMGX
-    N_iter: int = 2
+    N_iter: int = 1
     lr: float = 1.
     acc: float = 0.
 
@@ -39,64 +38,44 @@ class FwdConfig:
             "determinism_flag": 0,
             "exception_handling": 1,
 
-                # "solver": {
+            "solver": "DENSE_LU_SOLVER",
+
+            # "solver": {
+            #     "obtain_timings": 0,
+            #     # "print_solve_stats": 1,
+            #     "solver": "FGMRES",  #"PBICGSTAB", #
+            #     "norm": "L2",
+            #     "max_iters": 50,
+            #     "gmres_n_restart": 50,
+            #     "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
+            #     "gs_reorthog_repeat": 1,
+            #     "preconditioner": "NOSOLVER",
+            #
+            #     "preconditioner": {"solver":  #"DENSE_LU_SOLVER",
+            #                         "BLOCK_JACOBI",
+            #                         "relaxation_factor": 0.6,
+            #                         "max_iters": 30,
+            #                      },
+
+                # "preconditioner": {
                 #     "print_grid_stats": 1,
-                #     "algorithm": "AGGREGATION",
-                #     "obtain_timings": 1,
                 #     "solver": "AMG",
-                #     "smoother": "BLOCK_JACOBI",
-                #     "print_solve_stats": 1,
-                #     "presweeps": 2,
-                #     "selector": "SIZE_2",
-                #     "convergence": "RELATIVE_INI",
-                #     "coarsest_sweeps": 2,
-                #     "max_iters": 100,
-                #     "monitor_residual": 1,
-                #     "min_coarse_rows": 2,
-                #     "relaxation_factor": 0.75,
-                #     "scope": "main",
-                #     "max_levels": 50,
-                #     "postsweeps": 2,
-                #     "tolerance": 1e-06,
-                #     "norm": "L1",
-                #     "cycle": "V"
-                # }
-
-            "solver": {
-                "obtain_timings": 0,
-                #"print_solve_stats": 1,
-                "solver": "FGMRES",  #"PBICGSTAB", #
-                "convergence": "RELATIVE_INI",
-                "tolerance": 1e-06,
-                "norm": "L2",
-                "max_iters": 100,
-                "gmres_n_restart": 100,
-                "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
-                "gs_reorthog_repeat": 10,
-
-                "preconditioner": "NOSOLVER",
-                # "preconditioner": {"solver": "POLYNOMIAL",
-                #                    "relaxation_factor": 1,
-                #                    "max_iters": 15,
+                #     "smoother": {
+                #         "solver":  #"DENSE_LU_SOLVER",
+                #                     "JACOBI_L1",
+                #                     "relaxation_factor": 1.5,
+                #                     #"max_iters": 5,
                 #                  },
-
-                "preconditioner": {
-                    "print_grid_stats": 1,
-                    "solver": "AMG",
-                    "smoother": {"solver": "JACOBI_L1",
-                                 "relaxation_factor": 0.5,
-                                 },
-                    "coarse_solver": "DENSE_LU_SOLVER",
-                    "algorithm": "AGGREGATION",
-                    "selector": "SIZE_8",
-                    "max_iters": 2,
-                    "presweeps": 1,
-                    "postsweeps": 1,
-                    "cycle": "V",
-                    "max_levels":2,
-                },
-
-            }
+                #     "coarse_solver": "DENSE_LU_SOLVER",
+                #     "algorithm": "AGGREGATION",
+                #     "selector": "SIZE_2",
+                #     "max_iters": 2,
+                #     "presweeps": 3,
+                #     "postsweeps": 3,
+                #     "cycle": "V",
+                #     "max_levels":2,
+                # },
+            # }
         }
 
         if self.lin_mode == LinMode.ITERATIVE:

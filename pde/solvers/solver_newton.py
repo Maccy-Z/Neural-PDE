@@ -1,11 +1,9 @@
 from codetiming import Timer
-import time
 import logging
 import torch
 
 from pde.config import FwdConfig
 from pde.BaseU import UBase
-from pde.cartesian_grid.PDE_Grad import PDEForward
 from pde.solvers.jacobian import JacobCalc
 from pde.solvers.linear_solvers import LinearSolver
 

@@ -2,7 +2,6 @@ import torch
 
 from pde.cartesian_grid.U_grid import UGrid2D
 from pde.solvers.jacobian import get_jac_calc
-from pde.cartesian_grid.discrete_derivative import DerivativeCalc2D
 from pdes.PDEs import PDEFunc
 from pde.cartesian_grid.PDE_Grad import PDEForward, PDEAdjoint
 from solvers.linear_solvers import LinearSolver

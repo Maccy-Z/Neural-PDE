@@ -281,7 +281,7 @@ def mesh_graph(cfg):
     return u_graph, triangles
 
 def load_graph(cfg):
-    u_graph, triangles = torch.load("save_u_graph.pth")
+    u_graph, triangles = torch.load("save_u_graph.pth", weights_only=False)
     return u_graph, triangles
 
 

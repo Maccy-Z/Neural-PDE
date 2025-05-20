@@ -2,98 +2,57 @@ import torch
 import numpy as np
 import cupy
 from cupy import cublas
-from cupyx.scipy.sparse.linalg._iterative import _make_system, _make_compute_hu
+from cupyx.scipy.sparse.linalg._iterative import _make_system  # , #_make_compute_hu
+from cupy_backends.cuda.libs import cublas as _cublas
+from cupy.cuda import device
+from cupyx.scipy.linalg import solve_triangular
 
-# Custom GMRES implementation
-def gmres_cust(A, b, x0=None, tol=1e-5, max_iter=1000, restart=None):
-    """
-    GMRES algorithm to solve the linear system Ax = b.
+from codetiming import Timer
 
-    Arguments:
-    A : callable or tensor
-        If callable, it should be a function that returns the product Ax for a given x.
-        If tensor, it should be a 2D sparse tensor representing the matrix A.
-    b : tensor
-        The right-hand side vector.
-    x0 : tensor, optional
-        Initial guess for the solution (default is None, which means x0 = 0).
-    tol : float, optional
-        Tolerance for convergence (default is 1e-5).
-    max_iter : int, optional
-        Maximum number of iterations (default is 1000).
-    restart : int, optional
-        Restart parameter (default is None, which means no restart).
+def _make_compute_hu(V):
+    handle = device.get_cublas_handle()
+    if V.dtype.char == 'f':
+        gemv = _cublas.sgemv
+    elif V.dtype.char == 'd':
+        gemv = _cublas.dgemv
+    elif V.dtype.char == 'F':
+        gemv = _cublas.cgemv
+    elif V.dtype.char == 'D':
+        gemv = _cublas.zgemv
+    n = V.shape[0]
+    one = np.array(1.0, V.dtype)
+    zero = np.array(0.0, V.dtype)
+    mone = np.array(-1.0, V.dtype)
 
-    Returns:
-    x : tensor
-        Approximate solution to the system Ax = b.
-    info : dict
-        Dictionary containing information about the convergence (e.g., number of iterations).
-    """
-    device = b.device
-    dtype = b.dtype
-    n = b.size(0)
+    def compute_hu(u, j, H):
+        # Gramm-Schmidt process
 
-    A_in = A
-    if x0 is None:
-        x0 = torch.zeros_like(b)
+        # Instead of allocating a new h array, use the column of H directly
+        h_col = H[:j+1, j]  # View of column j in H matrix
 
-    if restart is None:
-        restart = n  # No restart if not specified
+        # Compute V[:, :j+1].conj().T @ u and store in h_col
+        gemv(handle, _cublas.CUBLAS_OP_C, n, j+1, one.ctypes.data, V.data.ptr,
+             n, u.data.ptr, 1, zero.ctypes.data, h_col.data.ptr, 1)
 
-    def Ain_vec(v):
-        return torch.mv(A_in, v)
+        # Compute u = u - V[:, :j+1] @ h_col
+        gemv(handle, _cublas.CUBLAS_OP_N, n, j+1, mone.ctypes.data, V.data.ptr,
+             n, h_col.data.ptr, 1, one.ctypes.data, u.data.ptr, 1)
 
-    # Initialize
-    x = x0
+        return u
 
-    r = b - Ain_vec(x)
-    beta = torch.norm(r)
-    eye = torch.eye(restart + 1, dtype=dtype, device=device)
-    # if beta < tol:
-    #     return x, {'converged': True, 'iterations': 0, 'residual_norm': beta.item()}
+    return compute_hu
 
-    Q = torch.zeros((n, restart + 1), dtype=dtype, device=device)
-    H = torch.zeros((restart + 1, restart), dtype=dtype, device=device)
+def lstsq_qr(A, b):
+    # A : (m, n) with m >= n
+    # b : (m,) or (m, k)
+    # returns x of shape (n,) or (n, k)
+    Q, R = cupy.linalg.qr(A, mode='reduced')           # Q: (m,n), R: (n,n)
+    y    = Q.T.conj() @ b                             # project b onto col(Q)
+    x    = solve_triangular(R, y, lower=False)       # solve R x = y
 
-    Q[:, 0] = r / beta
+    # res_norm = cupy.linalg.norm(b) ** 2 - cupy.linalg.norm(y) ** 2
 
-    residual_norm = None
-    for k in range(max_iter // restart):
-        for j in range(restart):
-            v = Ain_vec(Q[:, j])
-            # Vectorized computation of H[0:j+1, j]
-            H[:j+1, j] = torch.mv(Q[:, :j+1].T, v)
-            # Vectorized update of v
-            v -= torch.mv(Q[:, :j+1], H[:j+1, j])
-
-            H[j+1, j] = torch.norm(v)
-            # if H[j+1, j] < tol:
-            #     break
-            Q[:, j+1] = v / H[j+1, j]
-
-        # Solve the least squares problem H * y = beta * e1
-        eye[0] = beta
-        y = torch.linalg.lstsq(H, eye)
-        y = y.solution
-
-        # Update the solution
-        x += torch.mv(Q[:, :restart], y[:, 0])
-
-        # Calculate the new residual
-        r = b - Ain_vec(x)
-        residual_norm = torch.norm(r)
-
-        if residual_norm < tol:
-            return x, {'converged': True, 'iterations': k * restart + j + 1, 'residual_norm': residual_norm}
-
-        # Restart with new initial residual
-        beta = residual_norm
-        Q[:, 0] = r / beta
-        H.zero_()
-
-    return x, {'converged': False, 'iterations': max_iter, 'residual_norm': residual_norm}
-
+    return x #, res_norm
 
 def gmres(A, b, x0=None, rtol=1e-5, restart=None, maxiter=None, M=None, atol=None):
     """Uses Generalized Minimal RESidual iteration to solve ``Ax = b``.
@@ -135,68 +94,58 @@ def gmres(A, b, x0=None, rtol=1e-5, restart=None, maxiter=None, M=None, atol=Non
 
     .. seealso:: :func:`scipy.sparse.linalg.gmres`
     """
-    assert M is None, "Preconditioner is not supported"
+
     A, M, x, b = _make_system(A, M, x0, b)
-    matvec = A.matvec
-    psolve = M.matvec
+    A_matvec = A.matvec
+    #psolve = M.matvec
 
     n = A.shape[0]
-    if n == 0:
-        return cupy.empty_like(b), 0
     b_norm = cupy.linalg.norm(b)
-    if b_norm == 0:
-        return b, 0
+
     if atol is None:
         atol = rtol * float(b_norm)
     else:
         atol = max(float(atol), rtol * float(b_norm))
-    if maxiter is None:
-        maxiter = n * 10
-    if restart is None:
-        restart = 20
+
     restart = min(restart, n)
 
     V = cupy.empty((n, restart), dtype=A.dtype, order='F')
     H = cupy.zeros((restart+1, restart), dtype=A.dtype, order='F')
-    e = np.zeros((restart+1,), dtype=A.dtype)
+    e_gpu = cupy.zeros((restart+1,), dtype=A.dtype)
 
     compute_hu = _make_compute_hu(V)
 
-    iters = 0
-    while True:
-        mx = psolve(x)
-        r = b - matvec(mx)
+    for full_iters in range(maxiter // restart):
+        r = b - A_matvec(x)
         r_norm = cublas.nrm2(r)
 
-        if r_norm <= atol or iters >= maxiter:
+        if r_norm <= atol:
             break
         v = r / r_norm
         V[:, 0] = v
-        e[0] = r_norm
+        e_gpu[0] = r_norm
 
         # Arnoldi iteration
         for j in range(restart):
-            # z = psolve(v)
-            u = matvec(v) #matvec(z)
-            # print(f'u start = {u}')
-            H[:j+1, j], u = compute_hu(u, j)
+            u = A_matvec(v)
+            # Pass H to compute_hu to use its columns directly
+            u = compute_hu(u, j, H)
 
             cublas.nrm2(u, out=H[j+1, j])
             if j+1 < restart:
                 v = u / H[j+1, j]
                 V[:, j+1] = v
 
-
-        # Note: The least-square solution to equation Hy = e is computed on CPU
-        # because it is faster if the matrix size is small.
-        ret = np.linalg.lstsq(cupy.asnumpy(H), e)
-        y = cupy.array(ret[0])
+        # Solve the least squares problem using CuPy
+        y = lstsq_qr(H, e_gpu)
         x += V @ y
-        iters += restart
 
-    info = {'completed': (r_norm <= atol), 'iters': iters, 'resid_norm': r_norm, 'frac_acc': r_norm/b_norm}
+    #
+    # print()
+    # print(f'{r_norm = }, {final_residual_norm = }')
+    info = {'completed': (r_norm <= atol), 'iters': full_iters, 'resid_norm': r_norm, 'frac_acc': r_norm/b_norm}
 
-    return mx, info
+    return x, info
 
 
 def csr_mat_vec(data, col_idx, n_rows, row_indices, x):
@@ -229,36 +178,7 @@ def csr_mat_vec(data, col_idx, n_rows, row_indices, x):
 
 
 def main():
-
-    # # Example usage:
-    # # Define a sparse matrix A and a vector b
-    A = torch.load("A.pt").cuda()
-    b = torch.load("b.pt").cuda()
-
-    print(A.to_dense()[:5, :5])
-    print()
-
-    # Time default
-    ts = []
-    for _ in range(300):
-        start = time.time()
-        result1 = torch.mv(A, b)
-        ts.append(time.time() - start)
-    print(f'T = {100 * np.mean(ts[10:]) :.4g}')
-
-
-    # Time my version
-    data, col_idx, crow_idx = A.values(), A.col_indices(), A.crow_indices()
-    n_rows = crow_idx.size(0) - 1
-    row_indices = torch.arange(n_rows, device=data.device).repeat_interleave(crow_idx[1:] - crow_idx[:-1])
-    ts = []
-    for _ in range(300):
-        start = time.time()
-        result2 = csr_mat_vec(data, col_idx, n_rows, row_indices, b)
-        ts.append(time.time() - start)
-    print(f'T = {100 * np.mean(ts[10:]) :.4g}')
-
-    print(f'All close: {torch.allclose(result1, result2)}')
+    from cupyx.scipy.sparse.linalg import spilu
 
 #
 if __name__ == "__main__":

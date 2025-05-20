@@ -312,7 +312,7 @@ def sparse_numpy_to_torch(sparse_np):
 #
 def calc_coeff(point_dict: dict[int, Point], diff_acc: int, diff_order: tuple[int, int], adj_mat: dict):
     Xs_all = torch.stack([point.X for point in point_dict.values()])#.numpy()
-    w = fd.weight_matrix(Xs_all, Xs_all, n=16, diffs=np.array(diff_order), order=2, phi="phs3", eps=1)
+    w = fd.weight_matrix(Xs_all, Xs_all, n=25, diffs=np.array(diff_order), order=2, phi="phs3", eps=1)
     w = sparse_numpy_to_torch(w)
 
     indices = w.coalesce().indices().to(torch.float32)[[1, 0], :]
