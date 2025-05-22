@@ -343,7 +343,7 @@ def plot_edges(coords, edge_idx, colors=None, title="", show_index=False, lims=N
         for j, s in zip(edge_nums, edge_scalars, strict=True):
             c = colormap(s)
             edge = points[j]
-            ax.plot(edge[:, 0], edge[:, 1], color=c, thickness=1.5)
+            ax.plot(edge[:, 0], edge[:, 1], color=c, linewidth=1.5)
             if show_index:
                 midpoint = edge.mean(axis=0)
                 ax.text(midpoint[0], midpoint[1], f"{j}", fontsize=8)

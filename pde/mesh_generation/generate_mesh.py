@@ -30,18 +30,18 @@ def refine_fn(vertices, area, props: MeshProps, points, segments):
     return area > threshold
 
 
-def _create_mesh_thread(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, return_val):
+def _create_mesh_thread(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, return_val, min_angle):
     mesh_info = tri.MeshInfo()
     mesh_info.set_holes(holes)
     mesh_info.set_points(points, point_markers=p_marks)
     mesh_info.set_facets(segments, facet_markers=seg_marks)
 
     # Create the mesh
-    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg), min_angle=30)
+    mesh = tri.build(mesh_info, refinement_func=lambda x, y: refine_fn(x, y, mesh_props, dist_p, dist_seg), min_angle=min_angle)
 
     return_val.append(mesh)
 
-def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
+def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps, min_angle=None):
     # Collate together all facet objects
     points, segments = np.empty((0, 2)), np.empty((0, 2), dtype=int)
     # Segments for dist calculation
@@ -74,7 +74,7 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
 
 
     ret_list = []
-    thread = threading.Thread(target=_create_mesh_thread, args=(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, ret_list))
+    thread = threading.Thread(target=_create_mesh_thread, args=(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, ret_list, min_angle))
     thread.start()
     thread.join()
     mesh = ret_list[0]
@@ -82,8 +82,8 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps):
 
 
 def gen_points_full():
-    min_area = 2e-3
-    max_area = 5e-3
+    min_area = 1e-3
+    max_area = 4e-3
     xmin, xmax = 0, 2
     ymin, ymax = 0.0, 1.5
     circle_center = (0.5, 0.4)
@@ -98,10 +98,25 @@ def gen_points_full():
               Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
               Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
               Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
+
+
               Circle((1., 0.75), 0.2, lengthscale, True, name="circle", lims=[[xmin, ymin], [xmax, ymax]]),
               # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
               ]
-
+    #
+    # coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
+    #             Line([[xmin, ymin], [1., ymin]], dist_req=True, name="wall_bottom"),
+    #             Line([[xmin, ymax], [1., ymax]], True, name="wall_top"),
+    #             Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
+    #             Line([[1., ymax], [1., ymin]], True, name="wall_right"),
+    #
+    #             Line([[1.025, ymin], [2., ymin]], dist_req=True, name="wall_bottom"),
+    #             Line([[1.025, ymax], [2, ymax]], True, name="wall_top"),
+    #             Line([[1.025, ymin], [1.025, ymax]], True, name="wall_left"),
+    #             Line([[2, ymax], [2, ymin]], True, name="wall_right"),
+    #
+    #           # Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
+    #           ]
 
     mesh, marker_tags = create_mesh(coords, mesh_props)
     point_props, markers, _edges = extract_mesh_data(mesh)

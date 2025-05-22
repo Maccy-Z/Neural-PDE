@@ -25,7 +25,7 @@ def true_pde():
 
     (us_load, Xs_load) = torch.load("us_all.pth", weights_only=True)
 
-    u_graph._us = us_load
+    u_graph._Us = us_load
 
     us_all, Xs_all = u_graph.get_all_us_Xs()
     # us_all[:, 2] = us_all[:, 2].clamp(max=1.)

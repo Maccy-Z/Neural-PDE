@@ -2,6 +2,79 @@ import torch
 import cupy as cp
 import numpy as np
 from matplotlib import pyplot as plt
+from scipy import sparse as sp
+
+
+def csr_torch_to_scipy(csr):
+    crow_indices = csr.crow_indices().cpu().numpy()
+    col_indices = csr.col_indices().cpu().numpy()
+    values = csr.values().cpu().numpy()
+    shape = csr.size()
+
+    # Create SciPy CSR matrix
+    scipy_csr = sp.csr_matrix((values, col_indices, crow_indices), shape=shape)
+
+    return scipy_csr
+
+def csr_scipy_to_torch(sparse_np):
+    """
+    Convert a scipy sparse matrix to a torch sparse tensor.
+    """
+    # Convert to COO format if not already
+    if not isinstance(sparse_np, sp.coo_matrix):
+        sparse_np = sparse_np.tocoo()
+
+    # Get indices and values
+    indices = torch.LongTensor(np.vstack((sparse_np.row, sparse_np.col)))
+    values = torch.FloatTensor(sparse_np.data)
+    shape = torch.Size(sparse_np.shape)
+
+    return torch.sparse_coo_tensor(indices, values, shape).coalesce()
+
+
+def compress_csr(csr):
+    """ Compress a sparse CSR matrix by removing zero entries."""
+    device = csr.values().device
+
+    # --- 2) extract the CSR arrays ---
+    crow = csr.crow_indices()  # dtype=torch.int32 on CUDA by default
+    col = csr.col_indices()  # dtype=torch.int64
+    vals = csr.values()  # dtype=torch.float32 or float64
+
+    # --- 2) build the keep-mask and its prefix-sum in int64 ---
+    mask = vals != 0  # bool, shape [nnz]
+    prefix = mask.cumsum(dim=0)  # shape [nnz], int64
+
+    # --- 3) compute how many entries survive in each row ---
+    #    crow[1:] - 1 is the last index in each row (–1 → empty row)
+    ends = crow[1:] - 1  # shape [n_rows], int32
+    n_rows = ends.size(0)
+
+    # allocate an container for the kept-count per row
+    kept_per_row = torch.zeros(
+        n_rows,
+        dtype=prefix.dtype,
+        device=device
+    )
+
+    valid_rows = ends >= 0  # which rows were non‐empty
+    # for those rows, look up the total-kept count at the row‐end index
+    kept_per_row[valid_rows] = prefix[ends[valid_rows]]
+
+    # --- 4) stitch together the new crow in int64 ---
+    #    crow[0] is always 0; crow[i+1] = sum of kept entries up to row i
+    new_crow = torch.zeros(
+        n_rows + 1,
+        dtype=prefix.dtype,
+        device=device
+    )
+    new_crow[1:] = kept_per_row
+
+    # --- 5) filter out zeros from col & vals (they’re already correct dtypes) ---
+    new_col = col[mask]
+    new_vals = vals[mask]
+
+    return new_crow, new_col, new_vals
 
 def gen_rand_sp_matrix(rows, cols, density, device="cpu"):
     num_nonzeros = int(rows * cols * density)

@@ -218,7 +218,7 @@ cdef class Vector:
         n = tensor.numel()
         cdef unsigned long long ptr = tensor.data_ptr()
         cdef float* c_ptr = <float*>ptr
-        AMGX_vector_upload(self.vec, n, 1, <void *> c_ptr)
+        check_error(AMGX_vector_upload(self.vec, n, 1, <void *> c_ptr))
 
         return
 
@@ -234,7 +234,7 @@ cdef class Vector:
 
         cdef unsigned long long ptr = tensor.data_ptr()
         cdef float* c_ptr = <float*>ptr
-        AMGX_vector_download(self.vec, <void *> c_ptr)
+        check_error(AMGX_vector_download(self.vec, <void *> c_ptr))
 
         return tensor
 

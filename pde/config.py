@@ -15,9 +15,10 @@ class LinMode(StrEnum):
 
 @dataclass
 class FwdConfig:
+
     # Forward linear solver settings
-    maxiter: int = 250
-    restart: int = 250
+    maxiter: int = 500
+    restart: int = 500
     rtol: float = 1e-9
     lin_solve_cfg: dict = None
 
@@ -27,7 +28,7 @@ class FwdConfig:
     # Newton Raphson PDE solver settings
     # lin_mode: LinMode = LinMode.SPARSE
     lin_mode: LinMode = LinMode.AMGX
-    N_iter: int = 1
+    N_iter: int = 0
     lr: float = 1.
     acc: float = 0.
 
@@ -40,22 +41,22 @@ class FwdConfig:
 
             "solver": "DENSE_LU_SOLVER",
 
-            # "solver": {
-            #     "obtain_timings": 0,
-            #     # "print_solve_stats": 1,
-            #     "solver": "FGMRES",  #"PBICGSTAB", #
-            #     "norm": "L2",
-            #     "max_iters": 50,
-            #     "gmres_n_restart": 50,
-            #     "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
-            #     "gs_reorthog_repeat": 1,
-            #     "preconditioner": "NOSOLVER",
-            #
-            #     "preconditioner": {"solver":  #"DENSE_LU_SOLVER",
-            #                         "BLOCK_JACOBI",
-            #                         "relaxation_factor": 0.6,
-            #                         "max_iters": 30,
-            #                      },
+            "solver": {
+                "obtain_timings": 0,
+                # "print_solve_stats": 1,
+                "solver": "FGMRES",  #"PBICGSTAB", #
+                "norm": "L2",
+                "max_iters": 1,
+                "gmres_n_restart": 1,
+                "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
+                "gs_reorthog_repeat": 2,
+                "preconditioner": "NOSOLVER",
+
+                # "preconditioner": {"solver":  #"DENSE_LU_SOLVER",
+                #                     "BLOCK_JACOBI",
+                #                     "relaxation_factor": .6,
+                #                     "max_iters": 30,
+                #                  },
 
                 # "preconditioner": {
                 #     "print_grid_stats": 1,
@@ -75,7 +76,7 @@ class FwdConfig:
                 #     "cycle": "V",
                 #     "max_levels":2,
                 # },
-            # }
+            }
         }
 
         if self.lin_mode == LinMode.ITERATIVE:
@@ -126,6 +127,10 @@ class AdjointConfig:
 @dataclass
 class Config:
     DEVICE: str = "cuda"
+
+    # Phyiscal Parameters
+    mu = 1.0
+    rho = 1000
 
     # Grid settings
     xmin: float = 0

@@ -53,27 +53,30 @@ class Fluid(PDEFunc):
         super().__init__(cfg=cfg, device=device)
         self.to(device)
 
+        self.mu = cfg.mu
+        self.rho = cfg.rho
+
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
         """ u_dus.shape = [n_grads, n_comp]
             Xs.shape = [2]
 
             return.shape = [n_comp]
         """
-        # print(f'{u_dus.shape = }')
-        x, y = Xs
 
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]
         d2udx2, d2udy2 = u_dus[3], u_dus[5]
 
         # Momentum equations
-        laplace_Vx = d2udx2[0] + d2udy2[0]
-        laplace_Vy = d2udx2[1] + d2udy2[1]
+        advect_x = self.rho * (u[0] * dudx[0] + u[1] * dudy[0])
+        advect_y = self.rho * (u[0] * dudx[1] + u[1] * dudy[1])
+        laplace_Vx = self.mu * (d2udx2[0] + d2udy2[0])
+        laplace_Vy = self.mu * (d2udx2[1] + d2udy2[1])
         dpdx = dudx[2]
         dpdy = dudy[2]
 
-        resid_x = -dpdx + laplace_Vx
-        resid_y = -dpdy + laplace_Vy
+        resid_x = -dpdx + laplace_Vx - advect_x
+        resid_y = -dpdy + laplace_Vy - advect_y
 
         divergence = dudx[0] + dudy[1]
         # divergence = 1 - 1 / 2 * x - u[2]

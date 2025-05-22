@@ -249,8 +249,8 @@ def mesh_graph(cfg):
                         # Deriv(comp=[0, 2], orders=[(1, 0), (0, 0)], value=0, weights=[1, -1]),
                         # Deriv(comp=[0, 1], orders=[(0, 1), (1, 0)], value=0, weights=[1, 1]),
 
-                        # Deriv(comp=[2, 0, 0], orders=[(1, 0), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
-                Deriv(comp=[2, 0, 0, 1], orders=[(1, 0), (2, 0), (0, 2), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
+                        Deriv(comp=[2, 0, 0], orders=[(1, 0), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+                        # Deriv(comp=[2, 0, 0, 1], orders=[(1, 0), (2, 0), (0, 2), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
 
                         # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
                         Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
@@ -272,13 +272,13 @@ def mesh_graph(cfg):
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    u_graph = UGraph(Xs_all, N_component=N_comp, grad_acc=2, max_degree=2, tri=triangles, device=cfg.DEVICE)
+    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=25, max_degree=2, tri=triangles, device=cfg.DEVICE)
 
     with open("save_u_graph.pth", "wb") as f:
-        torch.save((u_graph, triangles), f)
+        torch.save((U_graph, triangles), f)
 
     # exit("Done")
-    return u_graph, triangles
+    return U_graph, triangles
 
 def load_graph(cfg):
     u_graph, triangles = torch.load("save_u_graph.pth", weights_only=False)
@@ -287,22 +287,20 @@ def load_graph(cfg):
 
 def true_pde():
     cfg = Config()
-    u_graph, triangles = load_graph(cfg)
-    # u_graph, triangles = mesh_graph(cfg)
-    # u_graph = new_graph(cfg)
+    U_graph, triangles = load_graph(cfg)
+    # U_graph, triangles = mesh_graph(cfg)
 
-    us_all, _ = u_graph.get_all_us_Xs()
-    derivs = u_graph.deriv_calc_eval.derivative(us_all)
+    us_all, _ = U_graph.get_all_us_Xs()
+    # derivs = u_graph.deriv_calc_eval.derivative(us_all)
 
     pde_fn = Fluid(cfg, device=cfg.DEVICE)
-    pde_adj = NeuralPDEGraph(pde_fn, u_graph, cfg, DummyLoss(), triangles)
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, DummyLoss(), triangles)
     pde_adj.forward_solve()
 
     pde_adj.plot_interp()
     # pde_adj.plot_derivs((1, 0))
     # pde_adj.plot_derivs((0, 1))
 
-    us_all, Xs_all = u_graph.get_all_us_Xs()
     # torch.save((us_all, Xs_all), "us_all.pth")
 
 

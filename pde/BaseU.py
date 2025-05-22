@@ -10,7 +10,7 @@ class UBase(abc.ABC):
     N_dim: int
     N_us_real: int  # Number of real points.
 
-    _us: Tensor  # Value of u at all points.
+    _Us: Tensor  # Value of u at all points.
     _Xs: Tensor  # Coordinates of all points. Shape = [N_total, 2]
 
     updt_mask: Tensor  # Which us have gradient. Shape = [N_u_grad]
@@ -36,42 +36,42 @@ class UBase(abc.ABC):
         us -> us - deltas
         """
         deltas = deltas.view(self.N_component, self.N_us_grad).T
-        self._us[self.updt_mask] -= deltas
+        self._Us[self.updt_mask] -= deltas
 
     def set_grid(self, new_us):
         """
         Set grid to new values. Used for Jacobian computation.
         """
-        self._us[self.updt_mask] = new_us
+        self._Us[self.updt_mask] = new_us
 
     def get_us_mask(self):
         """
         Return us, and mask of which elements are trainable. Used for masking Jacobian equations.
         """
-        return self._us, self.updt_mask, self.pde_mask
+        return self._Us, self.updt_mask, self.pde_mask
 
     def get_real_us_Xs(self):
         """ Return all actual grid points, excluding fake boundaries. """
-        return self._us[self.u_mask], self._Xs[self.u_mask]
+        return self._Us[self.u_mask], self._Xs[self.u_mask]
 
     def get_all_us_Xs(self):
         """ Return all grid points, including fake boundaries. """
-        return self._us, self._Xs
+        return self._Us, self._Xs
 
     def get_us_grad(self):
         """ Return us with gradients. """
-        return self._us[self.updt_mask]
+        return self._Us[self.updt_mask]
 
     def get_us_Xs_pde(self):
         """ Return us and Xs for PDE points. """
-        return self._us[self.pde_mask], self._Xs[self.pde_mask]
+        return self._Us[self.pde_mask], self._Xs[self.pde_mask]
 
     def add_nograd_to_us(self, us_grad):
         """
         Add points that don't have gradient to us. Used for Jacobian computation.
         """
 
-        us_all = torch.clone(self._us)
+        us_all = torch.clone(self._Us)
         us_all[self.updt_mask] = us_grad
 
         return us_all

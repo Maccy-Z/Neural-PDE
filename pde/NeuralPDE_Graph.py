@@ -16,27 +16,27 @@ class NeuralPDEGraph:
     loss_fn: Loss
     adjoint: torch.Tensor
 
-    def __init__(self, pde_fn: PDEFunc, u_graph: UGraph, cfg: Config, loss_fn:Loss = None, triangles=None):
+    def __init__(self, pde_fn: PDEFunc, U_graph: UGraph, cfg: Config, loss_fn:Loss = None, triangles=None):
         adj_cfg = cfg.adj_cfg
         fwd_cfg = cfg.fwd_cfg
         self.loss_fn = loss_fn
         self.cfg = cfg
         self.DEVICE = cfg.DEVICE
 
-        pde_forward = PDEForward(u_graph, pde_fn)
+        pde_forward = PDEForward(U_graph, pde_fn)
 
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
-        fwd_jacob_calc = get_jac_calc(u_graph, pde_forward, fwd_cfg)
-        newton_solver = SolverNewton(u_graph, fwd_lin_solver, jac_calc=fwd_jacob_calc, cfg=fwd_cfg)
+        fwd_jacob_calc = get_jac_calc(U_graph, pde_forward, fwd_cfg)
+        newton_solver = SolverNewton(U_graph, fwd_lin_solver, jac_calc=fwd_jacob_calc, cfg=fwd_cfg)
 
-        # Adjoint solver
+        # # Adjoint solver
         # adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
-        # adj_jacob_calc = get_jac_calc(us_graph, pde_forward, adj_cfg)
-        # pde_adjoint = PDEAdjoint(us_graph, pde_fn, adj_jacob_calc, adj_lin_solver, loss_fn)
+        # adj_jacob_calc = get_jac_calc(U_graph, pde_forward, adj_cfg)
+        # pde_adjoint = PDEAdjoint(U_graph, pde_fn, adj_jacob_calc, adj_lin_solver, loss_fn)
 
         self.pde_fn = pde_fn
-        self.u_graph = u_graph
+        self.U_graph = U_graph
         self.newton_solver = newton_solver
         # self.pde_adjoint = pde_adjoint
 
@@ -68,21 +68,21 @@ class NeuralPDEGraph:
     def plot_interp(self, Us=None, Xlims=None):
         """ Plot the interpolated solution. """
         if Us is None:
-            Us, Xs = self.u_graph.get_all_us_Xs()
+            Us, Xs = self.U_graph.get_all_us_Xs()
         else:
-            _, Xs = self.u_graph.get_all_us_Xs()
+            _, Xs = self.U_graph.get_all_us_Xs()
 
-        plot_interp(Xs, Us.T, Xlims=Xlims, title="Interpolated solution", triangles=self.u_graph.tri)
+        plot_interp(Xs, Us.T, Xlims=Xlims, title="Interpolated solution", triangles=self.U_graph.tri)
 
 
     def plot_derivs(self, order):
-        us_all, Xs = self.u_graph.get_all_us_Xs()
+        us_all, Xs = self.U_graph.get_all_us_Xs()
 
-        deriv_dict = self.u_graph.deriv_calc_eval.derivative(us_all)
+        deriv_dict = self.U_graph.deriv_calc_eval.derivative(us_all)
         derivs = deriv_dict[order]
 
 
-        plot_interp(Xs, derivs.T, title=str(order), triangles=self.u_graph.tri)
+        plot_interp(Xs, derivs.T, title=str(order), triangles=self.U_graph.tri)
         #
         divergence = deriv_dict[(1, 0)][:, 0] + deriv_dict[(0, 1)][:, 1]
         laplace_y = deriv_dict[(2, 0)][:, 1] + deriv_dict[(0, 2)][:, 1]
@@ -99,17 +99,17 @@ class NeuralPDEGraph:
 
 
     def _plot_interp(self, value):
-        us_all, Xs = self.u_graph.get_all_us_Xs()
-        plot_interp(Xs, value, triangles=self.u_graph.tri)
+        us_all, Xs = self.U_graph.get_all_us_Xs()
+        plot_interp(Xs, value, triangles=self.U_graph.tri)
 
     def plot_points(self, values, Xlims=None, show_index=False, title=""):
         Xlims = None # [(0,0.2), (0, 1.5)]
-        _, Xs = self.u_graph.get_all_us_Xs()
+        _, Xs = self.U_graph.get_all_us_Xs()
 
         plot_points(Xs, values, Xlims=Xlims, show_index=show_index, title=title)
 
     def _plot_points(self, values, Xlims=None):
-        _, Xs = self.u_graph.get_all_us_Xs()
+        _, Xs = self.U_graph.get_all_us_Xs()
         plot_points(Xs, values, Xlims=Xlims)
 
 

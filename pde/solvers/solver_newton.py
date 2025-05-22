@@ -43,8 +43,6 @@ class SolverNewton:
 
             deltas *= self.lr
 
-            # print(deltas)
-
             self.sol_grid.update_grid(deltas)
 
             # Error from PDE
@@ -54,7 +52,7 @@ class SolverNewton:
 
             logging.debug(f'Linear solver Iteration {i}')
             logging.debug(f'    Linear residual: {lin_resid_norm:.3g}')
-            logging.debug(f'    Mean residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
+            logging.debug(f'    Norm residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
 
 
             # self.residuals = residuals

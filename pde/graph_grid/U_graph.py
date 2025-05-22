@@ -6,8 +6,10 @@ from codetiming import Timer
 from pde.BaseU import UBase
 from pde.graph_grid.graph_store import DerivGraph, Point, Deriv
 from pde.graph_grid.graph_store import P_Types as T
-from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff
+from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff, nearest_neighbors
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, NeumanBCCalc
+
+print_fn = lambda s: c_print(f"{s}", color="bright_black")
 
 
 def tri_to_n_hop(tris, hops=6):
@@ -54,10 +56,11 @@ def tri_to_n_hop(tris, hops=6):
 
     return n_hop_reach_cols
 
+
 class UGraph(UBase):
     """ Holder for graph structure. """
     _Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
-    _us: Tensor   # [N_us_tot, N_component]                   # Value at node
+    _Us: Tensor   # [N_us_tot, N_component]                   # Value at node
     deriv_val: Tensor # [N_deriv_BC*N_component]            # Derivative values at nodes for BC
 
     pde_mask: Tensor  # [N_us_tot]                   # Mask for where to enforce PDE on. Bool
@@ -92,7 +95,7 @@ class UGraph(UBase):
         assert types.count(T.Ghost) == types.count(T.NeumCentralBC), "Number of ghost points must equal central Neumann BC points."
 
 
-    def __init__(self, setup_dict: dict[int, Point], N_component, grad_acc:int = 2, max_degree:int = 2, tri=None, device="cpu"):
+    def __init__(self, setup_dict: dict[int, Point], N_component, grad_neigh, max_degree:int = 2, tri=None, device="cpu"):
         """ Initialize the graph with a set of points.
             setup_dict: dict[node_id, Point]. Dictionary of each type of point
          """
@@ -125,18 +128,21 @@ class UGraph(UBase):
         self.neumann_mode = len(deriv_val) > 0
         # 1.3) Set up initial node values
         self._Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
-        self._us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
+        self._Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
 
         # 2.1) Get the neighborhood graph
-        n_hop_adj = tri_to_n_hop(self.tri)
+        #n_hop_adj = tri_to_n_hop(self.tri)
+        # nearest_neighbors(self.tri, self._Xs)
+        stencils = nearest_neighbors(self.tri, self._Xs, grad_neigh)
+
         # 2.2) Compute finite difference stencils / graphs.
         # Each gradient type has its own stencil and graph.
         diff_degrees = gen_multi_idx_tuple(max_degree)[1:] # 0th order is just itself.
         self.graphs = {}
         for degree in diff_degrees:
-            c_print(f"Generating graph for degree {degree}", color="black")
-            with Timer(text="Time to solve: : {:.4f}"):
-                edge_idx, fd_weights = calc_coeff(setup_dict, grad_acc, degree, n_hop_adj)
+            print_fn(f"Generating graph for degree {degree}")
+            with Timer(text="Time to solve: : {:.4f}", logger=print_fn):
+                edge_idx, fd_weights = calc_coeff(self._Xs, stencils, grad_neigh, degree)
                 self.graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_us_tot, self.N_us_tot))
 
         # # 2.1) Add additional stencils
@@ -177,12 +183,12 @@ class UGraph(UBase):
 
 
     def reset(self):
-        self._us = torch.zeros_like(self._us)
+        self._Us = torch.zeros_like(self._Us)
 
 
     def _cuda(self):
         """ Move graph data to CUDA. """
-        self._us = self._us.cuda(non_blocking=True)
+        self._Us = self._Us.cuda(non_blocking=True)
         self._Xs = self._Xs.cuda(non_blocking=True)
 
         self.pde_mask = self.pde_mask.cuda(non_blocking=True)

@@ -140,7 +140,8 @@ def gmres(A, b, x0=None, rtol=1e-5, restart=None, maxiter=None, M=None, atol=Non
         y = lstsq_qr(H, e_gpu)
         x += V @ y
 
-    #
+
+    r_norm = cupy.linalg.norm(b - A_matvec(x))
     # print()
     # print(f'{r_norm = }, {final_residual_norm = }')
     info = {'completed': (r_norm <= atol), 'iters': full_iters, 'resid_norm': r_norm, 'frac_acc': r_norm/b_norm}

@@ -150,7 +150,7 @@ def main():
 
     amgx_manager = PyAMGXManager()
     solver = amgx_manager.create_solver(cfg_dict)
-    solver2 = amgx_manager.create_solver(deepcopy(cfg_dict))
+    # solver2 = amgx_manager.create_solver(deepcopy(cfg_dict))
 
     A = torch.rand(5, 5, dtype=torch.float32, device='cuda').to_sparse_csr()
     b = torch.rand(5, device="cuda", dtype=torch.float32)
