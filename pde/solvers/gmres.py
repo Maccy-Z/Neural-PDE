@@ -1,11 +1,13 @@
-import torch
 import numpy as np
 import cupy
+import cupy as cp
+#
 from cupy import cublas
 from cupyx.scipy.sparse.linalg._iterative import _make_system  # , #_make_compute_hu
 from cupy_backends.cuda.libs import cublas as _cublas
 from cupy.cuda import device
 from cupyx.scipy.linalg import solve_triangular
+import torch
 
 from codetiming import Timer
 
@@ -24,23 +26,123 @@ def _make_compute_hu(V):
     zero = np.array(0.0, V.dtype)
     mone = np.array(-1.0, V.dtype)
 
+    # def compute_hu(u, j, H):
+    #     # Gramm-Schmidt process
+    #     # Instead of allocating a new h array, use the column of H directly
+    #     h_col = H[:j+1, j]  # View of column j in H matrix
+    #
+    #     # Compute V[:, :j+1].conj().T @ u and store in h_col
+    #     gemv(handle, _cublas.CUBLAS_OP_C, n, j+1, one.ctypes.data, V.data.ptr,
+    #          n, u.data.ptr, 1, zero.ctypes.data, h_col.data.ptr, 1)
+    #
+    #     # Compute u = u - V[:, :j+1] @ h_col
+    #     gemv(handle, _cublas.CUBLAS_OP_N, n, j+1, mone.ctypes.data, V.data.ptr,
+    #          n, h_col.data.ptr, 1, one.ctypes.data, u.data.ptr, 1)
+    #     return u
+
     def compute_hu(u, j, H):
-        # Gramm-Schmidt process
+        # working buffer for the projection coefficients of *this* pass
+        tmp = cp.empty(j + 1, dtype=u.dtype)
 
-        # Instead of allocating a new h array, use the column of H directly
-        h_col = H[:j+1, j]  # View of column j in H matrix
+        h_col = H[:j + 1, j]  # view on the target column – accumulates the sum
 
-        # Compute V[:, :j+1].conj().T @ u and store in h_col
-        gemv(handle, _cublas.CUBLAS_OP_C, n, j+1, one.ctypes.data, V.data.ptr,
-             n, u.data.ptr, 1, zero.ctypes.data, h_col.data.ptr, 1)
+        # print(j)
+        for it in range(2):
+            # tmp  = V[:, :j+1]^H  u
+            _cublas.sgemv(handle, _cublas.CUBLAS_OP_T,
+                        n, j + 1,
+                        one.ctypes.data, V.data.ptr, n,
+                        u.data.ptr, 1,
+                        zero.ctypes.data, tmp.data.ptr, 1)
 
-        # Compute u = u - V[:, :j+1] @ h_col
-        gemv(handle, _cublas.CUBLAS_OP_N, n, j+1, mone.ctypes.data, V.data.ptr,
-             n, h_col.data.ptr, 1, one.ctypes.data, u.data.ptr, 1)
+            # accumulate into H  (beta = 1 after the first pass)
+            if it == 0:
+                h_col[...] = tmp
+            else:
+                h_col += tmp  # H ← H + tmp
+
+            # u  = u − V[:, :j+1]  tmp
+            _cublas.sgemv(handle, _cublas.CUBLAS_OP_N,
+                        n, j + 1,
+                        mone.ctypes.data, V.data.ptr, n,
+                        tmp.data.ptr, 1,
+                        one.ctypes.data, u.data.ptr, 1)
+
+            # print(cp.linalg.norm(tmp))
+            # if cp.linalg.norm(tmp):
+                # break
+            if j > 500:
+                break
 
         return u
 
     return compute_hu
+
+def lstsq_sxgels(A, B):
+    """
+    Least–squares solve  (min ‖AX – B‖₂)  using cuSOLVER `cusolverDnSXgels`.
+
+    Parameters
+    ----------
+    A : (m, n) cupy.ndarray, float32
+        Coefficient matrix.  Only **float32** is accepted; the kernel
+        runs in TF32 / mixed precision internally.
+    B : (m,) or (m, nrhs) cupy.ndarray, float32
+        Right-hand side vector(s).
+    Returns
+    -------
+    X : (n,) or (n, nrhs) cupy.ndarray, float32
+        Least-squares solution.
+
+    """
+
+    from cupy_backends.cuda.libs import cusolver
+    import ctypes
+
+    m, n = A.shape
+
+    # RHS normalisation -----------------------------------------------------
+    B = B[:, None] if B.ndim == 1 else B
+    nrhs = 1
+
+    # Fortran contiguous copies (cusolver works column-major) ---------------
+    X_f = cp.empty((n, nrhs), dtype=cp.float32, order="F")
+
+    lda, ldb, ldx = m, m, n
+
+    # cuSOLVER handle --------------------------------------------------------
+    handle = device.get_cusolver_handle() #_cusolver.cusolverDnCreate()
+
+    # Workspace query --------------------------------------------------------
+    result = cusolver.ssgels_bufferSize(           # :contentReference[oaicite:0]{index=0}
+        handle, m, n, nrhs,
+        int(A.data.ptr), lda,
+        int(B.data.ptr), ldb,
+        int(X_f.data.ptr), ldx,
+        0,
+    )
+
+    work = cp.empty(result)
+
+    # Device info -----------------------------------------------------------
+    dev_info = cp.empty(1, dtype=cp.int32)
+
+    # Solve -----------------------------------------------------------------
+    out = cusolver.ssgels(                      # :contentReference[oaicite:1]{index=1}
+        handle, m, n, nrhs,
+        int(A.data.ptr), lda,
+        int(B.data.ptr), ldb,
+        int(X_f.data.ptr), ldx,
+        int(work.data.ptr), result,
+        dev_info.data.ptr,
+    )
+    info = int(dev_info.get())
+    print(f'{out = }, {info = }')
+    if info < 0:
+        raise RuntimeError(
+            f"cusolverDnSXgels: argument {-info} was invalid (info={info})")
+
+    return X_f.ravel()
 
 def lstsq_qr(A, b):
     # A : (m, n) with m >= n
@@ -50,9 +152,7 @@ def lstsq_qr(A, b):
     y    = Q.T.conj() @ b                             # project b onto col(Q)
     x    = solve_triangular(R, y, lower=False)       # solve R x = y
 
-    # res_norm = cupy.linalg.norm(b) ** 2 - cupy.linalg.norm(y) ** 2
-
-    return x #, res_norm
+    return x
 
 def gmres(A, b, x0=None, rtol=1e-5, restart=None, maxiter=None, M=None, atol=None):
     """Uses Generalized Minimal RESidual iteration to solve ``Ax = b``.
@@ -137,7 +237,8 @@ def gmres(A, b, x0=None, rtol=1e-5, restart=None, maxiter=None, M=None, atol=Non
                 V[:, j+1] = v
 
         # Solve the least squares problem using CuPy
-        y = lstsq_qr(H, e_gpu)
+        # y = lstsq_qr(H, e_gpu)
+        y = lstsq_sxgels(H, e_gpu)
         x += V @ y
 
 
@@ -177,12 +278,5 @@ def csr_mat_vec(data, col_idx, n_rows, row_indices, x):
     # result = torch.scatter_add(result, 0, row_indices, products)
     return result
 
-
-def main():
-    from cupyx.scipy.sparse.linalg import spilu
-
-#
-if __name__ == "__main__":
-    main()
 
 

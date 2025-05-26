@@ -17,8 +17,8 @@ class LinMode(StrEnum):
 class FwdConfig:
 
     # Forward linear solver settings
-    maxiter: int = 500
-    restart: int = 500
+    maxiter: int = 3000
+    restart: int = 3000
     rtol: float = 1e-9
     lin_solve_cfg: dict = None
 
@@ -27,8 +27,8 @@ class FwdConfig:
 
     # Newton Raphson PDE solver settings
     # lin_mode: LinMode = LinMode.SPARSE
-    lin_mode: LinMode = LinMode.AMGX
-    N_iter: int = 0
+    lin_mode: LinMode = LinMode.SPARSE
+    N_iter: int = 3
     lr: float = 1.
     acc: float = 0.
 
@@ -41,22 +41,23 @@ class FwdConfig:
 
             "solver": "DENSE_LU_SOLVER",
 
-            "solver": {
-                "obtain_timings": 0,
-                # "print_solve_stats": 1,
-                "solver": "FGMRES",  #"PBICGSTAB", #
-                "norm": "L2",
-                "max_iters": 1,
-                "gmres_n_restart": 1,
-                "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
-                "gs_reorthog_repeat": 2,
-                "preconditioner": "NOSOLVER",
-
-                # "preconditioner": {"solver":  #"DENSE_LU_SOLVER",
-                #                     "BLOCK_JACOBI",
-                #                     "relaxation_factor": .6,
-                #                     "max_iters": 30,
-                #                  },
+            # "solver": {
+            #     "obtain_timings": 0,
+            #     # "print_solve_stats": 1,
+            #     "solver": "FGMRES",  #"PBICGSTAB", #
+            #     "norm": "L2",
+            #     "max_iters": 100,
+            #     "gmres_n_restart": 100,
+            #     "gram_schmidt_options": "REORTHOGONALIZED",   # "NORMAL", "MODIFIED", "REORTHOGONALIZED"
+            #     "gs_reorthog_repeat": 0,
+            #     "gs_reorthog_end": 1000,
+            #     "preconditioner": "NOSOLVER",
+            #
+            #     "preconditioner": {"solver":  #"DENSE_LU_SOLVER",
+            #                         "BLOCK_JACOBI",
+            #                         "relaxation_factor": .6,
+            #                         "max_iters": 5,
+            #                      },
 
                 # "preconditioner": {
                 #     "print_grid_stats": 1,
@@ -76,13 +77,11 @@ class FwdConfig:
                 #     "cycle": "V",
                 #     "max_levels":2,
                 # },
-            }
+            # }
         }
 
         if self.lin_mode == LinMode.ITERATIVE:
             self.lin_solve_cfg = {"maxiter": self.maxiter, "restart": self.restart, "rtol": self.rtol}
-
-
 
 @dataclass
 class AdjointConfig:

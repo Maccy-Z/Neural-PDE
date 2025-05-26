@@ -202,41 +202,36 @@ def mesh_graph(cfg):
     for i, (X, tag) in enumerate(zip(Xs, p_tags)):
         value = [0. for _ in range(N_comp)]
 
-        x, y = X
-        # value[1] = 10#1 - 1 / 2 * x
-
         if tag == "Normal":
             Xs_all[i] = Point(PT.Normal, X, value=value)
             assert i not in bc_points, "Normal point is also a boundary point"
             continue
 
         # Boundary conditions
+        x, y = X
         n_hat = normals[i].tolist()
+        # wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1, 1, 0], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (1, 1), (2, 0), (0, 2), (1, 1)], value=0,
+        #       weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[0], n_hat[1], n_hat[1], n_hat[1]])
+        wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (2, 0), (0, 2)], value=0,
+                           weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[1], n_hat[1]])
+
         if tag == "wall_bottom" or tag == "wall_top" or y <= 0 or y >= 1.5:
             deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0.),
                      Deriv(comp=[1], orders=[(0, 0)], value=0.),
-                     # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0],n_hat[1]]),
-                     # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
-                     Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0., weights=[-1, 1, 1]),
-                     # Deriv(comp=[2, 1, 1, 0], orders=[(1, 0), (0, 2), (2, 0), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
-                     # Deriv(comp=[2, ], orders=[(0, 1)], value=0., weights=[1]),
+                     wall_deriv
                      ]
 
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         elif tag == "wall_left":
             deriv = [
                         # Deriv(comp=[0], orders=[(1, 0)], value=0, weights=[1]),
-
                         # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
-                        # Deriv(comp=[1], orders=[(0, 1)], value=0., weights=[1]),
-
-                # Deriv(comp=[2, 0, 0, 1], orders=[(1, 0), (2, 0), (0, 2), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
-                Deriv(comp=[2, 0, 0], orders=[(1, 0), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+                        wall_deriv,
 
                         # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
                         Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
 
-                # Pressure
+                        # Pressure
                         Deriv(comp=[2], orders=[(0, 0)], value=1.),
                      ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=[0, 0, 1], derivatives=deriv)
@@ -244,13 +239,8 @@ def mesh_graph(cfg):
         elif tag == "wall_right":
             deriv = [
                         # Deriv(comp=[0], orders=[(1, 0)], value=0., weights=[1]),
-                        # Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0]]),
-
-                        # Deriv(comp=[0, 2], orders=[(1, 0), (0, 0)], value=0, weights=[1, -1]),
-                        # Deriv(comp=[0, 1], orders=[(0, 1), (1, 0)], value=0, weights=[1, 1]),
-
-                        Deriv(comp=[2, 0, 0], orders=[(1, 0), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
-                        # Deriv(comp=[2, 0, 0, 1], orders=[(1, 0), (2, 0), (0, 2), (1, 1)], value=0, weights=[-1, 2, 1, 1]),
+                        # Deriv(comp=[1, 0], orders=[(1, 0), (0, 1)], value=0, weights=[1, 1]),
+                        wall_deriv,
 
                         # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
                         Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
@@ -264,8 +254,7 @@ def mesh_graph(cfg):
                         Deriv(comp=[1], orders=[(0, 0)], value=0.),
 
                         # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
-                        Deriv(comp=[2, 2, 0, 0, 1, 1, 1, 0], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (1, 1), (2, 0), (0, 2), (1, 1)], value=0,
-                            weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[0], n_hat[1], n_hat[1], n_hat[1]]),
+                        wall_deriv,
                      ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         else:

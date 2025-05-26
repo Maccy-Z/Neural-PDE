@@ -1,8 +1,7 @@
 import torch
-from networkx.algorithms.cluster import triangles
 
 from pde.graph_grid.U_graph import UGraph
-from pde.solvers.jacobian import get_jac_calc
+from pde.solvers.jacobian import GraphJacobCalc
 from pde.pdes.PDEs import PDEFunc
 from pde.graph_grid.PDE_Grad import PDEForward, PDEAdjoint
 from pde.solvers.linear_solvers import LinearSolver
@@ -27,12 +26,12 @@ class NeuralPDEGraph:
 
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
-        fwd_jacob_calc = get_jac_calc(U_graph, pde_forward, fwd_cfg)
+        fwd_jacob_calc = GraphJacobCalc(U_graph, pde_forward)
         newton_solver = SolverNewton(U_graph, fwd_lin_solver, jac_calc=fwd_jacob_calc, cfg=fwd_cfg)
 
         # # Adjoint solver
         # adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
-        # adj_jacob_calc = get_jac_calc(U_graph, pde_forward, adj_cfg)
+        # adj_jacob_calc = GraphJacobCalc(U_graph, pde_forward)
         # pde_adjoint = PDEAdjoint(U_graph, pde_fn, adj_jacob_calc, adj_lin_solver, loss_fn)
 
         self.pde_fn = pde_fn
@@ -44,6 +43,7 @@ class NeuralPDEGraph:
 
     def forward_solve(self, aux_input=None):
         """ Solve PDE forward problem. """
+
         self.newton_solver.find_pde_root(aux_input)
 
     def adjoint_solve(self):
@@ -51,7 +51,6 @@ class NeuralPDEGraph:
 
         adjoint, loss = self.pde_adjoint.adjoint_solve()
         self.adjoint = adjoint
-
         return loss
 
     def backward(self):

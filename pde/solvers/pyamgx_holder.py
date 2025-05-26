@@ -40,10 +40,8 @@ class PyAMGXSolver:
         if self.setup:
             self.A.replace_coefficients(cp_matrix.data)
         else:
-            # print(f'{cp_matrix.values = }')
             self.A.upload_CSR(cp_matrix)
             self.solver.setup(self.A)
-            # self.setup = True
 
     def init_solver(self, tensor):
         """ Initialise problem matrix A from sparse csr cuda tensor """
@@ -52,18 +50,12 @@ class PyAMGXSolver:
 
     def solve(self, b, x):
         """ Solve the system Ax = b """
-        # b = cp.from_dlpack(b)
-        # x_cp = cp.from_dlpack(x)
-        # self.b.upload(b)
-        # self.x.upload(x_cp)
-        # exit(9)
         self.b.upload_torch(b)
         self.x.upload_torch(x)
 
         self.solver.solve(self.b, self.x)
 
         self.x.download_torch(x)
-        # x = self.x.download_torch_zerocopy()
         resid_norm = self.solver.get_residual()
         return x, resid_norm
 

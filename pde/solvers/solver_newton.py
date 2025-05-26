@@ -37,12 +37,15 @@ class SolverNewton:
 
             with Timer(text="Time to solve: : {:.4f}", logger=logging.debug):
                 # Convert jacobian to sparse here instead of in lin_solver, so we can delete the dense Jacobian asap.
-                jac_preproc, residuals = self.lin_solver.preproc_tensor(jacobian, residuals)
-                del jacobian # torch.cuda.empty_cache()
-                deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, residuals)
+                jac_preproc, resid_preproc = self.lin_solver.preproc_tensor(jacobian, residuals)
+                # del jacobian # torch.cuda.empty_cache()
+                deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, resid_preproc)
+
+
+            true_resid = (jacobian @ deltas - residuals).norm()
+            print(f'{true_resid.item() = }')
 
             deltas *= self.lr
-
             self.sol_grid.update_grid(deltas)
 
             # Error from PDE

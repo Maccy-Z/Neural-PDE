@@ -57,14 +57,14 @@ class LinearSolver:
         x = sp_linalg.spsolve(A_cp, b_cupy)
 
         x = torch.from_dlpack(x)
-        return x
+        return x, 0
 
     def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
         A = A.to_dense()
         # c_print(torch.linalg.matrix_rank(A), color="green")
         # c_print(A.shape, color="green")
         deltas = torch.linalg.solve(A, b)
-        return deltas
+        return deltas, 0
 
     def cpu_sparse(self, A: torch.Tensor, b: torch.Tensor):
         A = A.numpy()
@@ -89,12 +89,6 @@ class LinearSolver:
             x = x / self.col_norms
         # c_print(f'{b = }', color="bright_blue")
         # c_print(f'{x = }', color="bright_blue")
-
-        # b_cp = cp.from_dlpack(b)
-        # x_cp = cp.from_dlpack(x)
-        # resid = b_cp - A_cp @ x_cp
-        # resid = cp.linalg.norm(resid)
-        # print(resid)
 
 
         return x, resid
