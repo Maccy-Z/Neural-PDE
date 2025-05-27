@@ -4,12 +4,12 @@ import torch
 
 from pde.config import FwdConfig
 from pde.BaseU import UBase
-from pde.solvers.jacobian import JacobCalc
+from pde.pdes.PDECalc import PDECalc
 from pde.solvers.linear_solvers import LinearSolver
 
 
 class SolverNewton:
-    def __init__(self,  sol_grid: UBase, lin_solver: LinearSolver, jac_calc: JacobCalc, cfg: FwdConfig):
+    def __init__(self,  sol_grid: UBase, lin_solver: LinearSolver, pde_calc: PDECalc, cfg: FwdConfig):
         #self.pde_func = pde_func
         self.sol_grid = sol_grid
         self.lin_solver = lin_solver
@@ -18,7 +18,7 @@ class SolverNewton:
         self.lr = cfg.lr
         self.solve_acc = cfg.acc
 
-        self.jac_calc = jac_calc
+        self.pde_calc = pde_calc
         self.device = sol_grid.device
 
         self.logging = {"time": 0.0, "residual": 0.}
@@ -33,7 +33,7 @@ class SolverNewton:
         for i in range(self.N_iter):
             logging.debug("\n")
             with Timer(text="Time to calculate jacobian: : {:.4f}", logger=logging.debug):
-                jacobian, residuals = self.jac_calc.jacobian(aux_input)
+                jacobian, residuals = self.pde_calc.jacobian(aux_input)
 
             with Timer(text="Time to solve: : {:.4f}", logger=logging.debug):
                 # Convert jacobian to sparse here instead of in lin_solver, so we can delete the dense Jacobian asap.
@@ -43,41 +43,20 @@ class SolverNewton:
 
 
             true_resid = (jacobian @ deltas - residuals).norm()
-            print(f'{true_resid.item() = }')
 
             deltas *= self.lr
             self.sol_grid.update_grid(deltas)
 
             # Error from PDE
-            pde_resid = self.jac_calc.residuals(aux_input)
+            pde_resid = self.pde_calc.residuals(aux_input)
             pde_resid_norm = pde_resid.norm()
             max_abs_residual = torch.max(pde_resid.abs())
 
             logging.debug(f'Linear solver Iteration {i}')
-            logging.debug(f'    Linear residual: {lin_resid_norm:.3g}')
+            logging.debug(f'    Linear residual: {true_resid:.3g}')
             logging.debug(f'    Norm residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
 
 
-            # self.residuals = residuals
-            # global I
-            # I += 1
-            # logging.debug(f'{I = }')
-            # if I == 100:
-            #     print(I)
-            #     error = jacobian @ deltas - residuals
-            #     max_err = torch.max(torch.abs(error)).item()
-            #
-            #     _mask = torch.zeros(self.sol_grid.grad_mask.sum()).cuda().bool()
-            #     _pde_mask = self.sol_grid.pde_mask[self.sol_grid.grad_mask]
-            #     _mask[_pde_mask] = 1
-            #
-            #     print(self.sol_grid.get_us_grad().squeeze())
-            #
-            #     save_dict = {"jacobian": jacobian, "residuals": residuals, "aux_input": aux_input, "mask": _mask}
-            #     torch.save(save_dict, "jacobian_residuals.pt")
-            #
-            #     print(f'{max_err = }')
-            #     exit("Newton Solver")
 
             self.logging["residual"] = pde_resid_norm
 

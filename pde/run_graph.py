@@ -11,7 +11,7 @@ from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pdes.PDEs import Poisson, Fluid
 from pde.utils import setup_logging
-from pde.loss import DummyLoss
+from pde.loss import DummyLoss, MSELoss2
 from pde.mesh_generation.generate_mesh import gen_points_full
 
 
@@ -181,7 +181,6 @@ def mesh_heat(cfg):
 
 
 def mesh_graph(cfg):
-    cfg = Config()
     N_comp = 3
     Xs, triangles, (int_edges, bc_edges), p_tags  = gen_points_full()
     Xs = torch.from_numpy(Xs).float()
@@ -269,6 +268,7 @@ def mesh_graph(cfg):
     # exit("Done")
     return U_graph, triangles
 
+
 def load_graph(cfg):
     u_graph, triangles = torch.load("save_u_graph.pth", weights_only=False)
     return u_graph, triangles
@@ -286,7 +286,10 @@ def true_pde():
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, DummyLoss(), triangles)
     pde_adj.forward_solve()
 
-    pde_adj.plot_interp()
+    loss = pde_adj.adjoint_solve()
+    pde_adj.backward()
+
+    # pde_adj.plot_interp()
     # pde_adj.plot_derivs((1, 0))
     # pde_adj.plot_derivs((0, 1))
 

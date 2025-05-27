@@ -12,7 +12,7 @@ class PDEFunc(torch.nn.Module, ABC):
         super().__init__()
         self.device = device
 
-    def residuals(self, u_dus: dict[tuple, torch.Tensor], Xs: torch.Tensor) -> torch.Tensor:
+    def residuals(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None) -> tuple[torch.Tensor, torch.Tensor]:
         """
                 f(u, du/dX, d2u/dX2, X, thetas) = 0
         Args:
@@ -20,9 +20,8 @@ class PDEFunc(torch.nn.Module, ABC):
             Xs: Grid points. Shape = [BS, 2]
         Returns: PDE residual (=0 for exact solution), shape=[BS]
         """
-        u_dus = list(u_dus.values())
-        exit("hi")
-        return self.forward(u_dus, Xs)
+        residuals = self(u_dus, Xs, aux_input)
+        return residuals, residuals
 
     @abstractmethod
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None) -> torch.Tensor:
@@ -82,6 +81,7 @@ class Fluid(PDEFunc):
         # divergence = 1 - 1 / 2 * x - u[2]
 
         resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
+
         return resid
 
 

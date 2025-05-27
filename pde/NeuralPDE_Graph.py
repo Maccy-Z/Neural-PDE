@@ -1,9 +1,9 @@
 import torch
 
 from pde.graph_grid.U_graph import UGraph
-from pde.solvers.jacobian import GraphJacobCalc
+from pde.pdes.PDECalc import GraphPDECalc
 from pde.pdes.PDEs import PDEFunc
-from pde.graph_grid.PDE_Grad import PDEForward, PDEAdjoint
+from pde.graph_grid.PDE_Grad import PDEAdjoint
 from pde.solvers.linear_solvers import LinearSolver
 from pde.solvers.solver_newton import SolverNewton
 from pde.config import Config
@@ -22,22 +22,21 @@ class NeuralPDEGraph:
         self.cfg = cfg
         self.DEVICE = cfg.DEVICE
 
-        pde_forward = PDEForward(U_graph, pde_fn)
+        # pde_forward = PDEForward(U_graph, pde_fn)
+        pde_calc = GraphPDECalc(U_graph, pde_fn)
 
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
-        fwd_jacob_calc = GraphJacobCalc(U_graph, pde_forward)
-        newton_solver = SolverNewton(U_graph, fwd_lin_solver, jac_calc=fwd_jacob_calc, cfg=fwd_cfg)
+        newton_solver = SolverNewton(U_graph, fwd_lin_solver, pde_calc=pde_calc, cfg=fwd_cfg)
 
         # # Adjoint solver
-        # adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
-        # adj_jacob_calc = GraphJacobCalc(U_graph, pde_forward)
-        # pde_adjoint = PDEAdjoint(U_graph, pde_fn, adj_jacob_calc, adj_lin_solver, loss_fn)
+        adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
+        pde_adjoint = PDEAdjoint(U_graph, pde_fn, pde_calc, adj_lin_solver, loss_fn)
 
         self.pde_fn = pde_fn
         self.U_graph = U_graph
         self.newton_solver = newton_solver
-        # self.pde_adjoint = pde_adjoint
+        self.pde_adjoint = pde_adjoint
 
         self.triangles = triangles
 

@@ -27,8 +27,8 @@ class FwdConfig:
 
     # Newton Raphson PDE solver settings
     # lin_mode: LinMode = LinMode.SPARSE
-    lin_mode: LinMode = LinMode.SPARSE
-    N_iter: int = 3
+    lin_mode: LinMode = LinMode.DENSE
+    N_iter: int = 2
     lr: float = 1.
     acc: float = 0.
 
@@ -90,7 +90,7 @@ class AdjointConfig:
     jac_mode: JacMode = JacMode.GRAPH
 
     # Linear solver settings
-    lin_mode: LinMode = LinMode.AMGX
+    lin_mode: LinMode = LinMode.DENSE
     maxiter: int = 500
     restart: int = 100
     rtol: float = 1e-4
@@ -129,7 +129,7 @@ class Config:
 
     # Phyiscal Parameters
     mu = 1.0
-    rho = 1000
+    rho = 0 #1000
 
     # Grid settings
     xmin: float = 0

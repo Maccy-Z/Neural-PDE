@@ -86,7 +86,7 @@ class UGraph(UBase):
 
     # If Neumann:
     deriv_val: Tensor # [N_deriv_BC]            # Derivative values at nodes for BC
-    deriv_calc_bc: FinDerivCalcSPMV
+    deriv_calc_bc: NeumanBCCalc
 
     def _check(self, setup_dict):
         """ Check problem is well specified """
@@ -181,10 +181,21 @@ class UGraph(UBase):
         mask = torch.ones_like(self.updt_mask)
         self.deriv_calc_eval = FinDerivCalcSPMV(self.graphs, mask, mask, self.N_component, device=self.device)
 
+    def get_Us_dUs(self):
+        _, Xs = self.get_us_Xs_pde()  # Shape = [N_total, 2].
+
+        # 1) Finite differences D. shape = [N_pde, N_derivs, N_components]
+        grads_dict = self.deriv_calc.derivative(self._Us)  # shape = [N_pde, N_comp]. Derivative removes boundary points.
+        U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
+        return U_dUs, Xs
+
+    def get_neum_preds(self):
+        """ Get the derivative values for the boundary conditions. """
+        return self.deriv_calc_bc.derivative(self._Us)      # shape = [N_bc_derivs, N_comp]
+
 
     def reset(self):
         self._Us = torch.zeros_like(self._Us)
-
 
     def _cuda(self):
         """ Move graph data to CUDA. """
