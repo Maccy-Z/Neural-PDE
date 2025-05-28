@@ -119,11 +119,15 @@ class GraphPDECalc(PDECalc):
     def residuals(self, aux_input=None):
         U_dUs, Xs = self.U_graph.get_Us_dUs()  # shape = [N_pde, N_derivs, N_components]
 
+        # residuals.shape = [N_pde, N_component]
         if aux_input is None:
             residuals, _ = func.vmap(self.pde_fwd.residuals)(U_dUs, Xs)
         else:
             residuals, _ = func.vmap(self.pde_fwd.residuals)(U_dUs, Xs, aux_input)
 
+        residuals = residuals.flatten() # shape = [N_pde * N_component]
+        # print(f'{U_dUs.shape = }, {Xs.shape = }')
+        # print(f'pde_calc {residuals.shape = }')
         # 2) Neumann BCs
         if self.U_graph.neumann_mode:
             bc_deriv_pred = self.U_graph.get_neum_preds()

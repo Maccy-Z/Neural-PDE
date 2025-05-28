@@ -3,7 +3,7 @@ import torch
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDECalc import GraphPDECalc
 from pde.pdes.PDEs import PDEFunc
-from pde.graph_grid.PDE_Grad import PDEAdjoint
+from pde.solvers.adjoint_solver import PDEAdjoint
 from pde.solvers.linear_solvers import LinearSolver
 from pde.solvers.solver_newton import SolverNewton
 from pde.config import Config

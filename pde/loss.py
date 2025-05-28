@@ -62,7 +62,7 @@ class DummyLoss(Loss):
     def forward(self, us_pred):
         us_pred.requires_grad_(True)
         self.us_pred = us_pred
-        loss = torch.norm(self.us_pred)
+        loss = torch.sum(self.us_pred ** 2)
         self.loss_out = loss
 
         return loss

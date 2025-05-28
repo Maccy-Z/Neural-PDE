@@ -32,10 +32,11 @@ class PDEFunc(torch.nn.Module, ABC):
         pass
 
 
-class Poisson(PDEFunc):
+class HeatLearned(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
         super().__init__(cfg=cfg, device=device)
         self.to(device)
+        self.a = nn.Parameter(torch.tensor(0., device=device), requires_grad=True)
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
         # print(f'{u_dus.shape = }')
@@ -44,8 +45,9 @@ class Poisson(PDEFunc):
         dudx, dudy = u_dus[1], u_dus[2]
         d2udx2, d2udxdy, d2udy2 = u_dus[3], u_dus[4], u_dus[5]
 
-        resid = d2udy2 + d2udx2 + 0 * dudx + 0 * dudy #- 5 * u #+ 5
+        resid = d2udy2 + d2udx2 + self.a
         return resid
+
 
 class Fluid(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
@@ -85,20 +87,42 @@ class Fluid(PDEFunc):
         return resid
 
 
-class LearnedFunc(PDEFunc):
-    def __init__(self, cfg, device='cpu'):
+class FluidLearned(PDEFunc):
+    def __init__(self, cfg: Config, device='cpu'):
         super().__init__(cfg=cfg, device=device)
-
-        self.test_param = torch.nn.Parameter(torch.tensor([1, 1., -5, 5], device=device, dtype=torch.float32))
         self.to(device)
 
-    def forward(self, u_dus: list[torch.Tensor], Xs: torch.Tensor):
+        self.mu = cfg.mu
+        self.rho = cfg.rho
+        self.a = nn.Parameter(torch.tensor(0., device=device), requires_grad=True)
+
+
+    def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
+        """ u_dus.shape = [n_grads, n_comp]
+            Xs.shape = [2]
+
+            return.shape = [n_comp]
+        """
+
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]
-        d2udx2, d2udxdy, d2udy2 = u_dus[3], u_dus[4], u_dus[5]
+        d2udx2, d2udy2 = u_dus[3], u_dus[5]
 
-        p1, p2, p3, p4 = self.test_param
-        resid = p1 * d2udx2  + p2 * d2udy2 + p3 * u + p4
+        # Momentum equations
+        advect_x = self.rho * (u[0] * dudx[0] + u[1] * dudy[0])
+        advect_y = self.rho * (u[0] * dudx[1] + u[1] * dudy[1])
+        laplace_Vx = self.mu * (d2udx2[0] + d2udy2[0])
+        laplace_Vy = self.mu * (d2udx2[1] + d2udy2[1])
+        dpdx = dudx[2]
+        dpdy = dudy[2]
+
+        resid_x = -dpdx + laplace_Vx - advect_x + self.a
+        resid_y = -dpdy + laplace_Vy - advect_y + self.a
+
+        divergence = dudx[0] + dudy[1]
+        # divergence = 1 - 1 / 2 * x - u[2]
+
+        resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
 
         return resid
 

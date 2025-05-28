@@ -27,11 +27,12 @@ class PDEAdjoint:
         jac_T = self.pde_calc.jacob_transpose()    # Shape = [N_eq, N_us]
 
         # One adjoint value for each trained u value, including boundary points.
-        us, grad_mask, _ = self.U_graph.get_us_mask()
-        us_grad = us[grad_mask].flatten()
+        us, updt_mask, _ = self.U_graph.get_us_mask()
+        us_grad = us[updt_mask].flatten()
 
         loss = self.loss_fn(us_grad)
         loss_u = self.loss_fn.gradient()
+
         with Timer(text="Adjoint solve: {:.4f}", logger=logging.debug):
             # Free memory of dense jacobian before solving adjoint equation.
             jac_T_proc, loss_u = self.adj_lin_solver.preproc_tensor(jac_T, loss_u)
@@ -47,6 +48,7 @@ class PDEAdjoint:
         """
         # Computes adjoint * dfdp as vector jacobian product.
         residuals = self.pde_calc.residuals()
-        residuals.backward(- adjoint)
+
+        residuals.backward(-adjoint)
         return residuals
 
