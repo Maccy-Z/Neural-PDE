@@ -27,8 +27,8 @@ class PDECalc(ABC):
 class GraphPDECalc(PDECalc):
     """ Computes PDE Jacobian and residuals for graph-based PDEs, including Neumann BCs."""
 
-    def __init__(self, U_graph: UGraph, pde_fwd: PDEFunc):
-        self.pde_fwd = pde_fwd
+    def __init__(self, U_graph: UGraph, pde_func: PDEFunc):
+        self.pde_func = pde_func
         self.device = U_graph.device
 
         self.U_graph = U_graph
@@ -37,9 +37,8 @@ class GraphPDECalc(PDECalc):
         self.N_component = U_graph.N_component
         self.N_deriv = U_graph.N_deriv
 
-        self.pde_fwd = pde_fwd
         self.deriv_calc = U_graph.deriv_calc
-        self.resid_jac_val = torch.func.vmap(torch.func.jacrev(self.pde_fwd.residuals, has_aux=True, argnums=0))
+        self.resid_jac_val = torch.func.vmap(torch.func.jacrev(self.pde_func.residuals, has_aux=True, argnums=0))
 
         # Precompute transforms with jacobian structure
         deriv_jac_list = self.U_graph.deriv_calc.jacobian()
@@ -69,7 +68,7 @@ class GraphPDECalc(PDECalc):
             dR/dD.shape = [N_pde, N_derivs]
             dD/dU.shape = [N_pde, N_derivs, N_u_grad]
 
-            dR_i/dU_j = sum_k dR_i/dD_k * dD_ik/dU_j
+            dR_i/dU_j = sum_k dR_i/dD_jk * dD_jk/dU_j
 
             Vector derivatives are handled as batches of [N_comp, N_pde], then merged into a column-concatenated vector [N_comp*N_pde]. Components are grouped together.
         """
@@ -81,11 +80,13 @@ class GraphPDECalc(PDECalc):
 
         # 3) dR/dD. shape = [N_pde*N_comp, N_derivs*N_comp] = [N_pde_, N_derivs_]
         dRdD, residuals = self.resid_jac_val(U_dUs, Xs) if (pde_aux_input is None) else self.resid_jac_val(U_dUs, Xs, pde_aux_input)  # [N_pde, N_component, N_deriv, N_component]
+
+
         # residuals.shape = [N_pde, N_component]
         dRdD = dRdD.permute(1, 0, 3, 2).reshape(self.N_pdes * self.N_component, (self.N_deriv + 1) * self.N_component)  # [N_pde_, N_deriv_]
         residuals = residuals.T.reshape(self.N_pdes * self.N_component)  # [N_pde_]
 
-        # 4.1) Take product over i: dD_ik/dU_j * dR_i/dD_k . shape = [N_deriv_][N_pde_, N_u_grad_]
+        # 4.1) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
         partials = []
         for d in range(self.N_component * (self.N_deriv + 1)):
             prod = self.row_multipliers[d].mul(dDdU[d], dRdD[:, d])  # shape = [N_pde_, N_u_grad_]
@@ -121,20 +122,19 @@ class GraphPDECalc(PDECalc):
 
         # residuals.shape = [N_pde, N_component]
         if aux_input is None:
-            residuals, _ = func.vmap(self.pde_fwd.residuals)(U_dUs, Xs)
+            residuals, _ = func.vmap(self.pde_func.residuals)(U_dUs, Xs)
         else:
-            residuals, _ = func.vmap(self.pde_fwd.residuals)(U_dUs, Xs, aux_input)
+            residuals, _ = func.vmap(self.pde_func.residuals)(U_dUs, Xs, aux_input)
 
-        residuals = residuals.flatten() # shape = [N_pde * N_component]
-        # print(f'{U_dUs.shape = }, {Xs.shape = }')
-        # print(f'pde_calc {residuals.shape = }')
+        residuals = residuals.T.reshape(self.N_pdes * self.N_component) # shape = [N_pde * N_component]
+
         # 2) Neumann BCs
         if self.U_graph.neumann_mode:
             bc_deriv_pred = self.U_graph.get_neum_preds()
             bc_deriv_true = self.U_graph.deriv_val
             bc_residuals = bc_deriv_pred - bc_deriv_true
 
-            residuals = torch.cat([residuals.flatten(), bc_residuals])  # shape = [N_pde_+N_bc_]
+            residuals = torch.cat([residuals, bc_residuals])  # shape = [N_pde_+N_bc_]
             residuals = self.permuter.vector_permute(residuals)
 
         return residuals
