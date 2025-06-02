@@ -35,7 +35,7 @@ class UBase(abc.ABC):
         deltas.shape = [N*N_comp]
         us -> us - deltas
         """
-        deltas = deltas.view(self.N_comp, self.N_us_grad).T
+        deltas = deltas.view(self.N_us_grad, self.N_comp)#.T
         self._Us[self.updt_mask] -= deltas
 
     def set_grid(self, new_us):
