@@ -25,25 +25,25 @@ def csr_scipy_to_torch(sparse_np):
         sparse_np = sparse_np.tocoo()
 
     # Get indices and values
-    indices = torch.LongTensor(np.vstack((sparse_np.row, sparse_np.col)))
-    values = torch.FloatTensor(sparse_np.data)
+    indices = torch.LongTensor(np.vstack((sparse_np.row, sparse_np.col))).int().contiguous()
+    values = torch.FloatTensor(sparse_np.data).int().contiguous()
     shape = torch.Size(sparse_np.shape)
 
     return torch.sparse_coo_tensor(indices, values, shape).coalesce()
 
 
-def compress_csr(csr):
+def csr_compress(csr):
     """ Compress a sparse CSR matrix by removing zero entries."""
     device = csr.values().device
 
     # --- 2) extract the CSR arrays ---
-    crow = csr.crow_indices()  # dtype=torch.int32 on CUDA by default
-    col = csr.col_indices()  # dtype=torch.int64
+    crow = csr.crow_indices().int()  # dtype=torch.int32 on CUDA by default
+    col = csr.col_indices().int()  # dtype=torch.int32
     vals = csr.values()  # dtype=torch.float32 or float64
 
-    # --- 2) build the keep-mask and its prefix-sum in int64 ---
+    # --- 2) build the keep-mask and its prefix-sum in int32 ---
     mask = vals != 0  # bool, shape [nnz]
-    prefix = mask.cumsum(dim=0)  # shape [nnz], int64
+    prefix = mask.cumsum(dim=0)  # shape [nnz], int32
 
     # --- 3) compute how many entries survive in each row ---
     #    crow[1:] - 1 is the last index in each row (–1 → empty row)
@@ -61,11 +61,11 @@ def compress_csr(csr):
     # for those rows, look up the total-kept count at the row‐end index
     kept_per_row[valid_rows] = prefix[ends[valid_rows]]
 
-    # --- 4) stitch together the new crow in int64 ---
+    # --- 4) stitch together the new crow in int32 ---
     #    crow[0] is always 0; crow[i+1] = sum of kept entries up to row i
     new_crow = torch.zeros(
         n_rows + 1,
-        dtype=prefix.dtype,
+        dtype=torch.int32,
         device=device
     )
     new_crow[1:] = kept_per_row
@@ -99,7 +99,7 @@ def plot_sparsity(A):
 
     # Plot using imshow
     plt.figure(figsize=(20, 20))
-    plt.imshow(dense_binary, cmap='Greys', interpolation='none', aspect='auto')
+    plt.imshow(dense_binary, cmap='Greys', interpolation='none', aspect='auto', origin="lower")
     plt.xlabel('Columns')
     plt.ylabel('Rows')
     plt.title(f'Sparsity Pattern, nnz={sparse_coo._nnz()}')
@@ -145,6 +145,7 @@ def permutation_to_csr(perm, dtype=torch.float32, device="cpu"):
         device=device
     )
     return sparse_matrix
+
 
 class CsrBuilder:
     """ Incrementally build a sparse CSR tensor from dense blocks. """
@@ -385,6 +386,8 @@ class CSRSummer:
             positions_k = unique_indices_to_sorted[indices_k]
             index_mapping_list.append(positions_k)
 
+        output_crow_indices = output_crow_indices.int().contiguous()
+        output_col_indices = output_col_indices.int().contiguous()
         return output_crow_indices, output_col_indices, index_mapping_list
 
     def sum(self, B_list_new: list[torch.Tensor]) -> torch.Tensor:
@@ -395,6 +398,8 @@ class CSRSummer:
         Returns:
         - J: The output sparse CSR tensor representing J_{ij} = sum_k B_{ijk}.
         """
+
+
         if self.check_sparsity:
             # Check that the number of tensors matches
             assert len(B_list_new) == len(self.index_mapping_list), (
@@ -438,8 +443,8 @@ class CSRRowMultiplier:
         """
         self.check_sparsity = check_sparsity
         self.A_csr = A_csr
-        self.crow_indices = A_csr.crow_indices()
-        self.col_indices = A_csr.col_indices()
+        self.crow_indices = A_csr.crow_indices().int().contiguous()
+        self.col_indices = A_csr.col_indices().int().contiguous()
         self.size = A_csr.size()
 
         # Precompute row indices for each non-zero element
@@ -481,13 +486,16 @@ class CSRConcatenator:
         num_cols = csr_tensor_A.shape[1]
 
         # Precompute the output crow_indices
-        self.output_crow_indices = torch.zeros(total_rows + 1, dtype=torch.int32, device=device)
-        self.output_crow_indices[1:num_rows_A + 1] = csr_tensor_A.crow_indices()[1:]
+        output_crow_indices = torch.zeros(total_rows + 1, dtype=torch.int32, device=device)
+        output_crow_indices[1:num_rows_A + 1] = csr_tensor_A.crow_indices()[1:]
         total_nnz_A = csr_tensor_A.crow_indices()[-1]
-        self.output_crow_indices[num_rows_A + 1:] = total_nnz_A + csr_tensor_B.crow_indices()[1:]
+        output_crow_indices[num_rows_A + 1:] = total_nnz_A + csr_tensor_B.crow_indices()[1:]
 
         # Precompute the output col_indices
-        self.output_col_indices = torch.cat([csr_tensor_A.col_indices(), csr_tensor_B.col_indices()]).to(torch.int32)
+        output_col_indices = torch.cat([csr_tensor_A.col_indices(), csr_tensor_B.col_indices()]).to(torch.int32)
+
+        self.output_crow_indices = output_crow_indices.int().contiguous()
+        self.output_col_indices = output_col_indices.int().contiguous()
 
         # Store the output shape
         self.output_shape = (total_rows, num_cols)
@@ -530,8 +538,8 @@ class CSRPermuter:
 
         out_mat = torch.sparse.mm(perm_mat, A_csr_permute)
 
-        self.crow_indices = out_mat.crow_indices().to(torch.int32)
-        self.col_indices = out_mat.col_indices().to(torch.int32)
+        self.crow_indices = out_mat.crow_indices().to(torch.int32).contiguous()
+        self.col_indices = out_mat.col_indices().to(torch.int32).contiguous()
         self.val_permutation = (out_mat.values() - 1).to(torch.int32)
         self.size = out_mat.size()
 
@@ -555,6 +563,7 @@ def csr_col_shift(csr_mat, n_cols):
     deriv_mat_new = torch.sparse_csr_tensor(crow_indices, col_indices, values, size=csr_mat.size(), device=csr_mat.device)
 
     return deriv_mat_new
+
 
 def coo_row_select(sparse_coo: torch.sparse_coo_tensor, row_mask) -> torch.sparse_coo_tensor:
     """
@@ -689,8 +698,8 @@ def CSRToInt32(sparse_csr: torch.Tensor) -> torch.Tensor:
     device = sparse_csr.device
 
     # Convert indices to int32
-    crow_indices_int32 = crow_indices.to(torch.int32)
-    col_indices_int32 = col_indices.to(torch.int32)
+    crow_indices_int32 = crow_indices.to(torch.int32).contiguous()
+    col_indices_int32 = col_indices.to(torch.int32).contiguous()
 
     # Reconstruct the sparse CSR tensor with int32 indices
     sparse_csr_int32 = torch.sparse_csr_tensor(
@@ -715,7 +724,7 @@ def reverse_permutation(indices):
     return reversed_indices
 
 
-def block_repeat_csr(A: torch.Tensor, k: int) -> torch.Tensor:
+def csr_block_repeat(A: torch.Tensor, k: int) -> torch.Tensor:
     """
     Create a block-diagonal CSR matrix B by repeating a CSR matrix A 'k' times along the diagonal.
 
@@ -745,8 +754,8 @@ def block_repeat_csr(A: torch.Tensor, k: int) -> torch.Tensor:
     # Allocate storage
     # - B_indptr: length B_m+1
     # - B_indices, B_data: length k * nnz
-    B_indptr = torch.empty(B_m + 1, dtype=A_indptr.dtype, device=A.device)
-    B_indices = torch.empty(k * nnz, dtype=A_indices.dtype, device=A.device)
+    B_indptr = torch.empty(B_m + 1, dtype=torch.int32, device=A.device)
+    B_indices = torch.empty(k * nnz, dtype=torch.int32, device=A.device)
     B_data = torch.empty(k * nnz, dtype=A_data.dtype, device=A.device)
 
     # Fill the B_indptr, B_indices, and B_data
@@ -776,7 +785,7 @@ def block_repeat_csr(A: torch.Tensor, k: int) -> torch.Tensor:
     return B
 
 
-def stack_coo(X: torch.Tensor, n: int) -> torch.Tensor:
+def coo_stack(X: torch.Tensor, n: int) -> torch.Tensor:
     """
     Vertically stack a sparse COO tensor X with itself n times, and extend column size by n.
 
@@ -820,17 +829,247 @@ def stack_coo(X: torch.Tensor, n: int) -> torch.Tensor:
 
     return result
 
+
+def coo_interleave(dD_dU_base: torch.Tensor, N_comp: int) -> torch.Tensor:
+    """
+    Expands an N_D x N_U sparse matrix S (dD_dU_base) into an
+    (N_D*M) x (N_U*M) sparse matrix, effectively computing S ⊗ I_M,
+    where M is N_comp (number of components) and I_M is the M x M identity matrix.
+
+    Args:
+        dD_dU_base: The N_D x N_U base sparse matrix. Must be a PyTorch sparse tensor.
+        N_comp: The number of components (M).
+
+    Returns:
+        An (N_D*M) x (N_U*M) sparse COO tensor representing the interleaved matrix.
+    """
+    if not dD_dU_base.is_sparse:
+        raise ValueError("Input dD_dU_base must be a sparse tensor.")
+
+    # Ensure the input is a COO sparse tensor and coalesced for reliable .indices() and .values()
+    if dD_dU_base.layout != torch.sparse_coo:
+        dD_dU_base = dD_dU_base.to_sparse_coo()
+    dD_dU_base = dD_dU_base.coalesce()
+
+    N_orig_rows = dD_dU_base.size(0)  # N_D: Number of rows in the original matrix
+    N_orig_cols = dD_dU_base.size(1)  # N_U: Number of columns in the original matrix
+
+    if N_comp <= 0:
+        raise ValueError("N_comp must be a positive integer.")
+
+    if dD_dU_base._nnz() == 0:
+        # Handle empty sparse matrix case: return an empty sparse matrix of the correct new dimensions
+        return torch.sparse_coo_tensor(
+            indices=torch.empty((2, 0), dtype=torch.long, device=dD_dU_base.device),
+            values=torch.empty((0,), dtype=dD_dU_base.dtype, device=dD_dU_base.device),
+            size=(N_orig_rows * N_comp, N_orig_cols * N_comp)  # Adjusted output size
+        )
+
+    # Extract components of the base COO matrix
+    indices_base = dD_dU_base.indices()
+    row_indices_base = indices_base[0]
+    col_indices_base = indices_base[1]
+    values_base = dD_dU_base.values()
+    nnz_base = values_base.shape[0] # Number of non-zero elements in the base matrix
+
+    # Create a range for component indexing [0, 1, ..., N_comp-1]
+    component_range = torch.arange(N_comp, device=dD_dU_base.device)
+
+    # Expand base row and column indices:
+    # Each original row/column index is repeated N_comp times.
+    # e.g., if row_indices_base = [r1, r2], N_comp=2 -> [r1,r1, r2,r2]
+    expanded_row_indices_base = row_indices_base.repeat_interleave(N_comp)
+    expanded_col_indices_base = col_indices_base.repeat_interleave(N_comp)
+
+    # Expand values:
+    # Each original value is repeated N_comp times.
+    # e.g., if values_base = [v1, v2], N_comp=2 -> [v1,v1, v2,v2]
+    new_values = values_base.repeat_interleave(N_comp)
+
+    # Create component offsets to add to the scaled base indices:
+    # This will be a pattern like [0,1,...,M-1, 0,1,...,M-1, ...] repeated nnz_base times.
+    component_offsets = component_range.repeat(nnz_base)
+
+    # Calculate new row and column indices for the interleaved matrix:
+    # new_row_idx = original_row_idx * N_comp + component_offset
+    # new_col_idx = original_col_idx * N_comp + component_offset
+    new_row_indices = expanded_row_indices_base * N_comp + component_offsets
+    new_col_indices = expanded_col_indices_base * N_comp + component_offsets
+
+    # Stack new row and column indices to form the COO format for the new sparse tensor
+    new_indices = torch.stack([new_row_indices, new_col_indices], dim=0)
+
+    # Create the final sparse COO tensor with the new, potentially non-square, dimensions
+    interleaved_matrix = torch.sparse_coo_tensor(
+        indices=new_indices,
+        values=new_values,
+        size=(N_orig_rows * N_comp, N_orig_cols * N_comp)  # Adjusted output size
+    )
+
+    # Coalesce is good practice to sum duplicate entries (though not expected from this specific logic)
+    # and to ensure a canonical sparse representation.
+    return interleaved_matrix.coalesce()
+
+
+def coo_zero_elements(A_coo, select_to_keep_bool, dim_to_zero):
+    """
+    Zeros out specified rows or columns of a PyTorch COO sparse matrix.
+
+    Args:
+        A_coo (torch.Tensor): The input sparse matrix in COO format.
+        select_to_keep_bool (torch.Tensor): A 1D boolean tensor.
+                                            If dim_to_zero is 0 (rows), True indicates
+                                            a row to KEEP. Its length should match
+                                            the number of rows in A_coo.
+                                            If dim_to_zero is 1 (cols), True indicates
+                                            a column to KEEP. Its length should match
+                                            the number of columns in A_coo.
+        dim_to_zero (int): The dimension to zero out. 0 for rows, 1 for columns.
+
+    Returns:
+        torch.Tensor: A new COO sparse matrix with the specified dimension's
+                      elements zeroed (i.e., kept based on select_to_keep_bool).
+    """
+    indices = A_coo._indices()
+    values = A_coo._values()
+    size = A_coo.size()
+
+    if A_coo._nnz() == 0: # Handle empty tensor
+        return A_coo.clone()
+
+    # Determine which dimension's indices to use for masking
+    dim_indices_of_values = indices[dim_to_zero]
+    mask_for_values = select_to_keep_bool[dim_indices_of_values]
+
+    # Filter indices and values
+    new_indices = indices[:, mask_for_values]
+    new_values = values[mask_for_values]
+
+    return torch.sparse_coo_tensor(new_indices, new_values, size)
+
+
+def coo_row_interleave(coo_matrix: torch.Tensor, repeats: int) -> torch.Tensor:
+    """
+    Repeats the rows of a COO sparse matrix.
+
+    If a COO matrix with shape [n, m] is given and repeats is 2,
+    the output matrix will have shape [2*n, m], where each original
+    row is repeated `repeats` times.
+
+    Args:
+        coo_matrix (torch.Tensor): The input COO sparse matrix.
+        repeats (int): The number of times to repeat each row.
+
+    Returns:
+        torch.Tensor: A new COO sparse matrix with rows repeated.
+    """
+
+    old_indices = coo_matrix.indices()
+    old_values = coo_matrix.values()
+    old_n, old_m = coo_matrix.size()
+
+    row_idx = old_indices[0]
+    col_idx = old_indices[1]
+
+    # Create an arange tensor [0, 1, ..., repeats-1]
+    # This is used to offset the row indices for each repetition.
+    # It needs to be on the same device and have the same dtype as the original row indices.
+    r_arange = torch.arange(repeats, device=coo_matrix.device, dtype=row_idx.dtype)
+
+    # Calculate new row indices:
+    # For each original row index `r` in `row_idx`, the new row indices will be
+    # `r * repeats + 0`, `r * repeats + 1`, ..., `r * repeats + (repeats-1)`.
+    # `row_idx.unsqueeze(1)` changes shape from (nnz,) to (nnz, 1).
+    # Broadcasting `r_arange` (shape (repeats,)) to this results in shape (nnz, repeats).
+    # `view(-1)` flattens it to (nnz * repeats,).
+    new_row_idx = (row_idx.unsqueeze(1) * repeats + r_arange).view(-1)
+
+    # Repeat column indices and values `repeats` times for each original non-zero element.
+    new_col_idx = col_idx.repeat_interleave(repeats)
+    new_values = old_values.repeat_interleave(repeats)
+
+    new_indices = torch.stack([new_row_idx, new_col_idx])
+    new_size = (old_n * repeats, old_m)
+
+    return torch.sparse_coo_tensor(new_indices, new_values, new_size)
+
+
+def coo_col_interleave(
+    sparse_matrix_coo: torch.Tensor, n: int, col_shifts: int = 0) -> torch.Tensor:
+    """
+    Moves every column in a sparse COO matrix based on a transformation.
+    An original column index `col_idx` is transformed to `n * col_idx + m`.
+
+    This transforms a matrix of original shape [rows_original, cols_original]
+    to a new sparse COO matrix of shape [rows_original, n * cols_original + m].
+
+    Args:
+    sparse_matrix_coo: The input sparse COO PyTorch tensor.
+    n: The integer factor by which to multiply column indices. Must be positive.
+    m: The integer constant to add to column indices after multiplication by n.
+       Must be non-negative (to ensure resulting column indices are non-negative).
+
+    Returns:
+    A new sparse COO PyTorch tensor with transformed column positions and shape.
+    """
+
+    original_shape = sparse_matrix_coo.shape
+    rows_original = original_shape[0]
+    cols_original = original_shape[1]
+
+    # Calculate the number of columns for the new tensor's shape.
+    # This definition ensures that if original shape is [R, C],
+    # new shape is [R, n*C + m]. This accommodates the largest possible
+    # transformed index n*(C-1)+m (if C>0) and is consistent with
+    # the previous behavior (n*C when m=0).
+    # If C=0, new shape is [R, m].
+    new_total_cols = n * cols_original
+
+    # Decompose the sparse matrix.
+    # Coalesce to ensure COO format, sum duplicates, and sort indices.
+    # This is important so that the transformation is applied to the canonical
+    # representation of the sparse data.
+    sparse_matrix_coo_coalesced = sparse_matrix_coo.coalesce()
+    indices = sparse_matrix_coo_coalesced.indices()
+    values = sparse_matrix_coo_coalesced.values()
+
+    # Separate row and column indices
+    # indices[0,:] are row indices, indices[1,:] are column indices
+    row_indices = indices[0, :]
+    col_indices_original = indices[1, :]
+
+    # Transform column indices: new_col = n * old_col + m
+    new_col_indices = n * col_indices_original + col_shifts
+
+    # Create new indices tensor
+    # Ensure new_indices has the same device as original indices.
+    new_indices = torch.stack([row_indices, new_col_indices])
+    # Note: If original indices were on CPU, new_indices will be too.
+    # If on CUDA, new_indices will also be on CUDA.
+
+    # Create the new sparse COO tensor
+    # The values tensor is passed as is, retaining its original dtype and device.
+    # The device of the resulting sparse tensor is determined by its components' devices.
+    transformed_matrix = torch.sparse_coo_tensor(
+      indices=new_indices,
+      values=values,
+      size=(rows_original, new_total_cols)
+    )
+
+    return transformed_matrix
+
+
 # Example Usage
 if __name__ == "__main__":
     import time
 
     torch.set_printoptions(precision=2, sci_mode=False)
     rows, cols = 10, 10
-    density = 0.1
+    density = 0.9
 
-    A_csr = gen_rand_sp_matrix(rows, cols, density).cuda().to_sparse_csr()
-    B = block_diagonal_repeat_csr(A_csr, 2)
-
-
+    A = torch.tensor([[1, 0, 1], [0, 1, 0], [0, 0, 1]]).cuda().to_sparse_coo()
+    B = coo_col_interleave(A, 2, col_shifts=1)
+    print(B)
+    # C = coo_zero_elements(B, torch.tensor([True, False, True, False, True, False, True, False, True, False], device=B.device), dim_to_zero=1)
 
     plot_sparsity(B)

@@ -63,14 +63,14 @@ class NeuralPDEGraph:
 
         return residuals
 
-    def plot_interp(self, Us=None, Xlims=None):
+    def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):
         """ Plot the interpolated solution. """
         if Us is None:
             Us, Xs = self.U_graph.get_all_us_Xs()
         else:
             _, Xs = self.U_graph.get_all_us_Xs()
 
-        plot_interp(Xs, Us.T, Xlims=Xlims, title="Interpolated solution", triangles=self.U_graph.tri)
+        plot_interp(Xs, Us.T, Xlims=Xlims, title=title, triangles=self.U_graph.tri)
 
 
     def plot_derivs(self, order):

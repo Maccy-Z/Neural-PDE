@@ -2,10 +2,105 @@ import torch
 from scipy.sparse.csgraph import dijkstra
 from scipy import sparse as sp
 import numpy as np
+import pickle
+import hashlib
+import os
+from functools import wraps
 from rbf.pde import fd
 
 from pde.utils_sparse import plot_sparsity, csr_torch_to_scipy, csr_scipy_to_torch
 
+
+CACHE_DIR = "cache_calc_coeff" # Directory to store cache files
+os.makedirs(CACHE_DIR, exist_ok=True)
+
+def get_cache_key(func_name, *args, **kwargs):
+    """Generates a cache key based on function name and arguments."""
+    # Serialize arguments to a byte string
+    # For complex types like torch.Tensor and np.array,
+    # we need a consistent way to represent them for hashing.
+    # Converting to bytes via pickle is one way, but ensure tensors are on CPU.
+
+    serialized_args = []
+    for arg in args:
+        if isinstance(arg, torch.Tensor):
+            # Move to CPU and convert to numpy for more stable hashing/pickling
+            # Adding .tobytes() for numpy array ensures a more stable hash
+            serialized_args.append(pickle.dumps(arg.cpu().numpy().tobytes()))
+        elif isinstance(arg, np.ndarray):
+            serialized_args.append(pickle.dumps(arg.tobytes()))
+        else:
+            serialized_args.append(pickle.dumps(arg)) # For basic types like int, tuple
+
+    for key, value in sorted(kwargs.items()): # Sort kwargs for consistency
+        if isinstance(value, torch.Tensor):
+            serialized_args.append(pickle.dumps((key, value.cpu().numpy().tobytes())))
+        elif isinstance(value, np.ndarray):
+            serialized_args.append(pickle.dumps((key, value.tobytes())))
+        else:
+            serialized_args.append(pickle.dumps((key, value)))
+
+    # Create a hash of the serialized arguments
+    hasher = hashlib.md5() # Or sha256 for lower collision probability
+    hasher.update(func_name.encode())
+    for arg_bytes in serialized_args:
+        hasher.update(arg_bytes)
+
+    return hasher.hexdigest()
+
+def disk_cache(func):
+    """Decorator to cache function results to disk."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Handle keyword arguments for calc_coeff if they are explicitly passed
+        # For simplicity, this example assumes positional arguments match the signature
+        # or that you'll adjust key generation accordingly.
+
+        # A more robust way to map args/kwargs to the function signature
+        # for key generation might be needed for very generic decorators.
+        # For this specific function, we can be explicit.
+
+        # Create a representation of arguments for caching
+        # Ensure tensors and arrays are handled correctly
+        key_args = []
+        for arg in args:
+            if isinstance(arg, torch.Tensor):
+                # Detach and move to CPU to ensure hashability and prevent autograd issues in cache key
+                key_args.append(arg.detach().cpu())
+            else:
+                key_args.append(arg)
+
+        key_kwargs = {}
+        for k, v in kwargs.items():
+            if isinstance(v, torch.Tensor):
+                key_kwargs[k] = v.detach().cpu()
+            else:
+                key_kwargs[k] = v
+
+        cache_key = get_cache_key(func.__name__, *key_args, **key_kwargs)
+        cache_file = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
+
+        if os.path.exists(cache_file):
+            print(f"Loading from cache: {func.__name__} (key: {cache_key})")
+            try:
+                with open(cache_file, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e: # Handle potential unpickling errors
+                print(f"Error loading from cache: {e}. Recalculating.")
+                os.remove(cache_file) # Remove corrupted cache file
+
+        print(f"Calculating and caching: {func.__name__} (key: {cache_key})")
+        result = func(*args, **kwargs)
+        try:
+            with open(cache_file, 'wb') as f:
+                pickle.dump(result, f)
+        except Exception as e: # Handle potential pickling errors
+            print(f"Error saving to cache: {e}")
+            if os.path.exists(cache_file):
+                os.remove(cache_file) # Clean up if saving failed
+
+        return result
+    return wrapper
 
 def gen_multi_idx_tuple(m):
     """
@@ -56,12 +151,12 @@ def nearest_neighbors(tris, Xs, n_neigh):
     idx = np.argpartition(D, n_neigh, axis=1)[:, :n_neigh]
     return idx
 
+@disk_cache
+def calc_coeff(Xs: torch.Tensor, stencils: np.array, n_neigh: int, diff_orders: tuple[int, int]):
 
-def calc_coeff(Xs: torch.Tensor, stencils: np.array, n_neigh: int, diff_orders):
     n_points = Xs.shape[0]
 
     Xs = Xs.numpy()
-    # diff_order = [[2, 0], [0, 2]]
     diff_orders = np.array(diff_orders)
     data = fd.weights(
         Xs, Xs[stencils],

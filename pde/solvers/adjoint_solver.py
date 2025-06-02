@@ -33,11 +33,15 @@ class PDEAdjoint:
         loss = self.loss_fn(us_grad)
         loss_u = self.loss_fn.gradient()
 
+        logging.debug(f'')
         with Timer(text="Adjoint solve: {:.4f}", logger=logging.debug):
             # Free memory of dense jacobian before solving adjoint equation.
             jac_T_proc, loss_u = self.adj_lin_solver.preproc_tensor(jac_T, loss_u)
             del jac_T
             adjoint, _ = self.adj_lin_solver.solve(jac_T_proc, loss_u)
+
+            residual = (jac_T_proc @ adjoint - loss_u).norm()
+            logging.debug(f'Adjoint residual: {residual:.3g}')
 
         return adjoint, loss
 
@@ -48,7 +52,6 @@ class PDEAdjoint:
         """
         # Computes adjoint * dfdp as vector jacobian product.
         residuals = self.pde_calc.residuals()
-
         residuals.backward(-adjoint)
         return residuals
 

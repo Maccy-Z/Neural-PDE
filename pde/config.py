@@ -128,7 +128,7 @@ class Config:
     DEVICE: str = "cuda"
 
     # Phyiscal Parameters
-    mu = 1.0
+    mu = 1.
     rho = 0 #1000
 
     # Grid settings

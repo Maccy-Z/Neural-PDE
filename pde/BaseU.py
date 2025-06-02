@@ -18,7 +18,7 @@ class UBase(abc.ABC):
     u_mask: tuple[slice, ...]  # Real us points [N_u_real]
 
     N_us_grad: int        # Number of points that need fitting
-    N_component: int           # Number of vector components
+    N_comp: int           # Number of vector components
 
     pde_true_idx: Tensor
     us_grad_idx: Tensor
@@ -35,7 +35,7 @@ class UBase(abc.ABC):
         deltas.shape = [N*N_comp]
         us -> us - deltas
         """
-        deltas = deltas.view(self.N_component, self.N_us_grad).T
+        deltas = deltas.view(self.N_comp, self.N_us_grad).T
         self._Us[self.updt_mask] -= deltas
 
     def set_grid(self, new_us):

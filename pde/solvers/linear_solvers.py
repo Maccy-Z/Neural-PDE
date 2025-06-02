@@ -11,7 +11,7 @@ from typing import Callable
 from pde.solvers.gmres import gmres
 from pde.solvers.pyamgx_holder import PyAMGXManager
 from pde.config import LinMode
-from pde.utils_sparse import compress_csr
+from pde.utils_sparse import csr_compress
 
 class LinearSolver:
     """ Solve Ax = b for x """
@@ -193,7 +193,7 @@ class LinearSolver:
             # indices = A.col_indices()
             # indptr = A.crow_indices()
             # with Timer(text="Time to compress: : {:.4f}"):
-            indptr, indices, values = compress_csr(A)
+            indptr, indices, values = csr_compress(A)
 
 
             values_cp = cp.from_dlpack(values)

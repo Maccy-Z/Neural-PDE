@@ -413,6 +413,7 @@ def plot_points(Xs, values, lims=None, title="", show_index=False, Xlims=None):
         ax.set_xlim(Xlims[0])
         ax.set_ylim(Xlims[1])
 
-    # plt.tight_layout()
+
+    plt.tight_layout()
     plt.show()
 

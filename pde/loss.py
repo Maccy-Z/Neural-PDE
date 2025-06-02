@@ -3,7 +3,7 @@ import torch.nn as nn
 from abc import abstractmethod
 
 class Loss(nn.Module):
-    us_pred: torch.Tensor = None
+    Us_pred: torch.Tensor = None
     loss_out: torch.Tensor = None
 
     def __init__(self):
@@ -21,7 +21,7 @@ class Loss(nn.Module):
         """
             Returns: Gradient of loss wrt us_pred. Shape = us_pred.shape
         """
-        return torch.autograd.grad(outputs=self.loss_out, inputs=self.us_pred)[0]
+        return torch.autograd.grad(outputs=self.loss_out, inputs=self.Us_pred)[0]
 
 class MSELoss(Loss):
     def __init__(self, us_true):
@@ -43,14 +43,14 @@ class MSELoss(Loss):
 
 
 class MSELoss2(Loss):
-    def __init__(self, us_true):
+    def __init__(self, Us_true):
         super().__init__()
-        self.us_true = us_true
+        self.Us_true = Us_true
 
-    def forward(self, us_pred: torch.Tensor):
-        us_pred.requires_grad_(True)
-        self.us_pred = us_pred
-        loss = torch.mean((self.us_pred - self.us_true)**2)
+    def forward(self, Us_pred: torch.Tensor):
+        Us_pred.requires_grad_(True)
+        self.Us_pred = Us_pred
+        loss = torch.mean((self.Us_pred - self.Us_true)**2)
         self.loss_out = loss
 
         return loss
@@ -62,10 +62,26 @@ class DummyLoss(Loss):
     def forward(self, us_pred):
         us_pred.requires_grad_(True)
         self.us_pred = us_pred
-        loss = torch.sum(self.us_pred ** 2)
+        loss = torch.mean(self.us_pred ** 2)
         self.loss_out = loss
 
         return loss
+
+
+class MaskLoss(Loss):
+    def __init__(self, mask):
+        super().__init__()
+        self.mask = mask.bool()
+
+    def forward(self, Us_pred: torch.Tensor):
+        Us_pred.requires_grad_(True)
+        self.Us_pred = Us_pred
+        loss = torch.mean((self.Us_pred * self.mask)**2)
+        self.loss_out = loss
+
+        print(self.Us_pred * self.mask)
+        return loss
+
 
 
 def main():

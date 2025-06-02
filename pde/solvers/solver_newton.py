@@ -6,12 +6,12 @@ from pde.config import FwdConfig
 from pde.BaseU import UBase
 from pde.pdes.PDECalc import PDECalc
 from pde.solvers.linear_solvers import LinearSolver
-
+from pde.utils_sparse import plot_sparsity
 
 class SolverNewton:
-    def __init__(self,  sol_grid: UBase, lin_solver: LinearSolver, pde_calc: PDECalc, cfg: FwdConfig):
+    def __init__(self,  U_graph: UBase, lin_solver: LinearSolver, pde_calc: PDECalc, cfg: FwdConfig):
         #self.pde_func = pde_func
-        self.sol_grid = sol_grid
+        self.U_graph = U_graph
         self.lin_solver = lin_solver
 
         self.N_iter = cfg.N_iter
@@ -19,9 +19,8 @@ class SolverNewton:
         self.solve_acc = cfg.acc
 
         self.pde_calc = pde_calc
-        self.device = sol_grid.device
+        self.device = U_graph.device
 
-        self.logging = {"time": 0.0, "residual": 0.}
 
     def find_pde_root(self, aux_input=None):
         """
@@ -30,35 +29,37 @@ class SolverNewton:
 
         :param aux_input: Additional conditioning for the PDE
         """
-        for i in range(self.N_iter):
-            logging.debug("\n")
-            with Timer(text="Time to calculate jacobian: : {:.4f}", logger=logging.debug):
-                jacobian, residuals = self.pde_calc.jacobian(aux_input)
+        timer = Timer(name="timer", logger=None)
 
-            with Timer(text="Time to solve: : {:.4f}", logger=logging.debug):
+        for i in range(self.N_iter):
+            with timer:
+                jacobian, residuals = self.pde_calc.jacobian(aux_input)
+            t_jacob = timer.last
+
+            with timer:
                 # Convert jacobian to sparse here instead of in lin_solver, so we can delete the dense Jacobian asap.
                 jac_preproc, resid_preproc = self.lin_solver.preproc_tensor(jacobian, residuals)
                 # del jacobian # torch.cuda.empty_cache()
                 deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, resid_preproc)
 
+            t_solve = timer.last
 
-            true_resid = (jacobian @ deltas - residuals).norm()
 
+            lin_error = jacobian @ deltas - residuals
+            lin_error_norm = lin_error.norm()
             deltas *= self.lr
-            self.sol_grid.update_grid(deltas)
+            self.U_graph.update_grid(deltas)
 
-            # Error from PDE
+            # Error from PDE with updated Us
             pde_resid = self.pde_calc.residuals(aux_input)
             pde_resid_norm = pde_resid.norm()
             max_abs_residual = torch.max(pde_resid.abs())
 
-            logging.debug(f'Linear solver Iteration {i}')
-            logging.debug(f'    Linear residual: {true_resid:.3g}')
-            logging.debug(f'    Norm residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
+            logging.debug("")
+            logging.debug(f'Newton solver Iteration {i}')
+            logging.debug(f'    Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s')
+            logging.debug(f'    Linear residual: {lin_error_norm:.3g}, Norm residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
 
-
-
-            self.logging["residual"] = pde_resid_norm
 
             if torch.mean(torch.abs(residuals)) < self.solve_acc:
                 logging.info(f"Newton solver converged early at iteration {i+1}")

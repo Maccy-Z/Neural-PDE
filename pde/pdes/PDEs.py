@@ -32,11 +32,27 @@ class PDEFunc(torch.nn.Module, ABC):
         pass
 
 
+class Heat(PDEFunc):
+    def __init__(self, cfg: Config, device='cpu'):
+        super().__init__(cfg=cfg, device=device)
+        self.to(device)
+
+    def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
+        # print(f'{u_dus.shape = }')
+        x, y = Xs
+        u = u_dus[0]
+        dudx, dudy = u_dus[1], u_dus[2]
+        d2udx2, d2udxdy, d2udy2 = u_dus[3], u_dus[4], u_dus[5]
+
+        resid = d2udy2 + d2udx2
+        # resid = u[0] - x
+        return resid
+
 class HeatLearned(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
         super().__init__(cfg=cfg, device=device)
         self.to(device)
-        self.a = nn.Parameter(torch.tensor(0., device=device), requires_grad=True)
+        self.a = nn.Parameter(torch.tensor([0., 0.], device=device), requires_grad=True)
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
         # print(f'{u_dus.shape = }')
@@ -104,6 +120,7 @@ class FluidLearned(PDEFunc):
             return.shape = [n_comp]
         """
 
+        x, y = Xs
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]
         d2udx2, d2udy2 = u_dus[3], u_dus[5]
@@ -115,12 +132,13 @@ class FluidLearned(PDEFunc):
         laplace_Vy = self.mu * (d2udx2[1] + d2udy2[1])
         dpdx = dudx[2]
         dpdy = dudy[2]
-
         resid_x = -dpdx + laplace_Vx - advect_x + self.a
         resid_y = -dpdy + laplace_Vy - advect_y + self.a
-
         divergence = dudx[0] + dudy[1]
-        # divergence = 1 - 1 / 2 * x - u[2]
+
+        # resid_x = u[0] - self.a
+        # resid_y = u[1] #-dpdy + laplace_Vy  #+ self.a
+        # divergence = u[2]-1 #  1 - 1 / 2 * x - u[2]
 
         resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
 

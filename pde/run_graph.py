@@ -6,12 +6,11 @@ from collections import defaultdict
 from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph
-from pde.graph_grid.graph_utils import plot_edges
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
-from pdes.PDEs import HeatLearned, Fluid, FluidLearned
+from pdes.PDEs import HeatLearned, Fluid, FluidLearned, Heat
 from pde.utils import setup_logging
-from pde.loss import DummyLoss, MSELoss2
+from pde.loss import DummyLoss, MSELoss2, MaskLoss
 from pde.mesh_generation.generate_mesh import gen_points_full
 
 
@@ -89,7 +88,7 @@ def boundary_normals(points, triangles, bc_edges):
 def mesh_heat(cfg):
     cfg = Config()
     N_comp = 1
-    Xs, triangles, (int_edges, bc_edges), p_tags  = gen_points_full()
+    Xs, triangles, (int_edges, bc_edges), p_tags = gen_points_full()
     Xs = torch.from_numpy(Xs).float()
     triangles = torch.from_numpy(triangles).int()
 
@@ -108,24 +107,33 @@ def mesh_heat(cfg):
     deriv = [Deriv(comp=[0], orders=[(1, 0)], value=0.)]#, Deriv(comp=[1], orders=[(1, 0)], value=1.)]
     Xs_all = {}
     for i, (X, tag) in enumerate(zip(Xs, p_tags)):
-        value = [0. for _ in range(N_comp)]
+        x, y = X
+        value = [x**2+_*(x+y) for _ in range(N_comp)]
+
+        deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0, weights=[1]),
+                 #Deriv(comp=[1], orders=[(0, 0)], value=0, weights=[1])
+                 ]
+
         if tag == "Normal":
             Xs_all[i] = Point(PT.Normal, X, value=value)
             assert i not in bc_points, "Normal point is also a boundary point"
         elif tag == "wall_bottom":
-            Xs_all[i] = Point(PT.DirichBC, X, value=value)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         elif tag == "wall_top":
-            Xs_all[i] = Point(PT.DirichBC, X, value=value)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         elif tag == "wall_left":
-            Xs_all[i] = Point(PT.DirichBC, X, value=value)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         elif tag == "wall_right":
-            Xs_all[i] = Point(PT.DirichBC, X, value=value)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         elif tag == "circle":
+            # value = [1. for _ in range(N_comp)]
+            # Xs_all[i] = Point(PT.DirichBC, X, value=value)
             n_hat = normals[i].tolist()
-            value = [1. for _ in range(N_comp)]
-            Xs_all[i] = Point(PT.DirichBC, X, value=value)
-            # deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]])]
-            # Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
+            deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]]),
+                     # Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]])
+                     #Deriv(comp=[1], orders=[(0, 0)], value=0.1, weights=[1])
+                     ]
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         else:
             raise ValueError(f"Unknown point tag {tag}")
 
@@ -158,7 +166,9 @@ def mesh_graph(cfg):
 
     Xs_all = {}
     for i, (X, tag) in enumerate(zip(Xs, p_tags)):
-        value = [0. for _ in range(N_comp)]
+        x, y = X
+
+        value = [x+y for _ in range(N_comp)]
 
         if tag == "Normal":
             Xs_all[i] = Point(PT.Normal, X, value=value)
@@ -166,7 +176,6 @@ def mesh_graph(cfg):
             continue
 
         # Boundary conditions
-        x, y = X
         n_hat = normals[i].tolist()
         # wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1, 1, 0], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (1, 1), (2, 0), (0, 2), (1, 1)], value=0,
         #       weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[0], n_hat[1], n_hat[1], n_hat[1]])
@@ -228,38 +237,50 @@ def mesh_graph(cfg):
     return U_graph, triangles
 
 
-def load_graph(cfg):
+def load_graph(cfg)-> tuple[UGraph, torch.Tensor]:
     u_graph, triangles = torch.load("save_u_graph.pth", weights_only=False)
     return u_graph, triangles
 
 
 def true_pde():
     cfg = Config()
-    U_graph, triangles = load_graph(cfg)
+    # U_graph, triangles = load_graph(cfg)
     # U_graph, triangles = mesh_graph(cfg)
     U_graph, triangles = mesh_heat(cfg)
 
     us_all, _ = U_graph.get_all_us_Xs()
 
-    pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, DummyLoss(), triangles)
+    pde_fn = Heat(cfg, device=cfg.DEVICE)
 
-    optim = torch.optim.SGD(pde_fn.parameters(), lr=0.1, momentum=0.)
+    # Us_target = U_graph.pde_mask.float()
+    # Us_target = torch.repeat_interleave(Us_target, U_graph.N_comp, dim=0)
+    loss_fn = DummyLoss() #MaskLoss(Us_target)
+
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
+
 
     pde_adj.forward_solve()
-    for i in range(10):
 
+    pde_adj.plot_interp(title="Initial solution")
+
+    exit("Done with forward solve")
+
+    optim = torch.optim.SGD(pde_fn.parameters(), lr=1., momentum=0.)
+
+    for i in range(10):
         pde_adj.forward_solve()
         loss = pde_adj.adjoint_solve()
         pde_adj.backward()
+        torch.nn.utils.clip_grad_norm_(pde_fn.parameters(), max_norm=5)
         optim.step()
+
+        c_print(f'a = {pde_fn.a.detach().cpu():.3g}, grad = {pde_fn.a.grad.cpu():.3g}', color="bright_yellow")
+        # for p in pde_fn.parameters():
+        #     print(p.data.cpu(), p.data.grad)
+        print(f'{loss = :.3g}')
 
         if i % 1 == 0:
             pde_adj.plot_interp()
-            print(pde_fn.a, pde_fn.a.grad)
-            # for p in pde_fn.parameters():
-            #     print(p.data.cpu(), p.data.grad)
-            print(f'{loss = :.3g}')
 
         optim.zero_grad()
 
@@ -273,7 +294,7 @@ def true_pde():
 
 
 if __name__ == "__main__":
-    setup_logging(debug=False)
+    setup_logging(debug=True)
     # torch.manual_seed(1)
 
     true_pde()
