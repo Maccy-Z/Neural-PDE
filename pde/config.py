@@ -15,23 +15,19 @@ class LinMode(StrEnum):
 
 @dataclass
 class FwdConfig:
+    # Newton Raphson PDE solver settings
+    lin_mode: LinMode = LinMode.DENSE
+    N_iter: int = 7
+    lr: float = 0.5
+    acc: float = 0.
 
     # Forward linear solver settings
+    # lin_mode: LinMode = LinMode.SPARSE
+
     maxiter: int = 3000
     restart: int = 3000
     rtol: float = 1e-9
     lin_solve_cfg: dict = None
-
-    # Jacobian mode
-    jac_mode: JacMode = JacMode.GRAPH
-
-    # Newton Raphson PDE solver settings
-    # lin_mode: LinMode = LinMode.SPARSE
-    lin_mode: LinMode = LinMode.DENSE
-    N_iter: int = 2
-    lr: float = 1.
-    acc: float = 0.
-
     def __post_init__(self):
         self.lin_solve_cfg = \
             {
@@ -85,12 +81,11 @@ class FwdConfig:
 
 @dataclass
 class AdjointConfig:
-    # Jacobian mode
-    num_blocks: int = 4
-    jac_mode: JacMode = JacMode.GRAPH
+    # General settings
+    # N_iter: int = 1
 
     # Linear solver settings
-    lin_mode: LinMode = LinMode.DENSE
+    lin_mode: LinMode = LinMode.AMGX
     maxiter: int = 500
     restart: int = 100
     rtol: float = 1e-4
@@ -103,24 +98,8 @@ class AdjointConfig:
             "determinism_flag": 0,
             "exception_handling": 1,
 
-            "solver": {
-                "monitor_residual": 1,
-                # "print_solve_stats": 1,
-                "solver": "PBICGSTAB",
-                "convergence": "RELATIVE_INI_CORE",
-                "tolerance": 1e-4,
-                "max_iters": 25,
-                # "gmres_n_restart": 75,
-                "preconditioner": {
-                    # "solver": "NOSOLVER",
-                    "solver": "AMG",
-                    "algorithm": "AGGREGATION",
-                    "selector": "SIZE_2",
-                    "max_iters": 1,
-                    "cycle": "V",
-                    # "max_levels": 5,
-                }
-            }
+            "solver": "DENSE_LU_SOLVER",
+
         }
 
 @dataclass
@@ -129,7 +108,7 @@ class Config:
 
     # Phyiscal Parameters
     mu = 1.
-    rho = 0 #1000
+    rho = 500
 
     # Grid settings
     xmin: float = 0

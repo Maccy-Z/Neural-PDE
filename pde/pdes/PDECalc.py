@@ -123,6 +123,8 @@ class GraphPDECalc(PDECalc):
         #     jacobian = self.permuter.matrix_permute(jacobian)
         #     residuals = self.permuter.vector_permute(residuals)
 
+        # A = jacobian.to_dense().to_sparse_coo()
+        # U_graph = self.U_graph
         return jacobian, residuals
 
     def jacob_transpose(self):
@@ -141,20 +143,14 @@ class GraphPDECalc(PDECalc):
         resid_main = resid_main.reshape(self.N_pdes * self.N_component) # shape = [N_pde * N_component]
 
 
+        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device) # shape = [N_Us_]
+        residuals[self.pde_perm] = resid_main  # [N_Us_]
 
         # 2) Neumann BCs
         if self.neumann_mode:
             bc_deriv_pred = self.U_graph.get_neum_preds()
             bc_deriv_true = self.U_graph.deriv_val
             bc_residuals = bc_deriv_pred - bc_deriv_true
-
-            # residuals = torch.cat([residuals, bc_residuals])  # shape = [N_pde_+N_bc_]
-            # residuals = self.permuter.vector_permute(residuals)
-
-        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device) # shape = [N_Us_]
-        residuals[self.pde_perm] = resid_main  # [N_Us_]
-
-        if self.neumann_mode:
             residuals[self.bc_perm] = bc_residuals
 
         return residuals

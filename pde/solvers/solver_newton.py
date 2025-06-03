@@ -32,32 +32,36 @@ class SolverNewton:
         timer = Timer(name="timer", logger=None)
 
         for i in range(self.N_iter):
+            # Compute Jacobian and residuals
             with timer:
                 jacobian, residuals = self.pde_calc.jacobian(aux_input)
             t_jacob = timer.last
 
+            # Solve the linear system
             with timer:
                 # Convert jacobian to sparse here instead of in lin_solver, so we can delete the dense Jacobian asap.
                 jac_preproc, resid_preproc = self.lin_solver.preproc_tensor(jacobian, residuals)
                 # del jacobian # torch.cuda.empty_cache()
                 deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, resid_preproc)
-
             t_solve = timer.last
 
+            # Evaluate solution
+            with timer:
+                lin_error = jacobian @ deltas - residuals
+                lin_error_norm = lin_error.norm()
+                deltas *= self.lr
 
-            lin_error = jacobian @ deltas - residuals
-            lin_error_norm = lin_error.norm()
-            deltas *= self.lr
-            self.U_graph.update_grid(deltas)
+                self.U_graph.update_grid(deltas)
 
-            # Error from PDE with updated Us
-            pde_resid = self.pde_calc.residuals(aux_input)
-            pde_resid_norm = pde_resid.norm()
-            max_abs_residual = torch.max(pde_resid.abs())
+                # Error from PDE with updated Us
+                pde_resid = self.pde_calc.residuals(aux_input)
+                pde_resid_norm = pde_resid.norm()
+                max_abs_residual = torch.max(pde_resid.abs())
 
-            logging.debug("")
+            t_post = timer.last
+            # logging.debug("")
             logging.debug(f'Newton solver Iteration {i}')
-            logging.debug(f'    Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s')
+            logging.debug(f'    Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s, postproc time: {t_post:.4f}s')
             logging.debug(f'    Linear residual: {lin_error_norm:.3g}, Norm residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
 
 

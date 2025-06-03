@@ -52,7 +52,7 @@ class HeatLearned(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
         super().__init__(cfg=cfg, device=device)
         self.to(device)
-        self.a = nn.Parameter(torch.tensor([0., 0.], device=device), requires_grad=True)
+        self.a = nn.Parameter(torch.tensor(0., device=device), requires_grad=True)
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
         # print(f'{u_dus.shape = }')
@@ -79,7 +79,7 @@ class Fluid(PDEFunc):
 
             return.shape = [n_comp]
         """
-
+        x, y = Xs
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]
         d2udx2, d2udy2 = u_dus[3], u_dus[5]
@@ -96,7 +96,11 @@ class Fluid(PDEFunc):
         resid_y = -dpdy + laplace_Vy - advect_y
 
         divergence = dudx[0] + dudy[1]
-        # divergence = 1 - 1 / 2 * x - u[2]
+
+        """ Testing """
+        # resid_x = u[0] # -dpdx + laplace_Vx
+        # resid_y = 2*u[1] # -dpdy + laplace_Vy
+        # divergence =  1 - 1 / 2 * x - u[2]
 
         resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
 
@@ -110,7 +114,7 @@ class FluidLearned(PDEFunc):
 
         self.mu = cfg.mu
         self.rho = cfg.rho
-        self.a = nn.Parameter(torch.tensor(0., device=device), requires_grad=True)
+        self.a = nn.Parameter(torch.tensor([-0.89, 0.], device=device), requires_grad=True)
 
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
@@ -132,8 +136,8 @@ class FluidLearned(PDEFunc):
         laplace_Vy = self.mu * (d2udx2[1] + d2udy2[1])
         dpdx = dudx[2]
         dpdy = dudy[2]
-        resid_x = -dpdx + laplace_Vx - advect_x + self.a
-        resid_y = -dpdy + laplace_Vy - advect_y + self.a
+        resid_x = -dpdx + laplace_Vx - advect_x + self.a[0]
+        resid_y = -dpdy + laplace_Vy - advect_y #+ self.a[1]
         divergence = dudx[0] + dudy[1]
 
         # resid_x = u[0] - self.a
@@ -143,6 +147,7 @@ class FluidLearned(PDEFunc):
         resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
 
         return resid
+
 
 class NNFunc(PDEFunc):
     def __init__(self, cfg, device='cuda'):

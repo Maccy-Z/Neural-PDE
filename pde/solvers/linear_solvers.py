@@ -118,7 +118,9 @@ class LinearSolver:
         return self.preproc(A, b)
 
     def preproc_default(self, A: torch.Tensor, b: torch.Tensor):
-        """ Default preprocessing, no conversion. """
+        """ Default preprocessing. """
+        indptr, indices, values = csr_compress(A)
+        A = torch.sparse_csr_tensor(crow_indices=indptr, col_indices=indices, values=values, size=A.size(), device=A.device)
         return A, b
 
     def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> sp.csr_matrix:
@@ -132,7 +134,7 @@ class LinearSolver:
         self.col_norms = None
 
         if A.is_sparse_csr:
-            A = A.to_dense()
+            # A = A.to_dense()
             # # Permuting
             # A_sp = A.to_sparse_coo().coalesce()
             #
@@ -188,7 +190,7 @@ class LinearSolver:
             #
             # exit(7)
 
-            A = A.to_sparse_csr()
+            # A = A.to_sparse_csr()
             # values = A.values()
             # indices = A.col_indices()
             # indptr = A.crow_indices()

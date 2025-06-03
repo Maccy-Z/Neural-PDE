@@ -138,7 +138,6 @@ class UGraph(UBase):
         # 2.1) Get the neighborhood graph
         stencils = nearest_neighbors(self.tri, self._Xs, grad_neigh)
         # 2.2) Compute finite difference stencils / graphs.
-        # Each gradient type has its own stencil and graph.
         diff_degrees = gen_multi_idx_tuple(max_degree)[1:] # 0th order is just itself.
         self.graphs = {}
         for degree in diff_degrees:
@@ -168,8 +167,8 @@ class UGraph(UBase):
             jacob_neum_pos = [i for i, point in jacob_dict.items() if T.NeumOffsetBC in point.point_type]
             # 3.2) Repeat for each component. Ordering:  [p0_0, p1_0, ..., p0_1, p1_1, ..., ..., b0_0, b0_1, ..., b1_0, b_1_1, ...]
             pde_perm, bc_perm = torch.tensor(jacob_main_pos), torch.tensor(jacob_neum_pos)
-            pde_perm = torch.cat([self.N_comp * pde_perm + i for i in range(self.N_comp)])
-            bc_perm = torch.stack([self.N_comp * bc_perm + i for i in range(self.N_comp)], dim=-1).flatten(0)
+            pde_perm = torch.stack([self.N_comp * pde_perm + i for i in range(self.N_comp)], dim=-1).flatten()
+            bc_perm = torch.stack([self.N_comp * bc_perm + i for i in range(self.N_comp)], dim=-1).flatten()
 
             self.row_perm = torch.cat([pde_perm, bc_perm])
             self.pde_perm, self.bc_perm = pde_perm, bc_perm

@@ -22,7 +22,7 @@ class FinDerivCalcSPMV(BaseDerivCalc):
 
         self.eq_mask = eq_mask
         self.grad_mask = grad_mask
-        self.N_us_grad = self.grad_mask.sum()
+        # self.N_us_grad = self.grad_mask.sum()
         self.N_deriv = len(fd_graphs)
         self.N_comp = N_component
 
