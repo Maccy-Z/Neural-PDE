@@ -58,12 +58,16 @@ class Point:
     X: torch.Tensor
     value: float|list[float] = None
     derivatives: list[Deriv] = None
+    n_deriv: int = None
 
     def __post_init__(self):
         if P_Types.DERIV in self.point_type:
             assert self.derivatives is not None, "Derivatives must be provided for DERIV points."
         else:
             assert self.derivatives is None, "Derivatives must be None for non-DERIV points."
+
+        if self.derivatives is not None:
+            self.n_deriv = len(self.derivatives)
 
 
 

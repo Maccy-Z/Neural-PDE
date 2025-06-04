@@ -23,8 +23,6 @@ class UBase(abc.ABC):
     pde_true_idx: Tensor
     us_grad_idx: Tensor
 
-
-
     def mask_nonzero_idx(self,):
         """ Tuples of indices where nonzero elements are in masks. """
         return self.pde_true_idx, self.us_grad_idx
@@ -35,14 +33,25 @@ class UBase(abc.ABC):
         deltas.shape = [N*N_comp]
         us -> us - deltas
         """
-        deltas = deltas.view(self.N_us_grad, self.N_comp)#.T
+        deltas = deltas.view(-1, self.N_comp)
         self._Us[self.updt_mask] -= deltas
 
-    def set_grid(self, new_us):
+    def get_test_update(self, deltas):
+        """
+        Get test update for grid with changes, without applying them.
+        deltas.shape = [N*N_comp]
+        us -> us - deltas
+        """
+        deltas = deltas.view(-1, self.N_comp)
+        us_test = torch.clone(self._Us)
+        us_test[self.updt_mask] -= deltas
+        return us_test
+
+    def set_grid(self, new_Us):
         """
         Set grid to new values. Used for Jacobian computation.
         """
-        self._Us[self.updt_mask] = new_us
+        self._Us = new_Us
 
     def get_us_mask(self):
         """

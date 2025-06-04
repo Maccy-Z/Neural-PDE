@@ -7,21 +7,124 @@ from pde.BaseU import UBase
 from pde.pdes.PDECalc import PDECalc
 from pde.solvers.linear_solvers import LinearSolver
 from pde.utils_sparse import plot_sparsity
+import math
+
+
+class EfficientIntervalOptimizer:
+    # Golden ratio constants for calculating test points
+    # _INVPHI is 1/phi, where phi is the golden ratio ( (1+sqrt(5))/2 )
+    _INVPHI = (math.sqrt(5) - 1) / 2
+    # _INVPHI_COMPLEMENT is 1 - _INVPHI, which is also 1/phi^2
+    _INVPHI_COMPLEMENT = 1 - _INVPHI
+
+    def __init__(self, low=0.0, high=1., tol=1e-5, max_iter=10, device="cpu"):
+        """
+        Initializes the optimizer with a tolerance and maximum iterations.
+
+        Args:
+            tol: The tolerance for the width of the search interval.
+            max_iter: The maximum number of iterations to perform.
+        """
+        self.device = device
+        self.low = low
+        self.high = high
+
+        self.tol = tol
+        self.max_iter = max_iter
+
+    def optimize(self, loss_func, high=None, low_loss=None):
+        """
+        Finds a value x in the interval [low, high] that attempts to minimize
+        the given loss_func using the Golden Section Search algorithm.
+
+        Returns:
+            The value of x that approximately minimizes the loss_func.
+        """
+        low = self.low
+        # Use previous high value if provided as starting guidline
+        if high is None:
+            high = self.high
+        else:
+            high = min(high*2+0.005, self.high)
+
+        current_width = high - low
+        if current_width <= self.tol:
+            return (low + high) / 2
+
+        # Calculate initial interior test points using golden ratio proportions
+        # x_lower is the test point closer to 'low'
+        # x_upper is the test point closer to 'high'
+        x_lower = low + self._INVPHI_COMPLEMENT * current_width
+        x_upper = high - self._INVPHI_COMPLEMENT * current_width
+
+        # Evaluate the loss function at these two initial points
+        f_lower = loss_func(x_lower)
+        f_upper = loss_func(x_upper)
+
+        for i in range(self.max_iter):
+            current_width = high - low  # Update current width
+            if current_width <= self.tol:
+                break
+
+            if f_lower < f_upper:  # Minimum is likely in the interval [low, x_upper]
+                high = x_upper  # Narrow the interval from the right
+
+                # The old x_lower becomes the new x_upper (closer to new 'high')
+                x_upper = x_lower
+                f_upper = f_lower  # Reuse its function evaluation (cached)
+
+                # Calculate the new x_lower point
+                x_lower = low + self._INVPHI_COMPLEMENT * (high - low)
+                f_lower = loss_func(x_lower)  # Only one new function evaluation
+            else:  # Minimum is likely in the interval [x_lower, high]
+                low = x_lower  # Narrow the interval from the left
+
+                # The old x_upper becomes the new x_lower (closer to new 'low')
+                x_lower = x_upper
+                f_lower = f_upper  # Reuse its function evaluation (cached)
+
+                # Calculate the new x_upper point
+                x_upper = high - self._INVPHI_COMPLEMENT * (high - low)
+                f_upper = loss_func(x_upper)  # Only one new function evaluation
+
+        pred_alpha = (low + high) / 2
+
+        # Test alpha against low loss, and reduce further if needed.
+        if low_loss is not None:
+            if loss_func(pred_alpha) > low_loss:
+                logging.debug(f"When doing interval optimisation, {pred_alpha = } is still too high. Reducing alpha.")
+                pred_alpha = pred_alpha / 2
+
+        return pred_alpha
+
 
 class SolverNewton:
     def __init__(self,  U_graph: UBase, lin_solver: LinearSolver, pde_calc: PDECalc, cfg: FwdConfig):
-        #self.pde_func = pde_func
+        self.device = U_graph.device
+
         self.U_graph = U_graph
         self.lin_solver = lin_solver
 
         self.N_iter = cfg.N_iter
         self.lr = cfg.lr
-        self.solve_acc = cfg.acc
+        self.solve_acc = cfg.solve_acc
 
         self.pde_calc = pde_calc
-        self.device = U_graph.device
 
+        self.line_search_optim = EfficientIntervalOptimizer(max_iter=5)
 
+    def _test_residual(self, alpha, deltas, Us_init, aux_input):
+        """ Run test with test Us and get residuals. Then reset grid back to initial state. """
+        Us = self.U_graph.get_test_update(alpha * deltas)
+        self.U_graph.set_grid(Us)
+        pde_resid = self.pde_calc.residuals(aux_input)
+        pde_resid_norm = pde_resid.norm()
+
+        # Reset grid to initial state
+        self.U_graph.set_grid(Us_init)
+        return pde_resid_norm
+
+    @torch.no_grad()
     def find_pde_root(self, aux_input=None):
         """
         Find the root of the PDE using Newton Raphson:
@@ -31,40 +134,53 @@ class SolverNewton:
         """
         timer = Timer(name="timer", logger=None)
 
+        best_alpha = 1.0
+
         for i in range(self.N_iter):
+            Us_init = self.U_graph.get_all_us_Xs()[0]
+
             # Compute Jacobian and residuals
             with timer:
-                jacobian, residuals = self.pde_calc.jacobian(aux_input)
+                jacobian, old_resid = self.pde_calc.jacobian(aux_input)
             t_jacob = timer.last
 
             # Solve the linear system
             with timer:
                 # Convert jacobian to sparse here instead of in lin_solver, so we can delete the dense Jacobian asap.
-                jac_preproc, resid_preproc = self.lin_solver.preproc_tensor(jacobian, residuals)
+                jac_preproc, resid_preproc = self.lin_solver.preproc_tensor(jacobian, old_resid)
                 # del jacobian # torch.cuda.empty_cache()
                 deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, resid_preproc)
             t_solve = timer.last
 
-            # Evaluate solution
+            # Find best alpha using line search
             with timer:
-                lin_error = jacobian @ deltas - residuals
-                lin_error_norm = lin_error.norm()
-                deltas *= self.lr
+                zero_alpha_norm = old_resid.norm()
+                resid_fn = lambda alpha: self._test_residual(alpha, deltas, Us_init, aux_input)
+                best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
 
-                self.U_graph.update_grid(deltas)
+                dU = deltas * best_alpha #self.lr
+                Us = self.U_graph.get_test_update(dU)
+                self.U_graph.set_grid(Us)
+
+                # print(best_alpha, dU.norm().cpu().detach())
+
+                # Evaluate residuals
+                lin_error = jacobian @ deltas - old_resid
+                lin_error_norm = lin_error.norm()
 
                 # Error from PDE with updated Us
-                pde_resid = self.pde_calc.residuals(aux_input)
-                pde_resid_norm = pde_resid.norm()
-                max_abs_residual = torch.max(pde_resid.abs())
+                new_resid = self.pde_calc.residuals(aux_input)
+                new_resid_norm = new_resid.norm()
+                max_abs_residual = torch.max(new_resid.abs())
+                # print(f'{max_abs_residual = }, {new_resid_norm = }')
 
             t_post = timer.last
             # logging.debug("")
             logging.debug(f'Newton solver Iteration {i}')
             logging.debug(f'    Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s, postproc time: {t_post:.4f}s')
-            logging.debug(f'    Linear residual: {lin_error_norm:.3g}, Norm residual: {pde_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
+            logging.debug(f'    Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
 
 
-            if torch.mean(torch.abs(residuals)) < self.solve_acc:
+            if new_resid_norm < self.solve_acc:
                 logging.info(f"Newton solver converged early at iteration {i+1}")
                 break

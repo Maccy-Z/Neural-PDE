@@ -16,14 +16,13 @@ class LinMode(StrEnum):
 @dataclass
 class FwdConfig:
     # Newton Raphson PDE solver settings
-    lin_mode: LinMode = LinMode.DENSE
-    N_iter: int = 7
+    N_iter: int = 10
     lr: float = 0.5
-    acc: float = 0.
+    solve_acc: float = 0.001
 
     # Forward linear solver settings
     # lin_mode: LinMode = LinMode.SPARSE
-
+    lin_mode: LinMode = LinMode.DENSE
     maxiter: int = 3000
     restart: int = 3000
     rtol: float = 1e-9
@@ -108,7 +107,7 @@ class Config:
 
     # Phyiscal Parameters
     mu = 1.
-    rho = 500
+    rho = 750
 
     # Grid settings
     xmin: float = 0

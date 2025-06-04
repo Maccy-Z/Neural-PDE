@@ -95,6 +95,10 @@ class UGraph(UBase):
         types = [p.point_type for p in points]
         assert types.count(T.Ghost) == types.count(T.NeumCentralBC), "Number of ghost points must equal central Neumann BC points."
 
+        for p in points:
+            if p.derivatives is not None:
+                assert p.n_deriv == self.N_comp, "Number of BC components must match number of components."
+
 
     def __init__(self, setup_dict: dict[int, Point], N_component, grad_neigh, max_degree:int = 2, tri=None, device="cpu"):
         """ Initialize the graph with a set of points.

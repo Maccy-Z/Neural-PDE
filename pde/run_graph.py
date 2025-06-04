@@ -170,7 +170,7 @@ def mesh_graph(cfg):
     for i, (X, tag) in enumerate(zip(Xs, p_tags)):
         x, y = X
 
-        value = [0 for _ in range(N_comp)]
+        value = [0*x for _ in range(N_comp)]
 
         if tag == "Normal":
             Xs_all[i] = Point(PT.Normal, X, value=value)
@@ -305,8 +305,10 @@ def plot_grads():
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
+    exit("Done with forward solve")
+
     losses, grads = [], []
-    X_range = torch.linspace(-0.65, -0.89, 80)
+    X_range = torch.linspace(-0.65, -0.89, 50)
     for i in X_range:
         U_graph.reset()
         pde_fn.a.data[0] = i.to(device=cfg.DEVICE)
@@ -322,6 +324,8 @@ def plot_grads():
 
         pde_fn.zero_grad()
 
+        break
+
     losses = torch.tensor(losses)
     grads = torch.tensor(grads)
 
@@ -334,6 +338,7 @@ def plot_grads():
     plt.show()
     print(losses)
     print(grads)
+
 
 if __name__ == "__main__":
     setup_logging(debug=True)
