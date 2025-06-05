@@ -143,8 +143,8 @@ class UGraph(UBase):
         diff_degrees = gen_multi_idx_tuple(max_degree)[1:] # 0th order is just itself.
         self.graphs = {}
         for degree in diff_degrees:
-            print_fn(f"Generating graph for degree {degree}")
-            with Timer(text="Time to solve: : {:.4f}", logger=print_fn):
+            # print_fn(f"Generating graph for ")
+            with Timer(text=f"Degree {degree}: Time to solve: : {{:.4f}}", logger=print_fn):
                 edge_idx, fd_weights = calc_coeff(self._Xs, stencils, grad_neigh, degree)
                 self.graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_us_tot, self.N_us_tot))
 

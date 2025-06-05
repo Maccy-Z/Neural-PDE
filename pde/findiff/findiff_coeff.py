@@ -7,6 +7,7 @@ import hashlib
 import os
 from functools import wraps
 from rbf.pde import fd
+import logging
 
 from pde.utils_sparse import plot_sparsity, csr_torch_to_scipy, csr_scipy_to_torch
 
@@ -81,7 +82,7 @@ def disk_cache(func):
         cache_file = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
 
         if os.path.exists(cache_file):
-            print(f"Loading from cache: {func.__name__} (key: {cache_key})")
+            logging.debug(f"Loading from cache: {func.__name__} (key: {cache_key})")
             try:
                 with open(cache_file, 'rb') as f:
                     return pickle.load(f)

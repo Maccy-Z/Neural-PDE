@@ -642,31 +642,50 @@ class CSRSystemSimplifier:
         )
 
         # ---------- fixed sparsity pattern of the reduced matrix ----------------
-        A_coo = A_sample_csr.to_sparse_coo()
-        r_all, c_all = A_coo.indices()
-        keep_nz = self.row_mask[r_all] & self.col_mask[c_all]
-
-        # compact rows: running count of kept rows, minus 1 (0-based)
-        row_running = torch.cumsum(self.row_mask.to(torch.int), 0) - 1
-        self._next_idx = torch.vstack(
-            [row_running[r_all[keep_nz]], self.col_compact[c_all[keep_nz]]]
+        crow = A_sample_csr.crow_indices()  # shape: (n_rows + 1,)
+        col = A_sample_csr.col_indices()  # shape: (nnz,)
+        # ------------------------------------------------------------
+        # 2.  Build a row index (r_all) for every original non-zero
+        # ------------------------------------------------------------
+        row_counts = crow[1:] - crow[:-1]  # nnz per row, length = n_rows
+        r_all = torch.repeat_interleave(  # length = nnz
+            torch.arange(A_sample_csr.size(0), device=A_sample_csr.device),
+            row_counts,
         )
-        self._keep_nz = keep_nz
-
+        # ------------------------------------------------------------
+        # 3.  Select the non-zeros that survive both row & column masks
+        # ------------------------------------------------------------
+        self.keep_nz = self.row_mask[r_all] & self.col_mask[col]
+        # ------------------------------------------------------------
+        # 4.  Map surviving (row, col) pairs to the *compacted* space
+        # ------------------------------------------------------------
+        row_running = torch.cumsum(self.row_mask.to(torch.int), 0) - 1
+        row_new = row_running[r_all[self.keep_nz]]  # (nnz_keep,)
+        self.col_new = self.col_compact[col[self.keep_nz]]  # (nnz_keep,)
+        # ------------------------------------------------------------
+        # 5.  Build the new CSR *row pointer* array (crow_next)
+        # ------------------------------------------------------------
+        nnz_per_row_new = torch.bincount(row_new, minlength=self.n_rows_next)
+        self.crow_next = torch.cat((
+            torch.zeros(1, dtype=torch.long, device=self.device),
+            torch.cumsum(nnz_per_row_new, 0)
+        ))
         # ---------- container for latest solved pivot values --------------------
         self._latest_solved_vals = None
 
     # ─────────────────────── build reduced system ─────────────────────────
     def simplify_system(self, A_csr: torch.Tensor, b: torch.Tensor):
         """
-        Returns
+        Simplify the system Ax = b by removing trivial rows and columns. Save values for later reconstruction.
         -------
         A_next : torch.sparse_csr_tensor
         b_next : torch.Tensor
         solved_vals : torch.Tensor   (pivot values in row order)
         """
+        A_values = A_csr.values()
+
         # -------- pivot variable values ----------------------------------------
-        pivot_vals = A_csr.values()[self.pivot_positions]
+        pivot_vals = A_values[self.pivot_positions]
         solved_vals = b[self.rows_to_remove] / pivot_vals
         self._latest_solved_vals = solved_vals  # cache for reconstruction
 
@@ -676,15 +695,15 @@ class CSRSystemSimplifier:
         b_updated = b - (A_csr @ solved_vec)
 
         # -------- build reduced matrix -----------------------------------------
-        new_vals = A_csr.values()[self._keep_nz]
-        A_next = torch.sparse_coo_tensor(
-            self._next_idx,
-            new_vals,
+        new_vals = A_values[self.keep_nz]
+        A_next = torch.sparse_csr_tensor(
+            self.crow_next,
+            self.col_new,
+            new_vals,  # same order as col_new
             size=(self.n_rows_next, self.n_cols_next),
             dtype=self.dtype,
             device=self.device,
-        ).to_sparse_csr()
-
+        )
         b_next = b_updated[self.row_mask]
         return A_next, b_next
 

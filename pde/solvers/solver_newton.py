@@ -149,6 +149,9 @@ class SolverNewton:
                 jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
                 deltas, lin_resid_norm = self.lin_solver.solve(jac_proc, old_resid_proc)
                 deltas = self.pde_calc.postproc_solve(deltas)
+
+                # deltas, lin_resid_norm = self.lin_solver.solve(jacobian, old_resid)
+
             t_solve = timer.last
 
             # Find best alpha using line search
@@ -157,11 +160,8 @@ class SolverNewton:
                 resid_fn = lambda alpha: self._test_residual(alpha, deltas, Us_init, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
 
-                dU = deltas * best_alpha #self.lr
-                Us = self.U_graph.get_test_update(dU)
-                self.U_graph.set_grid(Us)
-
-                # print(best_alpha, dU.norm().cpu().detach())
+                dUs = deltas * best_alpha #self.lr
+                self.U_graph.update_grid(dUs)
 
                 # Evaluate residuals
                 lin_error = jacobian @ deltas - old_resid
@@ -171,10 +171,8 @@ class SolverNewton:
                 new_resid = self.pde_calc.residuals(aux_input)
                 new_resid_norm = new_resid.norm()
                 max_abs_residual = torch.max(new_resid.abs())
-                # print(f'{max_abs_residual = }, {new_resid_norm = }')
 
             t_post = timer.last
-            # logging.debug("")
             logging.debug(f'Newton solver Iteration {i}')
             logging.debug(f'    Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s, postproc time: {t_post:.4f}s')
             logging.debug(f'    Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
