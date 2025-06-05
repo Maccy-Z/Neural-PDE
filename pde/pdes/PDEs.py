@@ -114,7 +114,7 @@ class FluidLearned(PDEFunc):
 
         self.mu = cfg.mu
         self.rho = cfg.rho
-        self.a = nn.Parameter(torch.tensor([-0.89, 0.], device=device), requires_grad=True)
+        self.a = nn.Parameter(torch.tensor([-0.0, 0.], device=device), requires_grad=True)
 
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):

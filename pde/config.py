@@ -98,7 +98,6 @@ class AdjointConfig:
             "exception_handling": 1,
 
             "solver": "DENSE_LU_SOLVER",
-
         }
 
 @dataclass
@@ -107,7 +106,7 @@ class Config:
 
     # Phyiscal Parameters
     mu = 1.
-    rho = 750
+    rho = 2000
 
     # Grid settings
     xmin: float = 0

@@ -1,7 +1,6 @@
 import torch
 import scipy.sparse.linalg as linalg
-from cprint import c_print
-from codetiming import Timer
+
 
 import cupy as cp
 import cupyx.scipy.sparse as sp
@@ -20,6 +19,7 @@ class LinearSolver:
 
     cfg: dict = None
     def __init__(self, mode: LinMode, device: str, cfg: dict=None):
+
         self.preproc = self.preproc_default
         if device == "cuda":
             if mode == LinMode.DENSE:
@@ -44,7 +44,10 @@ class LinearSolver:
                 self.solver = self.cpu_sparse
 
     def solve(self, A, b):
-        return self.solver(A, b)
+        A, b = self.preproc_tensor(A, b)
+        x, resid = self.solver(A, b)
+        x = self.postproc_tensor(x)
+        return x, resid
 
 
     def cuda_sparse(self, A_cp: cp.array, b: torch.Tensor):
@@ -114,13 +117,17 @@ class LinearSolver:
         return x, info["resid_norm"]
 
     def preproc_tensor(self, A: torch.Tensor, b: torch.Tensor):
-        """ Preprocess A matrix before solving, convert to sparse if needed so original can be deleted. """
+        """ Preprocess A matrix before solving. Do universal preprocessing, then solver specific preprocessing. """
+        indptr, indices, values = csr_compress(A)
+        A = torch.sparse_csr_tensor(crow_indices=indptr, col_indices=indices, values=values, size=A.size(), device=A.device)
         return self.preproc(A, b)
+
+    def postproc_tensor(self, x: torch.Tensor):
+        return x
 
     def preproc_default(self, A: torch.Tensor, b: torch.Tensor):
         """ Default preprocessing. """
-        indptr, indices, values = csr_compress(A)
-        A = torch.sparse_csr_tensor(crow_indices=indptr, col_indices=indices, values=values, size=A.size(), device=A.device)
+
         return A, b
 
     def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> sp.csr_matrix:

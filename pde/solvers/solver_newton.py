@@ -4,7 +4,7 @@ import torch
 
 from pde.config import FwdConfig
 from pde.BaseU import UBase
-from pde.pdes.PDECalc import PDECalc
+from pde.pdes.PDECalc import GraphPDECalc
 from pde.solvers.linear_solvers import LinearSolver
 from pde.utils_sparse import plot_sparsity
 import math
@@ -99,7 +99,7 @@ class EfficientIntervalOptimizer:
 
 
 class SolverNewton:
-    def __init__(self,  U_graph: UBase, lin_solver: LinearSolver, pde_calc: PDECalc, cfg: FwdConfig):
+    def __init__(self,  U_graph: UBase, lin_solver: LinearSolver, pde_calc: GraphPDECalc, cfg: FwdConfig):
         self.device = U_graph.device
 
         self.U_graph = U_graph
@@ -146,10 +146,9 @@ class SolverNewton:
 
             # Solve the linear system
             with timer:
-                # Convert jacobian to sparse here instead of in lin_solver, so we can delete the dense Jacobian asap.
-                jac_preproc, resid_preproc = self.lin_solver.preproc_tensor(jacobian, old_resid)
-                # del jacobian # torch.cuda.empty_cache()
-                deltas, lin_resid_norm = self.lin_solver.solve(jac_preproc, resid_preproc)
+                jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
+                deltas, lin_resid_norm = self.lin_solver.solve(jac_proc, old_resid_proc)
+                deltas = self.pde_calc.postproc_solve(deltas)
             t_solve = timer.last
 
             # Find best alpha using line search

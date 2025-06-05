@@ -146,96 +146,96 @@ def permutation_to_csr(perm, dtype=torch.float32, device="cpu"):
     )
     return sparse_matrix
 
-
-class CsrBuilder:
-    """ Incrementally build a sparse CSR tensor from dense blocks. """
-    def __init__(self, total_rows, total_cols, device=None):
-        """
-        Initializes the builder for a CSR sparse tensor.
-        Parameters:
-        - total_rows: int, total number of rows in the matrix.
-        - total_cols: int, total number of columns in the matrix.
-        - device: torch device (optional).
-        """
-        self.dtype = torch.int64
-        self.total_rows = total_rows
-        self.total_cols = total_cols
-        self.device = device
-
-        self.zero_ten = torch.tensor([0], dtype=self.dtype, device=self.device)
-
-        # Internal storage for CSR components
-        self.nnz_per_row = torch.tensor([0] * self.total_rows, device=self.device, dtype=self.dtype)  # Number of non-zero elements per row
-        self.col_indices = []                # Column indices of non-zero elements
-        self.values = []                     # Non-zero values
-
-    def add_block(self, block_dense_values, block_row_offset, block_col_offset):
-        """
-        Adds a dense block to the CSR components using efficient tensor operations.
-
-        Parameters:
-        - block_dense_values: 2D tensor (n x m), dense block of values.
-        - block_row_offset: int, the starting row index of the block in the overall matrix.
-        - block_col_offset: int, the starting column index of the block in the overall matrix.
-        """
-        n, m = block_dense_values.shape
-        crow_idxs, col_idxs, values = self.to_csr(block_dense_values)
-
-        # Count non-zero elements per row in the block
-        counts = crow_idxs[1:] - crow_idxs[:-1]
-
-        # Update nnz_per_row for the corresponding global rows
-        # Using scatter_add for efficient batch updates
-        self.nnz_per_row[block_row_offset:block_row_offset + n] += counts
-
-        # Calculate global column indices
-        global_cols = col_idxs + block_col_offset
-        self.col_indices.append(global_cols)
-
-        # Extract the non-zero values
-        non_zero_values = values
-        self.values.append(non_zero_values)
-
-    def build(self):
-        """
-        Builds and returns the sparse CSR tensor from the accumulated components.
-
-        Returns:
-        - csr_tensor: torch.sparse_csr_tensor, the constructed sparse CSR tensor.
-        """
-        # Compute crow_indices by cumulatively summing nnz_per_row
-        crow_indices = torch.cat([
-            self.zero_ten,
-            torch.cumsum(self.nnz_per_row, dim=0, dtype=self.dtype)
-        ])
-
-        # Convert col_indices and values to tensors
-        col_indices_tensor = torch.cat(self.col_indices).to(self.dtype)
-        values_tensor = torch.cat(self.values)
-
-        # Create the sparse CSR tensor
-        csr_tensor = torch.sparse_csr_tensor(
-            crow_indices,
-            col_indices_tensor,
-            values_tensor,
-            size=(self.total_rows, self.total_cols),
-        )
-        return csr_tensor
-
-    def reset(self):
-        self.nnz_per_row = torch.tensor([0] * self.total_rows, device=self.device, dtype=torch.int32)  # Number of non-zero elements per row
-        self.col_indices = []                # Column indices of non-zero elements
-        self.values = []                     # Non-zero values
-
-    def to_csr(self, A_torch):
-        """ Cupy is faster than torch """
-        A_cp = cp.asarray(A_torch)
-        A_csr_cp = cp.sparse.csr_matrix(A_cp)
-
-        crow_indices = torch.from_dlpack(A_csr_cp.indptr)
-        col_indices = torch.from_dlpack(A_csr_cp.indices)
-        values = torch.from_dlpack(A_csr_cp.data)
-        return crow_indices, col_indices, values
+#
+# class CsrBuilder:
+#     """ Incrementally build a sparse CSR tensor from dense blocks. """
+#     def __init__(self, total_rows, total_cols, device=None):
+#         """
+#         Initializes the builder for a CSR sparse tensor.
+#         Parameters:
+#         - total_rows: int, total number of rows in the matrix.
+#         - total_cols: int, total number of columns in the matrix.
+#         - device: torch device (optional).
+#         """
+#         self.dtype = torch.int64
+#         self.total_rows = total_rows
+#         self.total_cols = total_cols
+#         self.device = device
+#
+#         self.zero_ten = torch.tensor([0], dtype=self.dtype, device=self.device)
+#
+#         # Internal storage for CSR components
+#         self.nnz_per_row = torch.tensor([0] * self.total_rows, device=self.device, dtype=self.dtype)  # Number of non-zero elements per row
+#         self.col_indices = []                # Column indices of non-zero elements
+#         self.values = []                     # Non-zero values
+#
+#     def add_block(self, block_dense_values, block_row_offset, block_col_offset):
+#         """
+#         Adds a dense block to the CSR components using efficient tensor operations.
+#
+#         Parameters:
+#         - block_dense_values: 2D tensor (n x m), dense block of values.
+#         - block_row_offset: int, the starting row index of the block in the overall matrix.
+#         - block_col_offset: int, the starting column index of the block in the overall matrix.
+#         """
+#         n, m = block_dense_values.shape
+#         crow_idxs, col_idxs, values = self.to_csr(block_dense_values)
+#
+#         # Count non-zero elements per row in the block
+#         counts = crow_idxs[1:] - crow_idxs[:-1]
+#
+#         # Update nnz_per_row for the corresponding global rows
+#         # Using scatter_add for efficient batch updates
+#         self.nnz_per_row[block_row_offset:block_row_offset + n] += counts
+#
+#         # Calculate global column indices
+#         global_cols = col_idxs + block_col_offset
+#         self.col_indices.append(global_cols)
+#
+#         # Extract the non-zero values
+#         non_zero_values = values
+#         self.values.append(non_zero_values)
+#
+#     def build(self):
+#         """
+#         Builds and returns the sparse CSR tensor from the accumulated components.
+#
+#         Returns:
+#         - csr_tensor: torch.sparse_csr_tensor, the constructed sparse CSR tensor.
+#         """
+#         # Compute crow_indices by cumulatively summing nnz_per_row
+#         crow_indices = torch.cat([
+#             self.zero_ten,
+#             torch.cumsum(self.nnz_per_row, dim=0, dtype=self.dtype)
+#         ])
+#
+#         # Convert col_indices and values to tensors
+#         col_indices_tensor = torch.cat(self.col_indices).to(self.dtype)
+#         values_tensor = torch.cat(self.values)
+#
+#         # Create the sparse CSR tensor
+#         csr_tensor = torch.sparse_csr_tensor(
+#             crow_indices,
+#             col_indices_tensor,
+#             values_tensor,
+#             size=(self.total_rows, self.total_cols),
+#         )
+#         return csr_tensor
+#
+#     def reset(self):
+#         self.nnz_per_row = torch.tensor([0] * self.total_rows, device=self.device, dtype=torch.int32)  # Number of non-zero elements per row
+#         self.col_indices = []                # Column indices of non-zero elements
+#         self.values = []                     # Non-zero values
+#
+#     def to_csr(self, A_torch):
+#         """ Cupy is faster than torch """
+#         A_cp = cp.asarray(A_torch)
+#         A_csr_cp = cp.sparse.csr_matrix(A_cp)
+#
+#         crow_indices = torch.from_dlpack(A_csr_cp.indptr)
+#         col_indices = torch.from_dlpack(A_csr_cp.indices)
+#         values = torch.from_dlpack(A_csr_cp.data)
+#         return crow_indices, col_indices, values
 
 
 class CSRTransposer:
@@ -555,6 +555,160 @@ class CSRPermuter:
     def vector_permute(self, b):
         """ Precomputed permutation of a vector."""
         return b[self.perm_from]
+
+
+import torch
+
+
+class CSRSystemSimplifier:
+    """
+    Remove a fixed set of rows/columns from a CSR system and later rebuild the
+    full solution vector — *even if the removable rows have multiple candidate
+    columns in the pattern*.
+
+    Parameters
+    ----------
+    A_sample_csr : torch.sparse_csr_tensor
+        Any matrix whose crow/col indices match every system you will solve.
+        Its *values* are ignored.
+    rows_to_remove : 1-D Bool mask **or** 1-D Long index list
+        The rows that are always removed.
+    pivot_cols_for_rows : 1-D Long
+        `pivot_cols_for_rows[i]` is the column that will be non-zero in
+        `rows_to_remove[i]`.  Must be unique over the list.
+    """
+
+    # ─────────────────────────────── set-up ────────────────────────────────
+    def __init__(
+        self,
+        A_sample_csr: torch.Tensor,
+        rows_to_remove,
+        pivot_cols_for_rows: torch.Tensor,
+    ):
+        if not A_sample_csr.is_sparse_csr:
+            raise TypeError("A_sample_csr must be a torch.sparse_csr_tensor")
+
+        self.device, self.dtype = A_sample_csr.device, torch.float32
+        self.n_rows, self.n_cols = A_sample_csr.shape
+
+        # ---------- canonicalise rows_to_remove → mask + index list -------------
+
+        self.rows_to_remove = rows_to_remove.to(self.device)
+        self.single_nz_row_mask = torch.zeros(
+            self.n_rows, dtype=torch.bool, device=self.device
+        )
+        self.single_nz_row_mask[self.rows_to_remove] = True
+
+        # ---------- pivot columns (user-supplied) -------------------------------
+        self.pivot_cols = pivot_cols_for_rows.to(self.device)
+
+        if self.pivot_cols.numel() != self.rows_to_remove.numel():
+            raise ValueError("pivot_cols_for_rows must match rows_to_remove length")
+        if self.pivot_cols.unique().numel() != self.pivot_cols.numel():
+            raise ValueError("Pivot columns must be distinct")
+
+        # ---------- find pivot *positions* in the value array -------------------
+        # (done once; the indices are fixed by the pattern)
+        row_ptr = A_sample_csr.crow_indices()          # (n_rows+1,)
+        col_idx = A_sample_csr.col_indices()           # (nnz,)
+
+        pivot_pos = []
+        for r, c in zip(self.rows_to_remove.tolist(), self.pivot_cols.tolist()):
+            start, end = row_ptr[r].item(), row_ptr[r + 1].item()
+            match = (col_idx[start:end] == c).nonzero(as_tuple=False)
+            if match.numel() == 0:
+                raise ValueError(
+                    f"Row {r}: pivot column {c} not present in sample pattern"
+                )
+            # take the first (only) match in that slice
+            pivot_pos.append(start + match[0, 0].item())
+        self.pivot_positions = torch.tensor(
+            pivot_pos, dtype=torch.long, device=self.device
+        )
+
+        # ---------- masks & compact-index maps ----------------------------------
+        self.row_mask = ~self.single_nz_row_mask
+        self.col_mask = torch.ones(self.n_cols, dtype=torch.bool, device=self.device)
+        self.col_mask[self.pivot_cols] = False
+
+        self.n_rows_next = int(self.row_mask.sum())
+        self.n_cols_next = int(self.col_mask.sum())
+
+        self.col_compact = torch.full(
+            (self.n_cols,), -1, dtype=torch.long, device=self.device
+        )
+        self.col_compact[self.col_mask] = torch.arange(
+            self.n_cols_next, device=self.device
+        )
+
+        # ---------- fixed sparsity pattern of the reduced matrix ----------------
+        A_coo = A_sample_csr.to_sparse_coo()
+        r_all, c_all = A_coo.indices()
+        keep_nz = self.row_mask[r_all] & self.col_mask[c_all]
+
+        # compact rows: running count of kept rows, minus 1 (0-based)
+        row_running = torch.cumsum(self.row_mask.to(torch.int), 0) - 1
+        self._next_idx = torch.vstack(
+            [row_running[r_all[keep_nz]], self.col_compact[c_all[keep_nz]]]
+        )
+        self._keep_nz = keep_nz
+
+        # ---------- container for latest solved pivot values --------------------
+        self._latest_solved_vals = None
+
+    # ─────────────────────── build reduced system ─────────────────────────
+    def simplify_system(self, A_csr: torch.Tensor, b: torch.Tensor):
+        """
+        Returns
+        -------
+        A_next : torch.sparse_csr_tensor
+        b_next : torch.Tensor
+        solved_vals : torch.Tensor   (pivot values in row order)
+        """
+        # -------- pivot variable values ----------------------------------------
+        pivot_vals = A_csr.values()[self.pivot_positions]
+        solved_vals = b[self.rows_to_remove] / pivot_vals
+        self._latest_solved_vals = solved_vals  # cache for reconstruction
+
+        # -------- update RHS ----------------------------------------------------
+        solved_vec = torch.zeros(self.n_cols, dtype=self.dtype, device=self.device)
+        solved_vec[self.pivot_cols] = solved_vals
+        b_updated = b - (A_csr @ solved_vec)
+
+        # -------- build reduced matrix -----------------------------------------
+        new_vals = A_csr.values()[self._keep_nz]
+        A_next = torch.sparse_coo_tensor(
+            self._next_idx,
+            new_vals,
+            size=(self.n_rows_next, self.n_cols_next),
+            dtype=self.dtype,
+            device=self.device,
+        ).to_sparse_csr()
+
+        b_next = b_updated[self.row_mask]
+        return A_next, b_next
+
+    # ───────────────────── recover full solution ─────────────────────────
+    def get_full_solution(self, x_reduced: torch.Tensor, solved_vals=None):
+        """
+        Expand `x_reduced` (length = n_cols_next) into `x_full` (length = n_cols)
+        by inserting the pivot values.
+        """
+        if solved_vals is None:
+            if self._latest_solved_vals is None:
+                raise RuntimeError(
+                    "No cached pivot values. Supply `solved_vals`, or call "
+                    "the eliminator first."
+                )
+            solved_vals = self._latest_solved_vals
+
+        if x_reduced.numel() != self.n_cols_next:
+            raise ValueError("x_reduced length mismatch")
+
+        x_full = torch.zeros(self.n_cols, dtype=self.dtype, device=self.device)
+        x_full[self.col_mask] = x_reduced          # surviving columns
+        x_full[self.pivot_cols] = solved_vals      # eliminated columns
+        return x_full
 
 
 def csr_col_shift(csr_mat, n_cols):

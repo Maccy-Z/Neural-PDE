@@ -2,7 +2,7 @@ import torch
 import torch.func as func
 from abc import ABC, abstractmethod
 
-from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRConcatenator, CSRPermuter, plot_sparsity
+from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSystemSimplifier, plot_sparsity
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDEs import PDEFunc
 
@@ -56,6 +56,11 @@ class GraphPDECalc(PDECalc):
 
         self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
 
+        # Simplify solver system for linear solver
+        dirich_mask = self.U_graph.dirich_mask.flatten()
+        trivial_rows = torch.where(dirich_mask)[0]
+        self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
+
     @torch.no_grad()  # Gradient explicity handled.
     def jacobian(self, pde_aux_input=None):
         """
@@ -82,49 +87,30 @@ class GraphPDECalc(PDECalc):
         dRdD_main = dRdD_main.reshape(self.N_pdes * self.N_component, (self.N_deriv + 1) * self.N_component)  # [N_pde_, N_deriv_]
         resid_main = resid_main.reshape(self.N_pdes * self.N_component)  # [N_pde_]
 
-        # 4) Get Neumann preds / dRdD:
+        # 4) Reshape to cannonical ordering
+        dRdD = torch.zeros(((self.U_graph.N_us_tot * self.N_component), (self.N_deriv + 1) * self.N_component), device=self.device)
+        dRdD[self.pde_perm] = dRdD_main  # [N_Us_, N_deriv_]
+        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device)
+        residuals[self.pde_perm] = resid_main  # [N_Us_]
+
+        # 5) Add on Neumann preds / dRdD:
         if self.neumann_mode:
             bc_deriv_pred = self.U_graph.get_neum_preds()  # shape = [N_bc_derivs_]
             bc_deriv_true = self.U_graph.deriv_val
             resid_bc = bc_deriv_pred - bc_deriv_true  # shape = [N_bc_derivs_]
             dRdD_bc = self.deriv_calc_bc.dRdD  # shape = [N_bc_derivs, N_deriv_]
-
-        # 5) Reshape to cannonical ordering
-        dRdD = torch.zeros(((self.U_graph.N_us_tot * self.N_component), (self.N_deriv + 1) * self.N_component), device=self.device)
-        dRdD[self.pde_perm] = dRdD_main  # [N_Us_, N_deriv_]
-        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device)
-        residuals[self.pde_perm] = resid_main  # [N_Us_]
-        if self.neumann_mode:
             dRdD[self.bc_perm] = dRdD_bc
-            residuals[self.bc_perm] = resid_bc  # [N_Us_]
+            residuals[self.bc_perm] = resid_bc
 
-        # 4.1) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
+        # 6.1) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
         partials = []
         for d in range(self.N_component*(self.N_deriv+1)):
             prod = self.row_multipliers[d].mul(dDdU[d], dRdD[:, d])  # shape = [N_pde_, N_u_grad_]
             partials.append(prod)
 
-        # 4.2) Sum over k: sum_k partials_ijk
+        # 6.2) Sum over k: sum_k partials_ijk
         jacobian = self.csr_summer.sum(partials)
 
-        # if self.U_graph.neumann_mode:
-        #     # 5.1) Neumann boundary conditions: R = grad_n(u) - constant
-        #     bc_deriv_pred = self.U_graph.get_neum_preds()  # shape = [N_bc_derivs, N_comp]
-        #     bc_deriv_true = self.U_graph.deriv_val
-        #     bc_residuals = bc_deriv_pred - bc_deriv_true
-        #     # 5.2_ Neumann jacobian: dR/dD = 1, so select corresponding rows of jacobian.
-        #     bc_deriv_jac = self.deriv_calc_bc.jac_mat  # shape = [N_bc_derivs_, N_u_grad_]
-        #
-        #     # 6) Concatenate on jacobian and residuals
-        #     # residuals = [p0_0, p1_0, ..., p0_1, p1_1, ..., b0_0, b0_1, ..., b0_1, b_1_1, ...]
-        #     residuals = torch.cat([residuals, bc_residuals])  # shape = [N_pde_+N_bc_]
-        #     jacobian = self.concatenator.cat(jacobian, bc_deriv_jac)  # shape = [N_pde_+N_bc_, N_total_]
-        #     # 6)  Neuman Jacobian is concatenated onto the end of the main Jacobian. Permute it back to correct order
-        #     jacobian = self.permuter.matrix_permute(jacobian)
-        #     residuals = self.permuter.vector_permute(residuals)
-
-        # A = jacobian.to_dense().to_sparse_coo()
-        # U_graph = self.U_graph
         return jacobian, residuals
 
     def jacob_transpose(self):
@@ -154,3 +140,12 @@ class GraphPDECalc(PDECalc):
             residuals[self.bc_perm] = bc_residuals
 
         return residuals
+
+
+    def preproc_solve(self, jacobian: torch.Tensor, b: torch.Tensor):
+        """ Simplify the jacobian by removing trivial rows and columns. """
+        return self.simplifier.simplify_system(jacobian, b)
+
+    def postproc_solve(self, deltas: torch.Tensor):
+        """ Recover the full solution from the deltas. """
+        return self.simplifier.get_full_solution(deltas)

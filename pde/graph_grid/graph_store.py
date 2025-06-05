@@ -59,6 +59,7 @@ class Point:
     value: float|list[float] = None
     derivatives: list[Deriv] = None
     n_deriv: int = None
+    is_dirichlet: list[bool] = 1  # If DERIV, which derivatives are Dirichlet (i.e. orders == [(0, 0)]).
 
     def __post_init__(self):
         if P_Types.DERIV in self.point_type:
@@ -66,9 +67,17 @@ class Point:
         else:
             assert self.derivatives is None, "Derivatives must be None for non-DERIV points."
 
-        if self.derivatives is not None:
+        if P_Types.DERIV in self.point_type:
             self.n_deriv = len(self.derivatives)
 
+            # Mark out Dirichlet derivatives specified using Neuman bcs.
+            self.is_dirichlet = []
+            if self.derivatives is not None:
+                for d_idx, d in enumerate(self.derivatives):
+                    if d.orders == [(0, 0)]:
+                        self.is_dirichlet.append(True)
+                    else:
+                        self.is_dirichlet.append(False)
 
 
 

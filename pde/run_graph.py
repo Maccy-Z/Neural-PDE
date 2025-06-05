@@ -308,9 +308,9 @@ def plot_grads():
     exit("Done with forward solve")
 
     losses, grads = [], []
-    X_range = torch.linspace(-0.65, -0.89, 50)
+    X_range = torch.linspace(0., -0.1, 50)
     for i in X_range:
-        U_graph.reset()
+        # U_graph.reset()
         pde_fn.a.data[0] = i.to(device=cfg.DEVICE)
 
         pde_adj.forward_solve()
@@ -324,7 +324,7 @@ def plot_grads():
 
         pde_fn.zero_grad()
 
-        break
+        # break
 
     losses = torch.tensor(losses)
     grads = torch.tensor(grads)
