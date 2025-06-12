@@ -266,18 +266,18 @@ def true_pde():
 
     # exit("Done with forward solve")
 
-    optim = torch.optim.SGD(pde_fn.parameters(), lr=0.5, momentum=0.)
+    optim = torch.optim.SGD(pde_fn.parameters(), lr=0.1, momentum=0.8)
 
-    for i in range(40):
+    for i in range(100):
         pde_adj.forward_solve()
         loss = pde_adj.adjoint_solve()
         pde_adj.backward()
         optim.step()
 
         c_print(f'a = {pde_fn.a.detach().cpu()}, grad = {pde_fn.a.grad.cpu()}', color="bright_yellow")
-        print(f'{loss = :.3g}')
+        print(f'{loss = :.5g}')
 
-        if i % 2 == 0:
+        if i % 5 == 0:
             pde_adj.plot_interp()
 
         optim.zero_grad()
@@ -305,10 +305,10 @@ def plot_grads():
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
-    exit("Done with forward solve")
+    # exit("Done with forward solve")
 
     losses, grads = [], []
-    X_range = torch.linspace(0., -0.1, 50)
+    X_range = torch.linspace(0., -0.9, 50)
     for i in X_range:
         # U_graph.reset()
         pde_fn.a.data[0] = i.to(device=cfg.DEVICE)
@@ -341,9 +341,9 @@ def plot_grads():
 
 
 if __name__ == "__main__":
-    setup_logging(debug=True)
+    setup_logging(debug=2)
     # torch.manual_seed(1)
 
-    # true_pde()
-    plot_grads()
+    true_pde()
+    # plot_grads()
 

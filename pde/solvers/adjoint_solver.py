@@ -35,9 +35,9 @@ class PDEAdjoint:
 
         with Timer(text="Adjoint solve: {:.4f}s", logger=logging.debug):
             # Free memory of dense jacobian before solving adjoint equation.
-            jac_T_proc, loss_u = self.adj_lin_solver.preproc_tensor(jac_T, loss_u)
+            # jac_T_proc, loss_u = self.adj_lin_solver.preproc_tensor(jac_T, loss_u)
             # del jac_T
-            adjoint, _ = self.adj_lin_solver.solve(jac_T_proc, loss_u)
+            adjoint, _ = self.adj_lin_solver.solve(jac_T, loss_u)
 
             residual = (jac_T @ adjoint - loss_u).norm()
         logging.debug(f'Adjoint residual: {residual:.3g}')

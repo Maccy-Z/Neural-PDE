@@ -49,7 +49,6 @@ class LinearSolver:
         x = self.postproc_tensor(x)
         return x, resid
 
-
     def cuda_sparse(self, A_cp: cp.array, b: torch.Tensor):
         #A_cupy = cp.from_dlpack(A)
         b_cupy = cp.from_dlpack(b)
@@ -89,8 +88,8 @@ class LinearSolver:
 
         # if self.inv_perm is not None:
         #     x = x[self.inv_perm]
-        if self.col_norms is not None:
-            x = x / self.col_norms
+        # if self.col_norms is not None:
+        #     x = x / self.col_norms
         # c_print(f'{b = }', color="bright_blue")
         # c_print(f'{x = }', color="bright_blue")
 
@@ -118,8 +117,6 @@ class LinearSolver:
 
     def preproc_tensor(self, A: torch.Tensor, b: torch.Tensor):
         """ Preprocess A matrix before solving. Do universal preprocessing, then solver specific preprocessing. """
-        indptr, indices, values = csr_compress(A)
-        A = torch.sparse_csr_tensor(crow_indices=indptr, col_indices=indices, values=values, size=A.size(), device=A.device)
         return self.preproc(A, b)
 
     def postproc_tensor(self, x: torch.Tensor):
@@ -127,18 +124,19 @@ class LinearSolver:
 
     def preproc_default(self, A: torch.Tensor, b: torch.Tensor):
         """ Default preprocessing. """
-
+        indptr, indices, values = csr_compress(A)
+        A = torch.sparse_csr_tensor(crow_indices=indptr, col_indices=indices, values=values, size=A.size(), device=A.device)
         return A, b
 
     def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> sp.csr_matrix:
         """ Convert a torch tensor to a cupy sparse tensor """
-        from scipy.sparse.csgraph import reverse_cuthill_mckee
-        import scipy.sparse as spsp
-        from pde.utils_sparse import plot_sparsity
-        from cupyx.scipy.sparse.linalg import spilu
+        # from scipy.sparse.csgraph import reverse_cuthill_mckee
+        # import scipy.sparse as spsp
+        # from pde.utils_sparse import plot_sparsity
+        # from cupyx.scipy.sparse.linalg import spilu
 
-        self.inv_perm = None
-        self.col_norms = None
+        # self.inv_perm = None
+        # self.col_norms = None
 
         if A.is_sparse_csr:
             # A = A.to_dense()

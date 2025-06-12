@@ -137,7 +137,7 @@ class FluidLearned(PDEFunc):
         dpdx = dudx[2]
         dpdy = dudy[2]
         resid_x = -dpdx + laplace_Vx - advect_x + self.a[0]
-        resid_y = -dpdy + laplace_Vy - advect_y #+ self.a[1]
+        resid_y = -dpdy + laplace_Vy - advect_y + self.a[1]
         divergence = dudx[0] + dudy[1]
 
         # resid_x = u[0] - self.a

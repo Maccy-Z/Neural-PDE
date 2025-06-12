@@ -17,8 +17,9 @@ class LinMode(StrEnum):
 class FwdConfig:
     # Newton Raphson PDE solver settings
     N_iter: int = 10
-    lr: float = 0.5
+    # lr: float = 0.5
     solve_acc: float = 0.001
+    dU_clamp: float = 1  # maximum change in U per iteration
 
     # Forward linear solver settings
     # lin_mode: LinMode = LinMode.SPARSE
@@ -106,7 +107,7 @@ class Config:
 
     # Phyiscal Parameters
     mu = 1.
-    rho = 2000
+    rho = 1000
 
     # Grid settings
     xmin: float = 0
