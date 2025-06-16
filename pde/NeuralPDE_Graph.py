@@ -43,7 +43,8 @@ class NeuralPDEGraph:
     def forward_solve(self, aux_input=None):
         """ Solve PDE forward problem. """
 
-        self.newton_solver.find_pde_root(aux_input)
+        converged = self.newton_solver.find_pde_root(aux_input)
+        return converged
 
     def adjoint_solve(self):
         """ Solve for adjoint """

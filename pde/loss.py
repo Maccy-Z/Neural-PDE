@@ -45,7 +45,7 @@ class MSELoss(Loss):
 class MSELoss2(Loss):
     def __init__(self, Us_true):
         super().__init__()
-        self.Us_true = Us_true
+        self.Us_true = Us_true.flatten()
 
     def forward(self, Us_pred: torch.Tensor):
         Us_pred.requires_grad_(True)

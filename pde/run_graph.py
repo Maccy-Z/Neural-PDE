@@ -8,7 +8,7 @@ from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
-from pdes.PDEs import HeatLearned, Fluid, FluidLearned, Heat
+from pdes.PDEs import HeatLearned, Fluid, FluidLearned, Heat, NNFunc
 from pde.utils import setup_logging
 from pde.loss import DummyLoss, MSELoss2, MaskLoss
 from pde.mesh_generation.generate_mesh import gen_points_full
@@ -250,34 +250,79 @@ def true_pde():
     U_graph, triangles = mesh_graph(cfg)
     # U_graph, triangles = mesh_heat(cfg)
 
-    us_all, _ = U_graph.get_all_us_Xs()
+    Us_all, _ = U_graph.get_all_us_Xs()
 
-    pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
+    pde_fn = Fluid(cfg, device=cfg.DEVICE)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
     # Us_target = U_graph.pde_mask.float()
     # Us_target = torch.repeat_interleave(Us_target, U_graph.N_comp, dim=0)
-    loss_fn = DummyLoss() #MaskLoss(Us_target)
+    loss_fn = DummyLoss()  # MaskLoss(Us_target)
 
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
+    Us_all, updt_mask, _ = U_graph.get_us_mask()
+    Us = Us_all[updt_mask]
+
+    with open("./Us_solution.pth", "wb") as f:
+        torch.save(Us, f)
+    # print(f'{Us.shape = }, {Us_all.shape = }')
+
+def optim_pde():
+    cfg = Config()
+    # U_graph, triangles = load_graph(cfg)
+    U_graph, triangles = mesh_graph(cfg)
+    # U_graph, triangles = mesh_heat(cfg)
+
+    Us_true = torch.load("./Us_solution.pth")
+    U_graph.set_grid(Us_true.clone())
+    pde_fn = NNFunc(cfg, device=cfg.DEVICE)
+    # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
+
+    loss_fn = MSELoss2(Us_true)
+
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
+
+    # pde_adj.forward_solve()
+    pde_adj.forward_solve()
+
+    pde_adj.plot_interp(title="Initial solution")
+    # exit(3)
     # exit("Done with forward solve")
 
-    optim = torch.optim.SGD(pde_fn.parameters(), lr=0.1, momentum=0.8)
+    optim = torch.optim.Adam(pde_fn.parameters(), lr=0.02, betas=(0.9, 0.99))
 
     for i in range(100):
-        pde_adj.forward_solve()
-        loss = pde_adj.adjoint_solve()
-        pde_adj.backward()
-        optim.step()
+        # U_graph.set_grid(Us_true.clone())
 
-        c_print(f'a = {pde_fn.a.detach().cpu()}, grad = {pde_fn.a.grad.cpu()}', color="bright_yellow")
+        converged = pde_adj.forward_solve()
+        loss = pde_adj.adjoint_solve()
         print(f'{loss = :.5g}')
 
-        if i % 5 == 0:
+        for param_group in optim.param_groups:
+            if converged['iter'] < 2:
+                param_group['lr'] = min(param_group['lr'] * 1.1, 1000000.)
+                print("lr = ", param_group['lr'])
+
+            elif converged['iter'] >= 5:
+                param_group['lr'] = max(param_group['lr'] * 0.5, 0.00001)
+                print(param_group['lr'])
+
+            # else:
+            #     param_group['lr'] = param_group['lr'] * 0.9
+            # print(converged['iter'], param_group['lr'])
+
+        pde_adj.backward()
+        # torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.25)
+        optim.step()
+
+        # for n, p in pde_fn.named_parameters():
+        #     c_print(f'{n=}: {p.cpu() = },', color="green")
+
+        if i % 10 == 0:
             pde_adj.plot_interp()
 
         optim.zero_grad()
@@ -296,9 +341,10 @@ def plot_grads():
     pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
-    # Us_target = U_graph.pde_mask.float()
-    # Us_target = torch.repeat_interleave(Us_target, U_graph.N_comp, dim=0)
-    loss_fn = DummyLoss() #MaskLoss(Us_target)
+    Us_true = torch.load("./Us_solution.pth")
+    loss_fn = MSELoss2(Us_true)
+
+    # loss_fn = DummyLoss()
 
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
@@ -308,7 +354,7 @@ def plot_grads():
     # exit("Done with forward solve")
 
     losses, grads = [], []
-    X_range = torch.linspace(0., -0.9, 50)
+    X_range = torch.linspace(0, 1000, 50)
     for i in X_range:
         # U_graph.reset()
         pde_fn.a.data[0] = i.to(device=cfg.DEVICE)
@@ -341,9 +387,10 @@ def plot_grads():
 
 
 if __name__ == "__main__":
-    setup_logging(debug=2)
+    setup_logging(debug=1)
     # torch.manual_seed(1)
 
-    true_pde()
+    optim_pde()
     # plot_grads()
+    # true_pde()
 

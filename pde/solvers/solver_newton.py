@@ -153,7 +153,7 @@ class SolverNewton:
 
                 # deltas, lin_resid_norm = self.lin_solver.solve(jacobian, old_resid)
 
-                deltas = deltas.clamp(min=-self.cfg.dU_clamp, max=self.cfg.dU_clamp)
+                # deltas = deltas.clamp(min=-self.cfg.dU_clamp, max=self.cfg.dU_clamp)
                 # print(f'{deltas.norm() = }, {deltas.abs().max() = }')
 
             t_solve = timer.last
@@ -163,7 +163,6 @@ class SolverNewton:
                 zero_alpha_norm = old_resid.norm()
                 resid_fn = lambda alpha: self._test_residual(alpha, deltas, Us_init, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
-
                 dUs = deltas * best_alpha #self.lr
                 self.U_graph.update_grid(dUs)
 
@@ -177,13 +176,13 @@ class SolverNewton:
                 max_abs_residual = torch.max(new_resid.abs())
 
             t_post = timer.last
-            logging.info(f'Newton solver Iteration {i}')
+            logging.info(f'Newton solver Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
             logging.debug(f'    Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s, postproc time: {t_post:.4f}s')
-            logging.info(f'    Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
 
 
             if new_resid_norm < self.solve_acc:
-                logging.info(f"Newton solver converged early at iteration {i+1}")
-                return
+                logging.debug(f"Newton solver converged early at iteration {i+1}")
+                return {"converged": True, "iter": i}
 
         logging.warning("Newton solver did not converge within the maximum iterations.")
+        return {"converged": False, "iter": self.N_iter}

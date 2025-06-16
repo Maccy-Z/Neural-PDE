@@ -19,7 +19,7 @@ class FwdConfig:
     N_iter: int = 10
     # lr: float = 0.5
     solve_acc: float = 0.001
-    dU_clamp: float = 1  # maximum change in U per iteration
+    dU_clamp: float = 0.5  # maximum change in U per iteration
 
     # Forward linear solver settings
     # lin_mode: LinMode = LinMode.SPARSE
