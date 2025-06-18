@@ -82,7 +82,7 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps, min_angle=None):
 
 
 def gen_points_full():
-    min_area = 1e-3
+    min_area = 3e-3
     max_area = 3e-3
     xmin, xmax = 0, 2
     ymin, ymax = 0.0, 1.5

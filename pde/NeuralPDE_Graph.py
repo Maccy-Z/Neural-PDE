@@ -25,18 +25,29 @@ class NeuralPDEGraph:
         # pde_forward = PDEForward(U_graph, pde_fn)
         pde_calc = GraphPDECalc(U_graph, pde_fn)
 
+        # TODO: Testing
+        # jac, resid = pde_calc.jacobian()
+        #
+        # print(jac)
+        # l = jac.values().norm()
+        # l.backward()
+        #
+        # exit(4)
+
+
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
         newton_solver = SolverNewton(U_graph, fwd_lin_solver, pde_calc=pde_calc, cfg=fwd_cfg)
 
         # # Adjoint solver
         adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
-        pde_adjoint = PDEAdjoint(U_graph, pde_fn, pde_calc, adj_lin_solver, loss_fn)
+        pde_adjoint = PDEAdjoint(U_graph, pde_calc, adj_lin_solver, loss_fn)
 
         self.pde_fn = pde_fn
         self.U_graph = U_graph
         self.newton_solver = newton_solver
         self.pde_adjoint = pde_adjoint
+        self.pde_calc = pde_calc
 
         self.triangles = triangles
 
@@ -63,6 +74,38 @@ class NeuralPDEGraph:
         self.adjoint = None
 
         return residuals
+
+
+    def single_step(self):
+        """ Perform a single step of the Newton solver and compute the exact adjoint:
+                U_old - U_new = dU = J^-1(u_old, theta) f(U_old, theta)
+                J^T lambda = dL/dtheta|(U_new)
+                dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
+         """
+        deltas, J, old_resid = self.newton_solver.newton_step()
+        Us_new = self.U_graph.get_test_update(deltas)
+        adjoint, _ = self.pde_adjoint.adjoint_solve(Us_new)
+        deltas = deltas.detach()
+
+        # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
+
+        # adj_f = adjoint @ (J @ deltas -old_resid)
+        # adj_f.backward()
+        print(J)
+        J_delta = J @ deltas #- old_resid
+        J_delta.backward(adjoint)
+
+        print()
+        print()
+        self.U_graph.set_grid(Us_new)
+        final_loss = self.loss_fn(self.U_graph.get_all_us_Xs()[0])
+        print(f'{final_loss = }')
+        for n, p in self.pde_fn.named_parameters():
+            print(n, p.grad)
+
+
+        exit(4)
+
 
     def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):
         """ Plot the interpolated solution. """
@@ -101,11 +144,13 @@ class NeuralPDEGraph:
         us_all, Xs = self.U_graph.get_all_us_Xs()
         plot_interp(Xs, value, triangles=self.U_graph.tri)
 
+
     def plot_points(self, values, Xlims=None, show_index=False, title=""):
         Xlims = None # [(0,0.2), (0, 1.5)]
         _, Xs = self.U_graph.get_all_us_Xs()
 
         plot_points(Xs, values, Xlims=Xlims, show_index=show_index, title=title)
+
 
     def _plot_points(self, values, Xlims=None):
         _, Xs = self.U_graph.get_all_us_Xs()

@@ -32,6 +32,18 @@ class PDEFunc(torch.nn.Module, ABC):
         """
         pass
 
+class Dummy(PDEFunc):
+    def __init__(self, cfg: Config, device='cpu'):
+        super().__init__(cfg=cfg, device=device)
+        self.to(device)
+
+        self.a = nn.Parameter(torch.tensor(-0.99, device=device), requires_grad=True)
+
+
+    def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
+        """ Dummy PDE function for testing. """
+
+        return u_dus[0] * (-0.1 * self.a + 1) + self.a  # Return a constant value of 10 for all components
 
 class Heat(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
@@ -48,6 +60,7 @@ class Heat(PDEFunc):
         resid = d2udy2 + d2udx2
         # resid = u[0] - x
         return resid
+
 
 class HeatLearned(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
@@ -115,7 +128,7 @@ class FluidLearned(PDEFunc):
 
         self.mu = cfg.mu
         self.rho = cfg.rho
-        self.a = nn.Parameter(torch.tensor([0., 0.], device=device), requires_grad=True)
+        self.a = nn.Parameter(torch.tensor([50., 50.], device=device), requires_grad=True)
 
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
@@ -137,9 +150,9 @@ class FluidLearned(PDEFunc):
         laplace_Vy = self.mu * (d2udx2[1] + d2udy2[1])
         dpdx = dudx[2]
         dpdy = dudy[2]
-        resid_x = -dpdx + laplace_Vx - advect_x #+ self.a[0]
-        resid_y = -dpdy + laplace_Vy - advect_y #+ self.a[1] #* self.a[0]
-        divergence = dudx[0] + dudy[1] #+ 0.01*self.a[2]
+        resid_x = -dpdx + laplace_Vx - advect_x + self.a[0] * (u[0] - 10) ** 2
+        resid_y = -dpdy + laplace_Vy - advect_y + self.a[1] * (u[0] - 10) ** 2#* self.a[0]
+        divergence = dudx[0] + dudy[1] + 0.01*self.a[1] * (u[0] - 10) ** 2
 
         # resid_x = u[0] - self.a
         # resid_y = u[1] #-dpdy + laplace_Vy  #+ self.a
@@ -154,7 +167,7 @@ class NNFunc(PDEFunc):
     def __init__(self, cfg, device='cuda'):
         super().__init__(cfg=cfg, device=device)
 
-        self.lin1 = nn.Linear(2, 32)
+        self.lin1 = nn.Linear(2, 3)
         self.lin2 = nn.Linear(32, 3)
 
         nn.init.zeros_(self.lin2.bias)

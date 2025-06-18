@@ -9,10 +9,8 @@ from pde.pdes.PDEs import PDEFunc
 from pde.loss import Loss
 
 
-
 class PDEAdjoint:
-    def __init__(self, U_graph: UGraph, pde_func: PDEFunc, pde_calc: PDECalc, adj_lin_solver, loss_fn: Loss):
-        self.pde_func = pde_func
+    def __init__(self, U_graph: UGraph, pde_calc: PDECalc, adj_lin_solver, loss_fn: Loss):
         self.U_graph = U_graph
         self.pde_calc = pde_calc
         self.adj_lin_solver = adj_lin_solver
@@ -20,24 +18,32 @@ class PDEAdjoint:
 
         self.DEVICE = U_graph.device
 
-    def adjoint_solve(self):
+    def adjoint_solve(self, Us_now=None):
         """ Solve for adjoint.
             dgdU = J^T * adjoint
+            Us_now: Optional. If different Us is needed to compute loss gradient than the jacobian J(Us, theta)
+                    shape = [N_us_grad, N_comp]
          """
-        jac_T = self.pde_calc.jacob_transpose()    # Shape = [N_eq, N_us]
+
+        with torch.no_grad():
+            jac_T = self.pde_calc.jacob_transpose()    # Shape = [N_eq, N_us]
 
         # One adjoint value for each trained u value, including boundary points.
-        us, updt_mask, _ = self.U_graph.get_us_mask()
-        us_grad = us[updt_mask].flatten()
+        if Us_now is None:
+            Us, updt_mask, _ = self.U_graph.get_us_mask()
+            Us_grad = Us[updt_mask].flatten()
 
-        loss = self.loss_fn(us_grad)
+        else:
+            Us_grad = Us_now.flatten()
+
+        loss = self.loss_fn(Us_grad)
         loss_u = self.loss_fn.gradient()
 
         with Timer(text="Adjoint solve: {:.4f}s", logger=logging.debug):
             # Free memory of dense jacobian before solving adjoint equation.
             # jac_T_proc, loss_u = self.adj_lin_solver.preproc_tensor(jac_T, loss_u)
             # del jac_T
-            adjoint, _ = self.adj_lin_solver.solve(jac_T, loss_u)
+            adjoint = self.adj_lin_solver.solve(jac_T, loss_u)
 
             residual = (jac_T @ adjoint - loss_u).norm()
         logging.debug(f'Adjoint residual: {residual:.3g}')

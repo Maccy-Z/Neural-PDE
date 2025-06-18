@@ -125,6 +125,14 @@ class SolverNewton:
         self.U_graph.set_grid(Us_init)
         return pde_resid_norm
 
+    def newton_step(self, aux_input=None):
+        jacobian, old_resid = self.pde_calc.jacobian(aux_input)
+        jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
+        deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
+        deltas = self.pde_calc.postproc_solve(deltas)
+        return deltas, jacobian, old_resid
+
+
     @torch.no_grad()
     def find_pde_root(self, aux_input=None):
         """
@@ -134,7 +142,7 @@ class SolverNewton:
         :param aux_input: Additional conditioning for the PDE
         """
         timer = Timer(name="timer", logger=None)
-
+        converged, last_i = False, 0
         best_alpha = 1.0
 
         for i in range(self.N_iter):
@@ -182,7 +190,10 @@ class SolverNewton:
 
             if new_resid_norm < self.solve_acc:
                 logging.debug(f"Newton solver converged early at iteration {i+1}")
-                return {"converged": True, "iter": i}
+                converged = True
+                last_i = i
+                break
 
         logging.warning("Newton solver did not converge within the maximum iterations.")
-        return {"converged": False, "iter": self.N_iter}
+
+        return {"converged": converged, "iter": last_i}

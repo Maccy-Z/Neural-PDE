@@ -50,9 +50,10 @@ class MSELoss2(Loss):
     def forward(self, Us_pred: torch.Tensor):
         Us_pred.requires_grad_(True)
         self.Us_pred = Us_pred
-        loss = torch.mean((self.Us_pred - self.Us_true)**2)
-        self.loss_out = loss
 
+        error = Us_pred - self.Us_true
+        loss = (error ** 2).mean()
+        self.loss_out = loss
         return loss
 
 
@@ -63,7 +64,7 @@ class DummyLoss(Loss):
     def forward(self, Us_pred):
         Us_pred.requires_grad_(True)
         self.Us_pred = Us_pred
-        loss = torch.mean(self.Us_pred ** 2)
+        loss = torch.sum(self.Us_pred ** 2)
         self.loss_out = loss
 
         return loss

@@ -61,7 +61,7 @@ class GraphPDECalc(PDECalc):
         trivial_rows = torch.where(dirich_mask)[0]
         self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
-    @torch.no_grad()  # Gradient explicity handled.
+    #@torch.no_grad()  # Gradient explicity handled.
     def jacobian(self, pde_aux_input=None):
         """
             Compute jacobian dR/dU = dR/dD * dD/dU.
@@ -110,6 +110,7 @@ class GraphPDECalc(PDECalc):
 
         # 6.2) Sum over k: sum_k partials_ijk
         jacobian = self.csr_summer.sum(partials)
+
 
         return jacobian, residuals
 

@@ -8,7 +8,7 @@ from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
-from pdes.PDEs import HeatLearned, Fluid, FluidLearned, Heat, NNFunc
+from pdes.PDEs import HeatLearned, Fluid, FluidLearned, Heat, NNFunc, Dummy
 from pde.utils import setup_logging
 from pde.loss import DummyLoss, MSELoss2, MaskLoss
 from pde.mesh_generation.generate_mesh import gen_points_full
@@ -85,9 +85,9 @@ def boundary_normals(points, triangles, bc_edges):
     return normals_at_v
 
 
-def mesh_heat(cfg):
+def mesh_heat(cfg, max_degree=2, grad_neigh=25):
     cfg = Config()
-    N_comp = 3
+    N_comp = 1
     Xs, triangles, (int_edges, bc_edges), p_tags = gen_points_full()
     Xs = torch.from_numpy(Xs).float()
     triangles = torch.from_numpy(triangles).int()
@@ -111,8 +111,8 @@ def mesh_heat(cfg):
         value = [x for _ in range(N_comp)]
 
         deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0, weights=[1]),
-                 Deriv(comp=[1], orders=[(0, 0)], value=0, weights=[1]),
-                 Deriv(comp=[2], orders=[(0, 0)], value=0, weights=[1]),
+                 # Deriv(comp=[1], orders=[(0, 0)], value=0, weights=[1]),
+                 # Deriv(comp=[2], orders=[(0, 0)], value=0, weights=[1]),
                  ]
 
         if tag == "Normal":
@@ -129,18 +129,18 @@ def mesh_heat(cfg):
         elif tag == "circle":
             # value = [1. for _ in range(N_comp)]
             # Xs_all[i] = Point(PT.DirichBC, X, value=value)
-            n_hat = normals[i].tolist()
-            deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=-1., weights=[n_hat[0], n_hat[1]]),
-                     Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]]),
-                     Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=-3., weights=[n_hat[0], n_hat[1]])
-                     ]
+            # n_hat = normals[i].tolist()
+            # deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=-1., weights=[n_hat[0], n_hat[1]]),
+            #          # Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]]),
+            #          # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=-3., weights=[n_hat[0], n_hat[1]])
+            #          ]
 
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         else:
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=25, max_degree=2, tri=triangles, device=cfg.DEVICE)
+    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.DEVICE)
 
     with open("save_u_graph.pth", "wb") as f:
         torch.save((U_graph, triangles), f)
@@ -149,7 +149,7 @@ def mesh_heat(cfg):
     return U_graph, triangles
 
 
-def mesh_graph(cfg):
+def mesh_graph(cfg, max_degree=2, grad_neigh=25):
     N_comp = 3
     Xs, triangles, (int_edges, bc_edges), p_tags  = gen_points_full()
     Xs = torch.from_numpy(Xs).float()
@@ -230,7 +230,7 @@ def mesh_graph(cfg):
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=25, max_degree=2, tri=triangles, device=cfg.DEVICE)
+    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.DEVICE)
 
     with open("save_u_graph.pth", "wb") as f:
         torch.save((U_graph, triangles), f)
@@ -279,23 +279,23 @@ def optim_pde():
 
     Us_true = torch.load("./Us_solution.pth")
     U_graph.set_grid(Us_true.clone())
-    pde_fn = NNFunc(cfg, device=cfg.DEVICE)
-    # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
-
     loss_fn = MSELoss2(Us_true)
+    U_graph.set_grid(Us_true.clone())
+
+    pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
 
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
-    # pde_adj.forward_solve()
+    U_graph.set_grid(Us_true.clone())
     pde_adj.forward_solve()
 
     pde_adj.plot_interp(title="Initial solution")
-    # exit(3)
+    exit(3)
     # exit("Done with forward solve")
 
     optim = torch.optim.Adam(pde_fn.parameters(), lr=0.02, betas=(0.9, 0.99))
 
-    for i in range(100):
+    for i in range(1):
         # U_graph.set_grid(Us_true.clone())
 
         converged = pde_adj.forward_solve()
@@ -386,11 +386,44 @@ def plot_grads():
     print(grads)
 
 
+def test():
+    cfg = Config()
+    # U_graph, triangles = load_graph(cfg)
+    # U_graph, triangles = mesh_graph(cfg, max_degree=1, grad_neigh=9)
+    U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
+    U_graph.set_grid(torch.ones_like(U_graph.get_all_us_Xs()[0]) * 0.1)
+    Us_all, _ = U_graph.get_all_us_Xs()
+
+    pde_fn = Dummy(cfg, device=cfg.DEVICE)
+    # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
+
+    # Us_target = U_graph.pde_mask.float()
+    # Us_target = torch.repeat_interleave(Us_target, U_graph.N_comp, dim=0)
+    loss_fn = DummyLoss()  # MaskLoss(Us_target)
+
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
+
+
+    pde_adj.single_step()
+
+    # pde_adj.forward_solve()
+    # pde_adj.plot_interp(title="Initial solution")
+    #
+    # Us_all, updt_mask, _ = U_graph.get_us_mask()
+    # Us = Us_all[updt_mask]
+    #
+    # with open("./Us_solution.pth", "wb") as f:
+    #     torch.save(Us, f)
+
+
+
 if __name__ == "__main__":
     setup_logging(debug=1)
     # torch.manual_seed(1)
 
-    optim_pde()
+    test()
+
+    # optim_pde()
     # plot_grads()
     # true_pde()
 

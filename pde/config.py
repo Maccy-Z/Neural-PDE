@@ -85,7 +85,7 @@ class AdjointConfig:
     # N_iter: int = 1
 
     # Linear solver settings
-    lin_mode: LinMode = LinMode.AMGX
+    lin_mode: LinMode = LinMode.DENSE
     maxiter: int = 500
     restart: int = 100
     rtol: float = 1e-4

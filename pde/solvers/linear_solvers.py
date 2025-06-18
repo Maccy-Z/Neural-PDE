@@ -43,11 +43,11 @@ class LinearSolver:
             elif mode == LinMode.SPARSE:
                 self.solver = self.cpu_sparse
 
-    def solve(self, A, b):
+    def solve(self, A, b) -> torch.Tensor:
         A, b = self.preproc_tensor(A, b)
-        x, resid = self.solver(A, b)
+        x = self.solver(A, b)
         x = self.postproc_tensor(x)
-        return x, resid
+        return x
 
     def cuda_sparse(self, A_cp: cp.array, b: torch.Tensor):
         #A_cupy = cp.from_dlpack(A)
@@ -59,7 +59,7 @@ class LinearSolver:
         x = sp_linalg.spsolve(A_cp, b_cupy)
 
         x = torch.from_dlpack(x)
-        return x, 0
+        return x
 
     def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
         A = A.to_dense()
@@ -67,7 +67,7 @@ class LinearSolver:
         # c_print(A.shape, color="green")
 
         deltas = torch.linalg.solve(A, b)
-        return deltas, 0
+        return deltas
 
     def cpu_sparse(self, A: torch.Tensor, b: torch.Tensor):
         A = A.numpy()
@@ -94,7 +94,7 @@ class LinearSolver:
         # c_print(f'{x = }', color="bright_blue")
 
 
-        return x, resid
+        return x
 
     def cuda_iterative(self, A_cp: cp.array, b: torch.Tensor):
         b_cp = cp.from_dlpack(b)
