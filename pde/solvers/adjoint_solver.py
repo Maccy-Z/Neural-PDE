@@ -7,10 +7,11 @@ from pde.pdes.PDECalc import PDECalc
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDEs import PDEFunc
 from pde.loss import Loss
+from pde.solvers.linear_solvers import LinearSolver
 
 
 class PDEAdjoint:
-    def __init__(self, U_graph: UGraph, pde_calc: PDECalc, adj_lin_solver, loss_fn: Loss):
+    def __init__(self, U_graph: UGraph, pde_calc: PDECalc, adj_lin_solver: LinearSolver, loss_fn: Loss):
         self.U_graph = U_graph
         self.pde_calc = pde_calc
         self.adj_lin_solver = adj_lin_solver
@@ -31,22 +32,23 @@ class PDEAdjoint:
         # One adjoint value for each trained u value, including boundary points.
         if Us_loss is None:
             Us, updt_mask, _ = self.U_graph.get_us_mask()
-            Us_grad = Us[updt_mask].flatten()
-
+            Us_grad = Us[updt_mask]
         else:
-            Us_grad = Us_loss.flatten()
+            Us_grad = Us_loss
 
         loss = self.loss_fn(Us_grad)
-        loss_u = self.loss_fn.gradient()
+        loss_u = self.loss_fn.gradient().flatten()
 
-        with Timer(text="Adjoint solve: {:.4f}s", logger=logging.debug):
+        with Timer(text="Adjoint solve: {:.4f}s", logger=None) as timer:
             # Free memory of dense jacobian before solving adjoint equation.
             # jac_T_proc, loss_u = self.adj_lin_solver.preproc_tensor(jac_T, loss_u)
             # del jac_T
             adjoint = self.adj_lin_solver.solve(jac_T, loss_u)
 
             residual = (jac_T @ adjoint - loss_u).norm()
-        logging.debug(f'Adjoint residual: {residual:.3g}')
+
+        t_adjoint = timer.last
+        logging.debug(f'Adjoint residual: {residual:.3g}, time: {t_adjoint:.3g}s')
 
         return adjoint, loss
 

@@ -23,32 +23,18 @@ class NeuralPDEGraph:
         self.cfg = cfg
         self.DEVICE = cfg.DEVICE
 
-        # pde_forward = PDEForward(U_graph, pde_fn)
-        pde_calc = GraphPDECalc(U_graph, pde_fn)
-
-        # TODO: Testing
-        # jac, resid = pde_calc.jacobian()
-        #
-        # print(jac)
-        # l = jac.values().norm()
-        # l.backward()
-        #
-        # exit(4)
-
+        self.pde_calc = GraphPDECalc(U_graph, pde_fn)
 
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
-        newton_solver = SolverNewton(U_graph, fwd_lin_solver, pde_calc=pde_calc, cfg=fwd_cfg)
+        self.newton_solver = SolverNewton(U_graph, self.pde_calc, fwd_lin_solver, cfg=fwd_cfg)
 
-        # # Adjoint solver
+        # Adjoint solver
         adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
-        pde_adjoint = PDEAdjoint(U_graph, pde_calc, adj_lin_solver, loss_fn)
+        self.pde_adjoint = PDEAdjoint(U_graph, self.pde_calc, adj_lin_solver, loss_fn)
 
         self.pde_fn = pde_fn
         self.U_graph = U_graph
-        self.newton_solver = newton_solver
-        self.pde_adjoint = pde_adjoint
-        self.pde_calc = pde_calc
 
         self.triangles = triangles
 
@@ -84,32 +70,31 @@ class NeuralPDEGraph:
                 dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
          """
         Us_old = self.U_graph.get_all_us_Xs()[0]
-        init_loss = self.loss_fn(Us_old)
+        # init_loss = self.loss_fn(Us_old)
 
 
-        with Timer( text="Newton step and adjoint: {:.4f}s"):
-            # Compute at u_old
-            deltas, J, old_resid = self.newton_solver.newton_step()
-            deltas = deltas.detach()
-            # Compute loss derivative at u_new, Jacobian a u_old
-            Us_new = self.U_graph.get_test_update(deltas)
-            adjoint, _ = self.pde_adjoint.adjoint_solve(Us_new)
+        # with Timer( text="Newton step and adjoint: {:.4f}s"):
+        # Compute at u_old
+        deltas, J, old_resid = self.newton_solver.newton_step()
+        deltas = deltas.detach()
+        # Compute loss derivative at u_new, Jacobian a u_old
+        Us_new = self.U_graph.get_test_update(deltas)
+        adjoint, _ = self.pde_adjoint.adjoint_solve(Us_new)
+
 
         # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
-        with Timer(text="Backward: {:.4f}s"):
-            adj_f = adjoint @ (J @ deltas - old_resid)
-            adj_f.backward()
+        # with Timer(text="Backward: {:.4f}s"):
+        adj_f = adjoint @ (J @ deltas - old_resid)
+        adj_f.backward()
+        # J_delta = J @ deltas - old_resid
+        # J_delta.backward(adjoint)
 
-            # J_delta = J @ deltas - old_resid
-            # J_delta.backward(adjoint)
+        with torch.no_grad():
+            init_loss = self.loss_fn(Us_old, requires_grad=False)
+            final_loss = self.loss_fn(Us_new, requires_grad=False)
 
-        self.U_graph.set_grid(Us_new)
-        Us_new = self.U_graph.get_all_us_Xs()[0]
-        final_loss = self.loss_fn(Us_new)
-
-        print(f'{adj_f = }, {init_loss = }, {final_loss = }')
-        # pass
-        return init_loss, final_loss
+        # print(f'{adj_f = }, {init_loss = }, {final_loss = }')
+        return init_loss, final_loss, Us_new
 
 
     def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):

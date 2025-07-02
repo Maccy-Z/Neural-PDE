@@ -99,7 +99,7 @@ class EfficientIntervalOptimizer:
 
 
 class SolverNewton:
-    def __init__(self,  U_graph: UBase, lin_solver: LinearSolver, pde_calc: GraphPDECalc, cfg: FwdConfig):
+    def __init__(self,  U_graph: UBase, pde_calc: GraphPDECalc, lin_solver: LinearSolver, cfg: FwdConfig):
         self.device = U_graph.device
         self.cfg = cfg
 
@@ -107,12 +107,12 @@ class SolverNewton:
         self.lin_solver = lin_solver
 
         self.N_iter = cfg.N_iter
-        # self.lr = cfg.lr
         self.solve_acc = cfg.solve_acc
 
         self.pde_calc = pde_calc
 
         self.line_search_optim = EfficientIntervalOptimizer(max_iter=5)
+        self.timer = Timer(name="timer", logger=None)
 
     def _test_residual(self, alpha, deltas, Us_init, aux_input):
         """ Run test with test Us and get residuals. Then reset grid back to initial state. """
@@ -126,10 +126,17 @@ class SolverNewton:
         return pde_resid_norm
 
     def newton_step(self, aux_input=None):
-        jacobian, old_resid = self.pde_calc.jacobian(aux_input)
-        jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
-        deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
-        deltas = self.pde_calc.postproc_solve(deltas)
+        with self.timer:
+            jacobian, old_resid = self.pde_calc.jacobian(aux_input)
+        t_jacob = self.timer.last
+
+        with self.timer:
+            jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
+            deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
+            deltas = self.pde_calc.postproc_solve(deltas)
+        t_solve = self.timer.last
+
+        logging.debug(f"Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s,")
         return deltas, jacobian, old_resid
 
 
@@ -141,28 +148,17 @@ class SolverNewton:
 
         :param aux_input: Additional conditioning for the PDE
         """
-        timer = Timer(name="timer", logger=None)
         converged, last_i = False, 0
         best_alpha = 1.0
 
         for i in range(self.N_iter):
             Us_init = self.U_graph.get_all_us_Xs()[0]
 
-            # Compute Jacobian and residuals
-            with timer:
-                jacobian, old_resid = self.pde_calc.jacobian(aux_input)
-            t_jacob = timer.last
-
-            # Solve the linear system
-            with timer:
-                jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
-                deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
-                deltas = self.pde_calc.postproc_solve(deltas)
-
-            t_solve = timer.last
+            # Compute Jacobian, residuals and solve linear system
+            deltas, jacobian, old_resid = self.newton_step(aux_input)
 
             # Find best alpha using line search
-            with timer:
+            with self.timer:
                 zero_alpha_norm = old_resid.norm()
                 resid_fn = lambda alpha: self._test_residual(alpha, deltas, Us_init, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
@@ -177,18 +173,17 @@ class SolverNewton:
                 new_resid = self.pde_calc.residuals(aux_input)
                 new_resid_norm = new_resid.norm()
                 max_abs_residual = torch.max(new_resid.abs())
+            t_line = self.timer.last
 
-            t_post = timer.last
             logging.info(f'Newton solver Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
-            logging.debug(f'    Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s, postproc time: {t_post:.4f}s')
+            logging.debug(f'Line/postproc time: {t_line:.4f}s')
 
 
             if new_resid_norm < self.solve_acc:
                 logging.debug(f"Newton solver converged early at iteration {i+1}")
                 converged = True
                 last_i = i
-                break
+                return {"converged": converged, "iter": last_i}
 
         logging.warning("Newton solver did not converge within the maximum iterations.")
-
         return {"converged": converged, "iter": last_i}

@@ -10,7 +10,7 @@ from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pdes.PDEs import HeatLearned, Fluid, FluidLearned, Heat, NNFunc, Dummy
 from pde.utils import setup_logging
-from pde.loss import DummyLoss, MSELoss2, MaskLoss
+from pde.loss import DummyLoss, MSELoss2, MaskLoss, MSELossNorm
 from pde.mesh_generation.generate_mesh import gen_points_full
 
 
@@ -391,42 +391,72 @@ def test():
     U_graph, triangles = mesh_graph(cfg)
     # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
 
-    Us_true = torch.load("./Us_solution.pth")
-    # U_graph.set_grid(Us_true.clone())
+    Us_true = torch.load("./Us_solution.pth", weights_only=True)
+    U_graph.set_grid(Us_true)
+    loss_fn = MSELossNorm(Us_true)
 
-    loss_fn = MSELoss2(Us_true)
-
-    pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
+    pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
+    optim = torch.optim.SGD(pde_fn.parameters(), lr=0.1, momentum=0.9)
 
-    for _ in range(5):
-        print()
-        pde_fn.zero_grad()
-        U_graph.set_grid(torch.ones_like(U_graph.get_all_us_Xs()[0]) * 0.5)
-        pde_adj.single_step()
+    for i in range(50):
+        init_loss, _, _ = pde_adj.single_step()
 
+        if i % 5 == 0:
+            print(f'loss: {init_loss.detach().cpu()}')
+            for n, p in pde_fn.named_parameters():
+                print(n, f'parameter: {p.cpu().detach()}', "gradient:", p.grad.cpu())
+
+        optim.step()
+        optim.zero_grad()
+
+    pde_adj.plot_interp(title="Initial solution")
+
+    pde_adj.forward_solve()
+    pde_adj.plot_interp(title="Updated solution")
+
+
+def test2():
+    cfg = Config()
+    # U_graph, triangles = load_graph(cfg)
+    U_graph, triangles = mesh_graph(cfg)
+    # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
+
+    Us_true = torch.load("./Us_solution.pth", weights_only=True)
+    U_graph.set_grid(Us_true.clone())
+    loss_fn = MSELoss2(Us_true)
+
+    pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
+
+    optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
+
+    for _ in range(10):
+
+        residuals = pde_adj.pde_calc.residuals()
+        loss = (residuals**2).mean()
+        loss.backward()
+
+        print(f'loss: {loss.detach().cpu()}')
         for n, p in pde_fn.named_parameters():
-            print(n, "gradient:", p.grad.cpu())
+            print(n, f'parameter: {p.cpu().detach()}', "gradient:", p.grad.cpu())
 
-    # pde_adj.forward_solve()
-    # pde_adj.plot_interp(title="Initial solution")
-    #
-    # Us_all, updt_mask, _ = U_graph.get_us_mask()
-    # Us = Us_all[updt_mask]
-    #
-    # with open("./Us_solution.pth", "wb") as f:
-    #     torch.save(Us, f)
+        optim.step()
+        optim.zero_grad()
 
+    residuals = residuals.view(-1, 3).detach()
+    pde_adj.plot_interp(residuals, title="Updated solution")
 
 
 if __name__ == "__main__":
     setup_logging(debug=1)
     # torch.manual_seed(1)
 
-    # test()
+    test()
+    # test2()
 
     # optim_pde()
     # plot_grads()
-    true_pde()
+    # true_pde()
 

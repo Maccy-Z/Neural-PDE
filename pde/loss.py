@@ -5,14 +5,16 @@ from abc import abstractmethod
 class Loss(nn.Module):
     Us_pred: torch.Tensor = None
     loss_out: torch.Tensor = None
+    requires_grad: bool
 
     def __init__(self):
         super().__init__()
 
     @abstractmethod
-    def forward(self, us_pred):
+    def forward(self, us_pred, requires_grad=True):
         """
-            us_pred: Predicted values, in flattened form
+            us_pred: Predicted value
+            requires_grad: If True, the loss will be differentiable with respect to us_pred.
             Returns: Scalar loss
         """
         pass
@@ -21,7 +23,18 @@ class Loss(nn.Module):
         """
             Returns: Gradient of loss wrt us_pred. Shape = us_pred.shape
         """
+        assert self.requires_grad
         return torch.autograd.grad(outputs=self.loss_out, inputs=self.Us_pred)[0]
+
+    def save_for_backward(self, us_pred, requires_grad=True):
+        """
+            Save the predicted values for backward pass.
+            us_pred: Predicted values, in flattened form
+            requires_grad: If True, the loss will be differentiable with respect to us_pred.
+        """
+        self.Us_pred = us_pred
+        self.requires_grad = requires_grad
+        self.Us_pred.requires_grad_(requires_grad)
 
 class MSELoss(Loss):
     def __init__(self, us_true):
@@ -29,7 +42,7 @@ class MSELoss(Loss):
         self.us_true = us_true
 
     def forward(self, us_pred):
-        self.us_pred = us_pred
+        self.save_for_backward(us_pred, requires_grad=True)
         #print(f'{us_pred.shape = }, {self.us_true.shape = }')
         loss = torch.mean((self.us_pred - self.us_true)**2)
         self.loss_out = loss
@@ -45,25 +58,34 @@ class MSELoss(Loss):
 class MSELoss2(Loss):
     def __init__(self, Us_true):
         super().__init__()
-        self.Us_true = Us_true.flatten()
+        self.Us_true = Us_true
 
-    def forward(self, Us_pred: torch.Tensor):
-        Us_pred.requires_grad_(True)
-        self.Us_pred = Us_pred
-
-        error = Us_pred - self.Us_true
+    def forward(self, Us_pred: torch.Tensor, requires_grad=True):
+        self.save_for_backward(Us_pred, requires_grad=requires_grad)
+        error = Us_pred.flatten() - self.Us_true.flatten()
         loss = (error ** 2).mean()
         self.loss_out = loss
         return loss
 
+class MSELossNorm(Loss):
+    def __init__(self, Us_true):
+        super().__init__()
+        self.Us_true = Us_true
+        self.stds = Us_true.std(dim=0, keepdim=True)
+
+    def forward(self, Us_pred: torch.Tensor, requires_grad=True):
+        self.save_for_backward(Us_pred, requires_grad=requires_grad)
+        error = (Us_pred - self.Us_true) / self.stds
+        loss = (error ** 2).sum()
+        self.loss_out = loss
+        return loss
 
 class DummyLoss(Loss):
     def __init__(self):
         super().__init__()
 
-    def forward(self, Us_pred):
-        Us_pred.requires_grad_(True)
-        self.Us_pred = Us_pred
+    def forward(self, Us_pred, requires_grad=True):
+        self.save_for_backward(Us_pred, requires_grad=True)
         loss = torch.sum(self.Us_pred ** 2)
         self.loss_out = loss
 
@@ -76,8 +98,7 @@ class MaskLoss(Loss):
         self.mask = mask.bool()
 
     def forward(self, Us_pred: torch.Tensor):
-        Us_pred.requires_grad_(True)
-        self.Us_pred = Us_pred
+        self.save_for_backward(Us_pred, requires_grad=True)
         loss = torch.mean((self.Us_pred * self.mask)**2)
         self.loss_out = loss
 

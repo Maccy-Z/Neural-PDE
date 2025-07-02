@@ -128,7 +128,7 @@ class FluidLearned(PDEFunc):
 
         self.mu = cfg.mu
         self.rho = cfg.rho
-        self.a = nn.Parameter(torch.tensor([50., 50.], device=device), requires_grad=True)
+        self.a = nn.Parameter(torch.tensor([100., 100.], device=device), requires_grad=True)
 
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
@@ -144,22 +144,20 @@ class FluidLearned(PDEFunc):
         d2udx2, d2udy2 = u_dus[3], u_dus[5]
 
         # Momentum equations
-        advect_x = self.a[0] * (u[0] * dudx[0] + u[1] * dudy[0])
-        advect_y = self.a[1] * (u[0] * dudx[1] + u[1] * dudy[1])
-        laplace_Vx = self.mu * (d2udx2[0] + d2udy2[0])
-        laplace_Vy = self.mu * (d2udx2[1] + d2udy2[1])
+        advect_x = u[0] * dudx[0] + u[1] * dudy[0]
+        advect_y = u[0] * dudx[1] + u[1] * dudy[1]
+        laplace_Vx = d2udx2[0] + d2udy2[0]
+        laplace_Vy = d2udx2[1] + d2udy2[1]
         dpdx = dudx[2]
         dpdy = dudy[2]
-        resid_x = -dpdx + laplace_Vx - advect_x + self.a[0] * (u[0] - 10) ** 2
-        resid_y = -dpdy + laplace_Vy - advect_y + self.a[1] * (u[0] - 10) ** 2#* self.a[0]
-        divergence = dudx[0] + dudy[1] + 0.01*self.a[1] * (u[0] - 10) ** 2
+        resid_x = -dpdx + self.mu * laplace_Vx - self.a[0] * advect_x
+        resid_y = -dpdy + self.mu * laplace_Vy - self.a[1] * advect_y
+        divergence = dudx[0] + dudy[1]
 
-        # resid_x = u[0] - self.a
-        # resid_y = u[1] #-dpdy + laplace_Vy  #+ self.a
-        # divergence = u[2]-1 #  1 - 1 / 2 * x - u[2]
 
         resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
 
+        # print(advect_x.mean())
         return resid
 
 
