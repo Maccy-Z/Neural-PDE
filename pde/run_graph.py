@@ -232,8 +232,8 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
     U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.DEVICE)
 
-    with open("save_u_graph.pth", "wb") as f:
-        torch.save((U_graph, triangles), f)
+    # with open("save_u_graph.pth", "wb") as f:
+    #     torch.save((U_graph, triangles), f)
 
     # exit("Done")
     return U_graph, triangles
@@ -251,7 +251,7 @@ def true_pde():
     # U_graph, triangles = mesh_heat(cfg)
 
     Us_all, _ = U_graph.get_all_us_Xs()
-
+    print(Us_all.max())
     pde_fn = Fluid(cfg, device=cfg.DEVICE)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
@@ -280,7 +280,6 @@ def optim_pde():
     Us_true = torch.load("./Us_solution.pth")
     U_graph.set_grid(Us_true.clone())
     loss_fn = MSELoss2(Us_true)
-    U_graph.set_grid(Us_true.clone())
 
     pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
 
@@ -389,22 +388,26 @@ def plot_grads():
 def test():
     cfg = Config()
     # U_graph, triangles = load_graph(cfg)
-    # U_graph, triangles = mesh_graph(cfg, max_degree=1, grad_neigh=9)
-    U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
-    U_graph.set_grid(torch.ones_like(U_graph.get_all_us_Xs()[0]) * 0.1)
-    Us_all, _ = U_graph.get_all_us_Xs()
+    U_graph, triangles = mesh_graph(cfg)
+    # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
 
-    pde_fn = Dummy(cfg, device=cfg.DEVICE)
-    # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
+    Us_true = torch.load("./Us_solution.pth")
+    # U_graph.set_grid(Us_true.clone())
 
-    # Us_target = U_graph.pde_mask.float()
-    # Us_target = torch.repeat_interleave(Us_target, U_graph.N_comp, dim=0)
-    loss_fn = DummyLoss()  # MaskLoss(Us_target)
+    loss_fn = MSELoss2(Us_true)
 
+    pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
 
-    pde_adj.single_step()
+    for _ in range(5):
+        print()
+        pde_fn.zero_grad()
+        U_graph.set_grid(torch.ones_like(U_graph.get_all_us_Xs()[0]) * 0.5)
+        pde_adj.single_step()
+
+        for n, p in pde_fn.named_parameters():
+            print(n, "gradient:", p.grad.cpu())
 
     # pde_adj.forward_solve()
     # pde_adj.plot_interp(title="Initial solution")
@@ -421,9 +424,9 @@ if __name__ == "__main__":
     setup_logging(debug=1)
     # torch.manual_seed(1)
 
-    test()
+    # test()
 
     # optim_pde()
     # plot_grads()
-    # true_pde()
+    true_pde()
 

@@ -37,13 +37,13 @@ class Dummy(PDEFunc):
         super().__init__(cfg=cfg, device=device)
         self.to(device)
 
-        self.a = nn.Parameter(torch.tensor(-0.99, device=device), requires_grad=True)
+        self.a = nn.Parameter(torch.tensor(3.1, device=device), requires_grad=True)
 
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
         """ Dummy PDE function for testing. """
 
-        return u_dus[0] * (-0.1 * self.a + 1) + self.a  # Return a constant value of 10 for all components
+        return u_dus[0] * (self.a + 1) + self.a  # Return a constant value of 10 for all components
 
 class Heat(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):

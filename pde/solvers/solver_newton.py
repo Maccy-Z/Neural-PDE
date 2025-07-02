@@ -156,13 +156,8 @@ class SolverNewton:
             # Solve the linear system
             with timer:
                 jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
-                deltas, lin_resid_norm = self.lin_solver.solve(jac_proc, old_resid_proc)
+                deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
                 deltas = self.pde_calc.postproc_solve(deltas)
-
-                # deltas, lin_resid_norm = self.lin_solver.solve(jacobian, old_resid)
-
-                # deltas = deltas.clamp(min=-self.cfg.dU_clamp, max=self.cfg.dU_clamp)
-                # print(f'{deltas.norm() = }, {deltas.abs().max() = }')
 
             t_solve = timer.last
 

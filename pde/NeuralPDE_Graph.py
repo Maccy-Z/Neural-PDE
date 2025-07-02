@@ -1,4 +1,5 @@
 import torch
+from codetiming import Timer
 
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDECalc import GraphPDECalc
@@ -77,34 +78,38 @@ class NeuralPDEGraph:
 
 
     def single_step(self):
-        """ Perform a single step of the Newton solver and compute the exact adjoint:
+        """ Perform a single step of the Newton solver and compute the exact derivative:
                 U_old - U_new = dU = J^-1(u_old, theta) f(U_old, theta)
                 J^T lambda = dL/dtheta|(U_new)
                 dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
          """
-        deltas, J, old_resid = self.newton_solver.newton_step()
-        Us_new = self.U_graph.get_test_update(deltas)
-        adjoint, _ = self.pde_adjoint.adjoint_solve(Us_new)
-        deltas = deltas.detach()
+        Us_old = self.U_graph.get_all_us_Xs()[0]
+        init_loss = self.loss_fn(Us_old)
+
+
+        with Timer( text="Newton step and adjoint: {:.4f}s"):
+            # Compute at u_old
+            deltas, J, old_resid = self.newton_solver.newton_step()
+            deltas = deltas.detach()
+            # Compute loss derivative at u_new, Jacobian a u_old
+            Us_new = self.U_graph.get_test_update(deltas)
+            adjoint, _ = self.pde_adjoint.adjoint_solve(Us_new)
 
         # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
+        with Timer(text="Backward: {:.4f}s"):
+            adj_f = adjoint @ (J @ deltas - old_resid)
+            adj_f.backward()
 
-        # adj_f = adjoint @ (J @ deltas -old_resid)
-        # adj_f.backward()
-        print(J)
-        J_delta = J @ deltas #- old_resid
-        J_delta.backward(adjoint)
+            # J_delta = J @ deltas - old_resid
+            # J_delta.backward(adjoint)
 
-        print()
-        print()
         self.U_graph.set_grid(Us_new)
-        final_loss = self.loss_fn(self.U_graph.get_all_us_Xs()[0])
-        print(f'{final_loss = }')
-        for n, p in self.pde_fn.named_parameters():
-            print(n, p.grad)
+        Us_new = self.U_graph.get_all_us_Xs()[0]
+        final_loss = self.loss_fn(Us_new)
 
-
-        exit(4)
+        print(f'{adj_f = }, {init_loss = }, {final_loss = }')
+        # pass
+        return init_loss, final_loss
 
 
     def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):

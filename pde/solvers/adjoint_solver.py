@@ -18,10 +18,10 @@ class PDEAdjoint:
 
         self.DEVICE = U_graph.device
 
-    def adjoint_solve(self, Us_now=None):
+    def adjoint_solve(self, Us_loss=None):
         """ Solve for adjoint.
             dgdU = J^T * adjoint
-            Us_now: Optional. If different Us is needed to compute loss gradient than the jacobian J(Us, theta)
+            Us_loss: Optional. If different Us is needed to compute loss gradient than the jacobian J(Us, theta)
                     shape = [N_us_grad, N_comp]
          """
 
@@ -29,12 +29,12 @@ class PDEAdjoint:
             jac_T = self.pde_calc.jacob_transpose()    # Shape = [N_eq, N_us]
 
         # One adjoint value for each trained u value, including boundary points.
-        if Us_now is None:
+        if Us_loss is None:
             Us, updt_mask, _ = self.U_graph.get_us_mask()
             Us_grad = Us[updt_mask].flatten()
 
         else:
-            Us_grad = Us_now.flatten()
+            Us_grad = Us_loss.flatten()
 
         loss = self.loss_fn(Us_grad)
         loss_u = self.loss_fn.gradient()
