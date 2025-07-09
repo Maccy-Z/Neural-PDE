@@ -27,11 +27,11 @@ class NeuralPDEGraph:
 
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
-        self.newton_solver = SolverNewton(U_graph, self.pde_calc, fwd_lin_solver, cfg=fwd_cfg)
+        self.newton_solver = SolverNewton(self.pde_calc, fwd_lin_solver, cfg=fwd_cfg)
 
         # Adjoint solver
         adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
-        self.pde_adjoint = PDEAdjoint(U_graph, self.pde_calc, adj_lin_solver, loss_fn)
+        self.pde_adjoint = PDEAdjoint(self.pde_calc, adj_lin_solver, loss_fn)
 
         self.pde_fn = pde_fn
         self.U_graph = U_graph
@@ -41,13 +41,13 @@ class NeuralPDEGraph:
     def forward_solve(self, aux_input=None):
         """ Solve PDE forward problem. """
 
-        converged = self.newton_solver.find_pde_root(aux_input)
+        converged = self.newton_solver.find_pde_root(self.U_graph, aux_input)
         return converged
 
     def adjoint_solve(self):
         """ Solve for adjoint """
 
-        adjoint, loss = self.pde_adjoint.adjoint_solve()
+        adjoint, loss = self.pde_adjoint.adjoint_solve(self.U_graph)
         self.adjoint = adjoint
         return loss
 
@@ -79,7 +79,7 @@ class NeuralPDEGraph:
         deltas = deltas.detach()
         # Compute loss derivative at u_new, Jacobian a u_old
         Us_new = self.U_graph.get_test_update(deltas)
-        adjoint, _ = self.pde_adjoint.adjoint_solve(Us_new)
+        adjoint, _ = self.pde_adjoint.adjoint_solve(self.U_graph, Us_loss=Us_new)
 
 
         # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)

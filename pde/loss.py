@@ -71,12 +71,12 @@ class MSELossNorm(Loss):
     def __init__(self, Us_true):
         super().__init__()
         self.Us_true = Us_true
-        self.stds = Us_true.std(dim=0, keepdim=True)
+        self.stds = Us_true.std(dim=0, keepdim=True) + 0.01  # Avoid division by zero
 
     def forward(self, Us_pred: torch.Tensor, requires_grad=True):
         self.save_for_backward(Us_pred, requires_grad=requires_grad)
         error = (Us_pred - self.Us_true) / self.stds
-        loss = (error ** 2).sum()
+        loss = (error ** 2).mean()
         self.loss_out = loss
         return loss
 

@@ -3,7 +3,8 @@ import logging
 import torch
 
 from pde.config import FwdConfig
-from pde.BaseU import UBase
+
+from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDECalc import GraphPDECalc
 from pde.solvers.linear_solvers import LinearSolver
 from pde.utils_sparse import plot_sparsity
@@ -25,7 +26,7 @@ class EfficientIntervalOptimizer:
             tol: The tolerance for the width of the search interval.
             max_iter: The maximum number of iterations to perform.
         """
-        self.device = device
+        # self.device = device
         self.low = low
         self.high = high
 
@@ -99,11 +100,10 @@ class EfficientIntervalOptimizer:
 
 
 class SolverNewton:
-    def __init__(self,  U_graph: UBase, pde_calc: GraphPDECalc, lin_solver: LinearSolver, cfg: FwdConfig):
-        self.device = U_graph.device
+    def __init__(self, pde_calc: GraphPDECalc, lin_solver: LinearSolver, cfg: FwdConfig):
+        # self.device = cfg.DEVICE
         self.cfg = cfg
 
-        self.U_graph = U_graph
         self.lin_solver = lin_solver
 
         self.N_iter = cfg.N_iter
@@ -114,15 +114,15 @@ class SolverNewton:
         self.line_search_optim = EfficientIntervalOptimizer(max_iter=5)
         self.timer = Timer(name="timer", logger=None)
 
-    def _test_residual(self, alpha, deltas, Us_init, aux_input):
+    def _test_residual(self, U_graph, alpha, deltas, Us_init, aux_input):
         """ Run test with test Us and get residuals. Then reset grid back to initial state. """
-        Us = self.U_graph.get_test_update(alpha * deltas)
-        self.U_graph.set_grid(Us)
+        Us = U_graph.get_test_update(alpha * deltas)
+        U_graph.set_grid(Us)
         pde_resid = self.pde_calc.residuals(aux_input)
         pde_resid_norm = pde_resid.norm()
 
         # Reset grid to initial state
-        self.U_graph.set_grid(Us_init)
+        U_graph.set_grid(Us_init)
         return pde_resid_norm
 
     def newton_step(self, aux_input=None):
@@ -141,7 +141,7 @@ class SolverNewton:
 
 
     @torch.no_grad()
-    def find_pde_root(self, aux_input=None):
+    def find_pde_root(self, U_graph: UGraph, aux_input=None):
         """
         Find the root of the PDE using Newton Raphson:
             grad(F(x_n)) * (x_{n+1} - x_n) = -F(x_n)
@@ -152,7 +152,7 @@ class SolverNewton:
         best_alpha = 1.0
 
         for i in range(self.N_iter):
-            Us_init = self.U_graph.get_all_us_Xs()[0]
+            Us_init = U_graph.get_all_us_Xs()[0]
 
             # Compute Jacobian, residuals and solve linear system
             deltas, jacobian, old_resid = self.newton_step(aux_input)
@@ -160,10 +160,10 @@ class SolverNewton:
             # Find best alpha using line search
             with self.timer:
                 zero_alpha_norm = old_resid.norm()
-                resid_fn = lambda alpha: self._test_residual(alpha, deltas, Us_init, aux_input)
+                resid_fn = lambda alpha: self._test_residual(U_graph, alpha, deltas, Us_init, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
                 dUs = deltas * best_alpha #self.lr
-                self.U_graph.update_grid(dUs)
+                U_graph.update_grid(dUs)
 
                 # Evaluate residuals
                 lin_error = jacobian @ deltas - old_resid

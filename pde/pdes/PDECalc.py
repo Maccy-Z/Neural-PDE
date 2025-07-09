@@ -111,7 +111,6 @@ class GraphPDECalc(PDECalc):
         # 6.2) Sum over k: sum_k partials_ijk
         jacobian = self.csr_summer.sum(partials)
 
-
         return jacobian, residuals
 
     def jacob_transpose(self):

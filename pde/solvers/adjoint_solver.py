@@ -11,27 +11,23 @@ from pde.solvers.linear_solvers import LinearSolver
 
 
 class PDEAdjoint:
-    def __init__(self, U_graph: UGraph, pde_calc: PDECalc, adj_lin_solver: LinearSolver, loss_fn: Loss):
-        self.U_graph = U_graph
+    def __init__(self, pde_calc: PDECalc, adj_lin_solver: LinearSolver, loss_fn: Loss):
         self.pde_calc = pde_calc
         self.adj_lin_solver = adj_lin_solver
         self.loss_fn = loss_fn
 
-        self.DEVICE = U_graph.device
-
-    def adjoint_solve(self, Us_loss=None):
+    def adjoint_solve(self, U_graph: UGraph, Us_loss=None):
         """ Solve for adjoint.
             dgdU = J^T * adjoint
             Us_loss: Optional. If different Us is needed to compute loss gradient than the jacobian J(Us, theta)
                     shape = [N_us_grad, N_comp]
          """
-
         with torch.no_grad():
             jac_T = self.pde_calc.jacob_transpose()    # Shape = [N_eq, N_us]
 
         # One adjoint value for each trained u value, including boundary points.
         if Us_loss is None:
-            Us, updt_mask, _ = self.U_graph.get_us_mask()
+            Us, updt_mask, _ = U_graph.get_us_mask()
             Us_grad = Us[updt_mask]
         else:
             Us_grad = Us_loss
