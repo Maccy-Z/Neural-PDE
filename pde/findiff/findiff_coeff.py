@@ -172,7 +172,6 @@ def calc_coeff(Xs: torch.Tensor, stencils: np.array, n_neigh: int, diff_orders: 
     data = data.ravel()
     w = sp.coo_matrix((data, (rows, cols)), (n_points, n_points))
 
-    # w = fd.weight_matrix(Xs, Xs, n=49, diffs=np.array(diff_order), order=1, phi="phs3", eps=0.01)
     w = csr_scipy_to_torch(w)
 
     indices = w.indices().to(torch.float32)[[1, 0], :]

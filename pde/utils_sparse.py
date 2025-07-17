@@ -26,7 +26,7 @@ def csr_scipy_to_torch(sparse_np):
 
     # Get indices and values
     indices = torch.LongTensor(np.vstack((sparse_np.row, sparse_np.col))).int().contiguous()
-    values = torch.FloatTensor(sparse_np.data).int().contiguous()
+    values = torch.FloatTensor(sparse_np.data).contiguous()
     shape = torch.Size(sparse_np.shape)
 
     return torch.sparse_coo_tensor(indices, values, shape).coalesce()

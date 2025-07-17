@@ -130,11 +130,11 @@ def mesh_heat(cfg, max_degree=2, grad_neigh=25):
         elif tag == "circle":
             # value = [1. for _ in range(N_comp)]
             # Xs_all[i] = Point(PT.DirichBC, X, value=value)
-            # n_hat = normals[i].tolist()
-            # deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=-1., weights=[n_hat[0], n_hat[1]]),
-            #          # Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]]),
-            #          # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=-3., weights=[n_hat[0], n_hat[1]])
-            #          ]
+            n_hat = normals[i].tolist()
+            deriv = [Deriv(comp=[0, 0], orders=[(1, 0), (0, 1)], value=-1., weights=[n_hat[0], n_hat[1]]),
+                     # Deriv(comp=[1, 1], orders=[(1, 0), (0, 1)], value=-2., weights=[n_hat[0], n_hat[1]]),
+                     # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=-3., weights=[n_hat[0], n_hat[1]])
+                     ]
 
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         else:
@@ -248,12 +248,11 @@ def load_graph(cfg)-> tuple[UGraph, torch.Tensor]:
 def true_pde():
     cfg = Config()
     # U_graph, triangles = load_graph(cfg)
-    U_graph, triangles = mesh_graph(cfg)
-    # U_graph, triangles = mesh_heat(cfg)
+    # U_graph, triangles = mesh_graph(cfg)
+    U_graph, triangles = mesh_heat(cfg)
 
     Us_all, _ = U_graph.get_all_us_Xs()
-    print(Us_all.max())
-    pde_fn = Fluid(cfg, device=cfg.DEVICE)
+    pde_fn = Heat(cfg, device=cfg.DEVICE)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
     # Us_target = U_graph.pde_mask.float()
@@ -265,6 +264,7 @@ def true_pde():
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
+    exit(4)
     Us_all, updt_mask, _ = U_graph.get_us_mask()
     Us = Us_all[updt_mask]
 
@@ -461,10 +461,10 @@ if __name__ == "__main__":
     setup_logging(debug=1)
     torch.manual_seed(123)
 
-    test()
+    # test()
     # test2()
 
     # optim_pde()
     # plot_grads()
-    # true_pde()
+    true_pde()
 

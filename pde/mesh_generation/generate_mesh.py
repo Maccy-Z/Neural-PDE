@@ -100,7 +100,7 @@ def gen_points_full():
               Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
 
 
-              Circle((1., 0.75), 0.2, lengthscale, True, name="circle", lims=[[xmin, ymin], [xmax, ymax]]),
+              Circle((0.9, 0.75), 0.2, lengthscale, True, name="circle", lims=[[xmin, ymin], [xmax, ymax]]),
               # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
               ]
     #
