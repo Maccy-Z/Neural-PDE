@@ -151,7 +151,7 @@ def nearest_neighbors(tris, Xs, n_neigh):
     idx = np.argpartition(D, n_neigh, axis=1)[:, :n_neigh]
     return idx
 
-@disk_cache
+# @disk_cache
 def calc_coeff(Xs: torch.Tensor, stencils: np.array, n_neigh: int, diff_orders: tuple[int, int]):
 
     n_points = Xs.shape[0]
