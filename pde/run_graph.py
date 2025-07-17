@@ -138,7 +138,7 @@ def mesh_heat(cfg):
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=25, max_degree=2, tri=triangles, device=cfg.DEVICE)
+    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=16, max_degree=2, tri=triangles, device=cfg.DEVICE)
 
     with open("save_u_graph.pth", "wb") as f:
         torch.save((U_graph, triangles), f)

@@ -139,6 +139,7 @@ class NeumanBCCalc(FinDerivCalcSPMV):
                         deriv_row.append(row_val)
                     else:
                         # Get the derivative matrix for this component and order.
+                        print(f'{weight = }')
                         spm = fd_spms_old[order][us_idx] * weight
                         deriv_row.append(spm)
 
@@ -173,6 +174,9 @@ class NeumanBCCalc(FinDerivCalcSPMV):
 
         lhs = self.dRdD * U_dUs
         lhs = lhs.sum(dim=1)  # shape = [N_bc_eqs*N_comp]
+
+        print(lhs)
+
         return lhs
         # print(residuals.shape )
         # exit(8)

@@ -112,9 +112,9 @@ class UGraph(UBase):
         self._Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
 
         # 1) Node properties and masks
-        dirich_mask = [T.DirichBC in P.point_type for P in setup_dict.values()]
-        self.dirich_mask = torch.tensor(dirich_mask, dtype=torch.bool)
-        self.N_dirich = self.dirich_mask.sum().item()
+        # dirich_mask = [T.DirichBC in P.point_type for P in setup_dict.values()]
+        # self.dirich_mask = torch.tensor(dirich_mask, dtype=torch.bool)
+        # self.N_dirich = self.dirich_mask.sum().item()
         # PDE is enforced on normal points.
         self.pde_mask = torch.tensor([T.PDE in P.point_type for P in setup_dict.values()])
         # U requires gradient for normal or ghost points.
@@ -207,7 +207,7 @@ class UGraph(UBase):
         self._Xs = self._Xs.cuda(non_blocking=True)
 
         self.pde_mask = self.pde_mask.cuda(non_blocking=True)
-        self.dirich_mask = self.dirich_mask.cuda(non_blocking=True)
+        # self.dirich_mask = self.dirich_mask.cuda(non_blocking=True)
         self.updt_mask = self.updt_mask.cuda(non_blocking=True)
         [graph.cuda() for graph in self.graphs.values()]
 
