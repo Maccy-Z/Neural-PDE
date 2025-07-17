@@ -110,6 +110,7 @@ class NeumanBCCalc(FinDerivCalcSPMV):
         N_Us = bc_eq_mask.shape[0]
         N_Us_tot = bc_eq_mask.shape[0] * N_comp
 
+        print(f'{bc_eq_mask.tolist() = }')
         # self.fd_spms[(1, 0)].shape = [N_bc_eqs, N_us_tot]
         # Reshape to blocks, which allows for mixing up the derivatives.
         fd_spms_old = {order: csr_block_repeat(spm, N_comp) for order, spm in self.fd_spms.items()}    # shape = [N_derivs][N_bc_eqs*N_comp, N_us_tot*N_comp]

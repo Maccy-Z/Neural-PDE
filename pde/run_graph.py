@@ -108,7 +108,7 @@ def mesh_heat(cfg):
     Xs_all = {}
     for i, (X, tag) in enumerate(zip(Xs, p_tags)):
         x, y = X
-        value = [x**2+_*(x+y) for _ in range(N_comp)]
+        value = [0 for _ in range(N_comp)]
 
         deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0, weights=[1]),
                  #Deriv(comp=[1], orders=[(0, 0)], value=0, weights=[1])
