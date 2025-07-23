@@ -184,12 +184,8 @@ class NNFunc(PDEFunc):
                                         , zero_out=True)
         # self.mlp = MLP(in_dim=8, out_dim=3, width=32, n_hidden=0, activation=F.leaky_relu)
 
-        # self.lin1 = nn.Linear(8, 64)
-        # self.lin2 = nn.Linear(64, 3)
-        # nn.init.zeros_(self.lin2.bias)
-        # nn.init.zeros_(self.lin2.weight)
-
-        self.mu = torch.tensor(2., device=device)
+        mu = torch.tensor(2, device=device, dtype=torch.float32)
+        self.other_params = nn.ParameterDict({"mu": torch.nn.Parameter(mu)})
 
 
         self.to(device)
@@ -203,6 +199,7 @@ class NNFunc(PDEFunc):
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):#
         """ us_dus.shape = (BS)[N_grads+1, N_vector] """
+        mu = self.other_params['mu']
 
         # Rescale input equations
         u_dus = u_dus / self.rescaling
@@ -219,8 +216,8 @@ class NNFunc(PDEFunc):
         dpdx = dudx[2]
         dpdy = dudy[2]
 
-        resid_x = -dpdx + self.mu * laplace_Vx #- advect_x
-        resid_y = -dpdy + self.mu * laplace_Vy #- advect_y
+        resid_x = -dpdx + mu * laplace_Vx #- advect_x
+        resid_y = -dpdy + mu * laplace_Vy #- advect_y
 
         divergence = dudx[0] + dudy[1]
 

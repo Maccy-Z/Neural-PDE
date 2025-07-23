@@ -248,11 +248,11 @@ def load_graph(cfg)-> tuple[UGraph, torch.Tensor]:
 def true_pde():
     cfg = Config()
     # U_graph, triangles = load_graph(cfg)
-    # U_graph, triangles = mesh_graph(cfg)
-    U_graph, triangles = mesh_heat(cfg)
+    U_graph, triangles = mesh_graph(cfg)
+    # U_graph, triangles = mesh_heat(cfg)
 
     Us_all, _ = U_graph.get_all_us_Xs()
-    pde_fn = Heat(cfg, device=cfg.DEVICE)
+    pde_fn = Fluid(cfg, device=cfg.DEVICE)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
     # Us_target = U_graph.pde_mask.float()
@@ -264,68 +264,12 @@ def true_pde():
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
-    exit(4)
     Us_all, updt_mask, _ = U_graph.get_us_mask()
     Us = Us_all[updt_mask]
 
     with open("./Us_solution.pth", "wb") as f:
         torch.save(Us, f)
     # print(f'{Us.shape = }, {Us_all.shape = }')
-
-def optim_pde():
-    cfg = Config()
-    # U_graph, triangles = load_graph(cfg)
-    U_graph, triangles = mesh_graph(cfg)
-    # U_graph, triangles = mesh_heat(cfg)
-
-    Us_true = torch.load("./Us_solution.pth")
-    U_graph.set_grid(Us_true.clone())
-    loss_fn = MSELoss2(Us_true)
-
-    pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
-
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
-
-    U_graph.set_grid(Us_true.clone())
-    pde_adj.forward_solve()
-
-    pde_adj.plot_interp(title="Initial solution")
-    exit(3)
-    # exit("Done with forward solve")
-
-    optim = torch.optim.Adam(pde_fn.parameters(), lr=0.02, betas=(0.9, 0.99))
-
-    for i in range(1):
-        # U_graph.set_grid(Us_true.clone())
-
-        converged = pde_adj.forward_solve()
-        loss = pde_adj.adjoint_solve()
-        print(f'{loss = :.5g}')
-
-        for param_group in optim.param_groups:
-            if converged['iter'] < 2:
-                param_group['lr'] = min(param_group['lr'] * 1.1, 1000000.)
-                print("lr = ", param_group['lr'])
-
-            elif converged['iter'] >= 5:
-                param_group['lr'] = max(param_group['lr'] * 0.5, 0.00001)
-                print(param_group['lr'])
-
-            # else:
-            #     param_group['lr'] = param_group['lr'] * 0.9
-            # print(converged['iter'], param_group['lr'])
-
-        pde_adj.backward()
-        # torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.25)
-        optim.step()
-
-        # for n, p in pde_fn.named_parameters():
-        #     c_print(f'{n=}: {p.cpu() = },', color="green")
-
-        if i % 10 == 0:
-            pde_adj.plot_interp()
-
-        optim.zero_grad()
 
 
 def plot_grads():
@@ -386,6 +330,51 @@ def plot_grads():
     print(grads)
 
 
+def test_adjoint():
+    cfg = Config()
+    # U_graph, triangles = load_graph(cfg)
+    U_graph, triangles = mesh_graph(cfg)
+    # U_graph, triangles = mesh_heat(cfg)
+
+    Us_true = torch.load("./Us_solution.pth", weights_only=True)
+    U_graph.set_grid(Us_true)
+    loss_fn = MSELossNorm(Us_true)
+
+    pde_fn = NNFunc(cfg, device=cfg.DEVICE)
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
+
+    # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
+    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
+    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
+
+    for i in range(2001):
+        U_graph.set_grid(Us_true.clone())
+
+        converged = pde_adj.forward_solve()
+        loss = pde_adj.adjoint_solve()
+        pde_adj.backward()
+
+        # print(f'{loss = :.5g}')
+
+
+        torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.5)
+        if i % 25 == 0:
+            c_print(f'{i}/400 loss: {loss.detach().cpu().item():.3g}'  # , {loss.detach().cpu().item():.2g}'
+                    , color="bright_green")
+
+        if i == 1000 or i == 1500:
+            for pg in optim.param_groups:
+                pg['lr'] *= 0.5
+
+        optim.step(), optim_other.step()
+        optim.zero_grad(), optim_other.zero_grad()
+
+    U_graph.set_grid(Us_true)
+    pde_adj.plot_interp(title="True solution")
+    pde_adj.forward_solve()
+    pde_adj.plot_interp(title="Predicted solution")
+
+
 def test():
     cfg = Config()
     # U_graph, triangles = load_graph(cfg)
@@ -400,26 +389,40 @@ def test():
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    # optim = torch.optim.Adam(pde_fn.parameters(), lr=0.005)#, betas=(0.95, 0.95))
     optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
+    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
 
-    for i in range(1000):
-        init_loss, final_loss, _ = pde_adj.single_step()
+    resid_factor = 0.005
+    for i in range(2001):
+        final_loss = 0
+        # Adjoint gradient
+        init_loss, final_loss, resid = pde_adj.single_step()
+        # optim.zero_grad(), optim_other.zero_grad()
+
+        # Residual gradient
+        residuals = pde_adj.pde_calc.residuals()
+        loss = resid_factor*(residuals**2).mean()
+        loss.backward()
+
+        # final_loss += loss
         torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.5)
         if i % 50 == 0:
-            c_print(f'{i}/400 loss: {final_loss.detach().cpu().item():.3g}', color="bright_green")
-            for n, p in pde_fn.named_parameters():
-                if p.requires_grad:
-                    print(f'{n = }, {p.grad.abs().max().item():.2g}')
-
-                # print(f'{n = }, {p.abs().max().item():.3g}')
+            c_print(f'{i}/400 loss: {final_loss.detach().cpu().item():.3g}' # , {loss.detach().cpu().item():.2g}'
+                    , color="bright_green")
+            # for n, p in pde_fn.other_params.named_parameters():
+            #     print(f'{n = }, {p.cpu().detach() }')
                 # print(n, f' parameter: {p.cpu().detach()}', "gradient:", p.grad.cpu())
 
-        optim.step()
-        optim.zero_grad()
+        optim.step(), optim_other.step()
+        optim.zero_grad(), optim_other.zero_grad()
+
+        if i == 1000 or i == 1500:
+            resid_factor *= 2
+            for pg in optim.param_groups:
+                pg['lr'] *= 0.5
 
     pde_adj.plot_interp(title="Initial solution")
-
+    U_graph.set_grid(Us_true*0.9)
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Updated solution")
 
@@ -438,33 +441,35 @@ def test2():
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.03, betas=(0.9, 0.99), weight_decay=1e-4)
+    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
+    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
 
-    for i in range(1000):
+    for i in range(1001):
 
         residuals = pde_adj.pde_calc.residuals()
         loss = (residuals**2).mean()
         loss.backward()
 
-        if i % 100 == 0:
+        if i % 50 == 0:
             c_print(f'{i}/1000 loss: {loss.detach().cpu().item():.3g}', color="bright_green")
 
-        optim.step()
-        optim.zero_grad()
+        optim.step()#, optim_other.step()
+        optim.zero_grad(), optim_other.zero_grad()
 
     # residuals = residuals.view(-1, 3).detach()
     # pde_adj.plot_interp(residuals, title="Updated solution")
+    pde_adj.plot_interp(title="Initial solution")
     pde_adj.forward_solve()
-    pde_adj.plot_interp(title="Updated solution")
+    pde_adj.plot_interp(title="Predicted solution")
 
 if __name__ == "__main__":
-    setup_logging(debug=1)
+    setup_logging(debug=2)
     torch.manual_seed(123)
 
-    # test()
+    # test_adjoint()
+    test()
     # test2()
 
     # optim_pde()
     # plot_grads()
-    true_pde()
 

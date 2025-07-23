@@ -45,7 +45,7 @@ class NeuralPDEGraph:
         return converged
 
     def adjoint_solve(self):
-        """ Solve for adjoint """
+        """ Solve for adjoint. Call self.backward to get gradients, using adjoints. """
 
         adjoint, loss = self.pde_adjoint.adjoint_solve(self.U_graph)
         self.adjoint = adjoint
@@ -94,7 +94,7 @@ class NeuralPDEGraph:
             final_loss = self.loss_fn(Us_new, requires_grad=False)
 
         # print(f'{adj_f = }, {init_loss = }, {final_loss = }')
-        return init_loss, final_loss, Us_new
+        return init_loss, final_loss, old_resid
 
 
     def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):

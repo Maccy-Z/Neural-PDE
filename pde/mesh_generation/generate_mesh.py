@@ -83,7 +83,7 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps, min_angle=None):
 
 def gen_points_full():
     min_area = 1e-3
-    max_area = 3e-3
+    max_area = 2e-3
     xmin, xmax = 0, 2
     ymin, ymax = 0.0, 1.5
     circle_center = (0.5, 0.4)
@@ -100,7 +100,7 @@ def gen_points_full():
               Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
 
 
-              Circle((0.9, 0.75), 0.2, lengthscale, True, name="circle", lims=[[xmin, ymin], [xmax, ymax]]),
+              Circle((0.7, 0.75), 0.2, lengthscale, True, name="circle", lims=[[xmin, ymin], [xmax, ymax]]),
               # Ellipse((2.0, 1), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name=PT.DirichBC),
               ]
     #

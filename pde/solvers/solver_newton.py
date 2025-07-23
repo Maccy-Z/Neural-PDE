@@ -126,6 +126,7 @@ class SolverNewton:
         return pde_resid_norm
 
     def newton_step(self, aux_input=None):
+        """ Run a single Newton step. Done differentiably. """
         with self.timer:
             jacobian, old_resid = self.pde_calc.jacobian(aux_input)
         t_jacob = self.timer.last
