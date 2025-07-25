@@ -25,12 +25,12 @@ class ConfigFVM:
 
     # mesh parameters
     min_A: float = 0.3e-3
-    max_A: float = 2e-3
+    max_A: float = 1e-3
     lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 1e-2     # At room temp
-    visc_bulk: float = 1e-3
+    viscosity: float = 1e-5     # At room temp
+    visc_bulk: float = 1e-5
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant
 
@@ -38,9 +38,9 @@ class ConfigFVM:
     C_v: float = 10     # Specific heat at constant volume
 
     # Stability parameters
-    v_factor: float = 0.05     # Modification for velocity KT scheme
-    lim_p: int = 4          # Order of limiter (1 for BJ)
-    lim_K: int = 1
+    v_factor: float = 0.1     # Modification for velocity KT scheme
+    lim_p: int = 1          # Order of limiter (1 for BJ)
+    lim_K: int = 0.1
 
     # Exit parameters
     exit_cfg: ConfigFarfield = None
