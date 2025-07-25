@@ -53,6 +53,7 @@ class FVMMesh:
     normals: torch.Tensor  # shape = (n_edges, 2)
     lengths: torch.Tensor  # shape = (n_edges)
     centroids: torch.Tensor  # shape = (n_cells, 2)
+    midpoints: torch.Tensor  # shape = (n_edges, 2)
     tri_to_edge: torch.Tensor  # shape = (n_cells, 3)
     tri_edge_signs: torch.Tensor  # shape = (n_cells, 3)
     edge_to_tri: dict[int, torch.Tensor]  # shape = {n_edges}[2]        # Mapping edge to triangle indices. Ordered [antiparallel, parallel] to edge normal.
@@ -235,8 +236,6 @@ class FVMMesh:
         # Triangle area is half the absolute value of the cross product
         area = 0.5 * torch.abs(cross)
 
-        # TODO: Properly handle small cells
-        #area = torch.clamp(area, min=5e-5)
         return area
 
     def _tri_edge_sign(self, centroids, midpoints, tri_to_edge, normals, edge_to_tri, tri_edge_idxs):

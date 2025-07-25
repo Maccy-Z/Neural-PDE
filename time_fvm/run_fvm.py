@@ -1,19 +1,22 @@
 from cprint import c_print
 import pickle
 import torch
+import numpy as np
 
-from pde.graph_grid.fvm_store import EdgeBCTypes as E
-from pde.graph_grid.fvm_store import Edge
-from pde.mesh_generation.generate_mesh import gen_mesh_fvm
-from time_fvm import FVMMesh, FVMEquation
-from config_fvm import ConfigFVM
+from time_fvm.fvm_store import EdgeBCTypes as E
+from time_fvm.fvm_store import Edge
+from time_fvm.fvm_mesh import FVMMesh
+from time_fvm.fvm_equation import FVMEquation
+from mesh_gen.meshes_fvm import gen_mesh_fvm, gen_mesh_tunnel
+from time_fvm.config_fvm import ConfigFVM
+from time_fvm.sparse_utils import plot_edges
 
 def mesh_graph(cfg: ConfigFVM, new):
     N_comp = 4
     if new:
         c_print(f'Creating new mesh', "green")
 
-        mesh_stuff = gen_mesh_fvm(areas=[cfg.min_A, cfg.max_A], cell_lnscale=cfg.lnscale)
+        mesh_stuff = gen_mesh_tunnel(areas=[cfg.min_A, cfg.max_A], cell_lnscale=cfg.lnscale)
         Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
         pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
     else:
@@ -33,25 +36,26 @@ def mesh_graph(cfg: ConfigFVM, new):
     # all_tags = np.concatenate([np.zeros(len(int_edgs)), np.ones(len(edge_tag))], axis=0, dtype=np.float32)
     # all_tags = torch.from_numpy(all_tags)
     # plot_edges(Xs, all_edgs, all_tags)
-    # exit(7)
 
     bc_tags = {}
     for bc_idx, (e_tag, e_vert) in enumerate(zip(edge_tag, bound_edgs, strict=True)):
         if e_tag == "NavierWall":
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0])
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0], tag=e_tag)
         elif e_tag == "Side":
             # bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Dirich, E.Dirich], [None, None, 0.5, 100], [0, 0, None, None])
-            bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None])
+            bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None], tag=e_tag)
 
         elif e_tag == "Left":
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
             x1, y1 = X1
             v_in = 0.1 if (0.05 < (y0+y1)/2 < 1.45) else 0
-            T = 550 #if (y0+y1)/2 > 0.7 else 250
-            bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Dirich, E.Dirich], [None, 0, 2.6, T], [0, None, None, None])
+            T = 200 #if (y0+y1)/2 > 0.7 else 250
+            # bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Dirich, E.Dirich], [None, 0, 1.01, T], [0, None, None, None])
+            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [1., 0, None, T], [None, None, 0, None], tag=e_tag)
+
         elif e_tag == "Right":
-            bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None])
+            bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None], tag=e_tag)
         else:
             raise ValueError(f'Unknown edge tag {e_tag}')
 
@@ -68,10 +72,10 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
         x, y = centroids[:, 0], centroids[:, 1]
 
         us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 4)
-        us_init[:, 0] = 0#50 * (x<.4) + 0 * (x>.4)
+        us_init[:, 0] = 1.#50 * (x<.4) + 0 * (x>.4)
         us_init[:, 1] = 0
-        us_init[:, 2] = 1. * (x<.4) + 0.5 #* (x>.4)
-        us_init[:, 3] = 350 * (x<.4) + 75 #* (x>.4)
+        us_init[:, 2] = 1.# * (x<.4) + 1. #* (x>.4)
+        us_init[:, 3] = 200# * (x<.4) + 200 #* (x>.4)
 
         # Energy: C_v * T + 0.5 * (u^2 + v^2)
         E = cfg.C_v * us_init[:, 3] + 0.5 * (us_init[:, 0] ** 2 + us_init[:, 1] ** 2)

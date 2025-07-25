@@ -3,12 +3,12 @@ import torch
 
 @dataclass
 class ConfigFarfield:
-    mode: str = "farfield_blended"    # {decay, farfield, interior} BC
+    mode: str = "farfield_blended"    # {decay, farfield, farfield_blended, adaptive, interior} BC
 
     # Farfield physical parameters
-    v_far: float = 0.0
-    rho_far: float = 0.4
-    T_far: float = 75
+    v_far: float = 1.
+    rho_far: float = 1
+    T_far: float = 200
 
     # Farfield limit / simulation parameters
     decay_tau: float = 0.05
@@ -20,26 +20,25 @@ class ConfigFarfield:
 class ConfigFVM:
 
     # solver parameters
-    dt: float = 1e-6
+    dt: float = 1e-4
     n_iter: int = 50000
 
     # mesh parameters
-    min_A: float = 1e-4
-    max_A: float = 3e-3
-    lnscale: float = 3
+    min_A: float = 0.3e-3
+    max_A: float = 2e-3
+    lnscale: float = 4
 
     # Physical parameters
-    viscosity: float = 3e-5     # At room temp
-    visc_bulk: float = 1e-5
+    viscosity: float = 1e-2     # At room temp
+    visc_bulk: float = 1e-3
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant
 
     gamma: float = 1.4  # Ratio of specific heats
-    C_v: float = 700     # Specific heat at constant volume
+    C_v: float = 10     # Specific heat at constant volume
 
     # Stability parameters
-    v_factor: float = 1     # Modification for velocity KT scheme
-    # bulk_visc_lim: float = 0.25
+    v_factor: float = 0.05     # Modification for velocity KT scheme
     lim_p: int = 4          # Order of limiter (1 for BJ)
     lim_K: int = 1
 
@@ -49,4 +48,4 @@ class ConfigFVM:
     def __post_init__(self):
         self.exit_cfg = ConfigFarfield()
 
-        self.R = (self.gamma - 1) * self.C_v
+        self.R = (self.gamma - 1) * self.C_v        # specific gas constant

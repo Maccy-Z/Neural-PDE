@@ -6,7 +6,7 @@ from sparse_utils import plot_points, plot_edges, plot_interp
 from fvm_mesh import FVMMesh
 from edge_process import FVMEdgeInfo
 from t_solvers import FVMCells
-from integrators import Butcher_adapt
+from integrators import Butcher_adapt, Adams4PC
 from config_fvm import ConfigFVM
 from sparse_utils import to_csr
 
@@ -128,7 +128,6 @@ class Adevction(FVMEdgeFunc):
             return advec_flux
         else:
             fluxes += advec_flux
-
 
 
 class Viscosity(FVMEdgeFunc):
@@ -259,14 +258,15 @@ class KTDiffusion(FVMEdgeFunc):
         Vs = Vs_face.norm(dim=-1)            # shape = [n_edges, edges=2]
         Vs_max = Vs.max(dim=1, keepdim=True).values   # shape = [n_edges, 1]
         c = self.phy_setup.c.max(dim=1).values  # shape = [n_edges, 1]
-        # a = torch.tensor([[self.v_factor * c, self.v_factor * c, c, c]], device=self.device)
-        # a = a.repeat(self.E_props.n_edges, 1) + Vs_max  # shape = [n_edges, n_comp]
-        a = Vs_max + c
+        # a = Vs_max + c
+
+        a = torch.cat([self.v_factor * c, self.v_factor * c, c, c], dim=1)  # shape = [n_edges, n_comp]
+        a = a + Vs_max  # shape = [n_edges, n_comp]
 
         # Maximum diffusion distance is a * dt/2 < tri_height -> a < 2 * tri_height / dt
         # Assume tri_height = k * edge_len / 2
         edge_len = E_props.edge_len
-        # a = a.clamp(max=0.75 * edge_len / dt)  # shape = [n_edges, 1]
+        # a = a.clamp(max=0.5*edge_len / dt)  # shape = [n_edges, 1]
         kt_fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * edge_len  # shape = [n_edges, n_comp]
 
         return kt_fluxes #* 0.25

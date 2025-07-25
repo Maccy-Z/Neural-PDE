@@ -4,10 +4,57 @@ import torch
 from abc import ABC, abstractmethod
 from matplotlib import pyplot as plt
 import time
+import os
+import numpy as np
+from datetime import datetime
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
-    from time_fvm.time_fvm import FVMEquation, PhysicalSetup
+    from time_fvm.fvm_equation import FVMEquation, PhysicalSetup
+
+
+class Saver:
+    def __init__(self, mesh, save_dir=None):
+        if save_dir is None:
+            timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
+            self.save_dir = f'saves/{timestamp}'
+        else:
+            self.save_dir = save_dir
+
+        os.makedirs(self.save_dir, exist_ok=True)
+
+        # Mesh property: main
+        centroids = mesh.centroids  # shape = [n_cells, comp=2]
+        # Mesh property: BC edges
+        bc_edge_mask = mesh.bc_edge_mask
+        bc_midpoints = mesh.midpoints[bc_edge_mask]  # shape = [n_bc_edge, comp=2]
+        bc_normals = mesh.normals[bc_edge_mask]  # shape = [n_bc_edge, comp=2]
+        mesh_props = {"centroids": centroids.cpu().numpy(), "bc_midpoints": bc_midpoints.numpy(), "bc_normals": bc_normals.numpy()}
+        np.savez_compressed(f'{self.save_dir}/mesh_props.npz', **mesh_props)
+
+
+    def save(self, step_num, t, E_props, primatives):
+        bc_edge_mask = E_props.mesh.bc_edge_mask
+        # Save centroid values
+        primatives = primatives  # shape = [n_cells, comp=4]
+        # Save boundary edge values
+        Vs_bc = E_props.Vs_faces[bc_edge_mask].mean(dim=1)  # shape = [n_bc_edge, comp=2]
+        rho_bc = E_props.rho_faces[bc_edge_mask].mean(dim=1)  # shape = [n_bc_edge, comp=1]
+        T_bc = E_props.T_faces[bc_edge_mask].mean(dim=1)  # shape = [n_bc_edge, comp=1]
+        bc_vals = torch.cat([Vs_bc, rho_bc, T_bc], dim=1)  # shape = [n_bc_edge, comp=4]
+
+        # Save to file.
+        # Normalise the primatives and bc_vals and save as fp16
+        prim_mean, prim_std = primatives.mean(dim=0, keepdim=True), primatives.std(dim=0, keepdim=True)
+        prim_scale = (primatives - prim_mean) / prim_std
+        bc_scale = (bc_vals - prim_mean) / prim_std
+        values = {"t": t.cpu().item(),
+                    "prim_mean": prim_mean.cpu().numpy(), "prim_std": prim_std.cpu().numpy(),
+                    "cell_primatives": prim_scale.cpu().half().numpy(), "bc_primatives": bc_scale.cpu().half().numpy()}
+
+        t = t.cpu().item()
+        t_str = f'{t:.4g}'  # Ensure step number is zero-padded to 5 digits
+        np.savez_compressed(f'{self.save_dir}/t_{t_str}.npz', **values)
 
 
 class FVMCells:
@@ -73,14 +120,16 @@ class TSolver(ABC):
         self.n_steps = n_steps
         self.cells = cells
         self.eq: FVMEquation = eq
-        self.print_i = 100
+        self.print_i = 200
+
+        self.saver = Saver(self.eq.E_props.mesh)
 
     def _solve(self):
         E_props = self.eq.E_props
 
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
-        plot_t = 0.005
-        next_plot_t = plot_t #+ 0.015
+        plot_t = 0.5
+        next_plot_t = 0 # plot_t #+ 0.015
 
         dts = []
 
@@ -108,8 +157,8 @@ class TSolver(ABC):
                 titles = ["Vx", "Vy", "rho", "T"]
                 titles = [f'{title} at {t=:4g}' for title in titles]
                 self.eq.plot_interp(primatives[:, :], title=titles, Xlims=Xlims)
-                # self.eq.pretty_plot(primatives, [(0.75, 10), (-2.25, 1.5)] , title=f"t={t:.4g}")
 
+                # self.eq.pretty_plot(primatives, [(0.75, 10), (-2.25, 1.5)] , title=f"t={t:.4g}")
                 # self.eq.plot_interp(self.eq.pressure_div[:, :2], Xlims=Xlims, title=f"Pressure div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.advect_div[:, :2], Xlims=Xlims, title=f"advect div at t={t:.4g}")
                 # self.eq.plot_interp(self.eq.kt_div[:, 0], Xlims=Xlims, title=f"KT div  at t={t:.4g}")
@@ -117,17 +166,12 @@ class TSolver(ABC):
                 # self.eq.plot_cells(primatives[:, 0], title=f'Vx at t={t:.4g}', Xlims=Xlims, show_index=True)
                 # self.eq.plot_flux(torch.ones_like(E_props.rho_faces[:, 0, 0]), title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
 
-                self._save_meshio(primatives)
-
+                self.saver.save(i, t, E_props, primatives)
 
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
 
-            # if t >= 180:
-            #     with open("save_state.pt", "wb") as f:
-            #         torch.save(self.cells.state, f)
-            #     exit(7)
 
         dts = torch.stack(dts).cpu()
         kernel_size = 10
@@ -175,7 +219,6 @@ class TSolver(ABC):
         mesh.write(
             save_name,  # str, os.PathLike, or buffer/open file
         )
-
 
     @torch.inference_mode()
     def solve(self):

@@ -3,7 +3,7 @@ from cprint import c_print
 import torch
 
 from fvm_mesh import FVMMesh
-from pde.graph_grid.fvm_store import Edge
+from time_fvm.fvm_store import Edge
 from config_fvm import ConfigFVM
 from sparse_utils import lift_sparse_matrix, combine_edge_operators, to_csr
 
@@ -16,7 +16,7 @@ class FarfieldBC:
         self.cfg = cfg
         self.exit_cfg = cfg.exit_cfg
 
-        # self.farfield_mask = farfield_mask
+        self.farfield_mask = farfield_mask
         self.farfield_normals = farfield_normals
         self.farfield_idx = torch.where(farfield_mask)[0]
 
@@ -32,13 +32,16 @@ class FarfieldBC:
 
 
         if self.exit_cfg.mode == "decay":
+            self.set_bc_U_face = self.__decay
+
             self.tau = 1 / self.exit_cfg.decay_tau
             self.decay_beta = self.exit_cfg.decay_beta
-            self.set_bc_U_face = self.__decay
+            self.rho_far = rho_far
+            self.v_far = v_far
             self.factor = 1
 
         elif self.exit_cfg.mode == "farfield":
-            self.set_bc_U_face = self.__farfield
+            self.set_bc_U_face = self.__farfield_neuman
             self.factor = 1
             self.R_far = v_far - 2 * a_far / (self.gamma - 1)
         elif self.exit_cfg.mode == "farfield_blended":
@@ -242,7 +245,7 @@ class FarfieldBC:
         U_face[self.farfield_idx] = U_face_farfield
 
 
-    def _farfield_neuman(self, U_face, Us_bc_cells, dt):
+    def __farfield_neuman(self, U_face, Us_bc_cells, dt):
         """Neuman velocity BC """
         V = Us_bc_cells[:, [0, 1]]                                          # shape = [n_ff_edge, 2]
         rho_int = Us_bc_cells[:, 2]                                   # shape = [n_ff_edge]
@@ -472,15 +475,11 @@ class FVMEdgeInfo:
         dirich_mask, neumann_mask = [], []
         dirich_val, neumann_val = [], []
         farfield_mask = []
-        euler_w_mask = []
-        self.use_farfield = False
         for bc_idx, e_type in bc_tags.items():
             dirich_mask.append(e_type.dirichlet())
             neumann_mask.append(e_type.neumann())
             dirich_val.append(e_type.U)
             neumann_val.append(e_type.dUdn)
-
-            euler_w_mask.append(e_type.euler_wall)
 
             farfield_mask.append(e_type.farfield())
 

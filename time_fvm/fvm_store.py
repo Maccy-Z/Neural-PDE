@@ -15,9 +15,10 @@ class EdgeBCTypes(Flag):
 class Edge:
     """"""
     edge_type: list[EdgeBCTypes]
-    U: list[float] = None
-    dUdn: list[float] = None
+    U: list[float| None] = None
+    dUdn: list[float | None] = None
     euler_wall: bool = False
+    tag:str = None
 
     def __post_init__(self):
         for e, u, dudn in zip(self.edge_type, self.U, self.dUdn, strict=True):

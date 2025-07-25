@@ -9,10 +9,10 @@ from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
-from pdes.PDEs import HeatLearned, Fluid, FluidLearned, Heat, NNFunc, Dummy
+from pdes.PDEs import Fluid, FluidLearned, NNFunc
 from pde.utils import setup_logging
-from pde.loss import DummyLoss, MSELoss2, MaskLoss, MSELossNorm
-from pde.mesh_generation.generate_mesh import gen_points_full
+from pde.loss import DummyLoss, MSELoss2, MSELossNorm
+from mesh_gen.generate_mesh import gen_points_full
 
 
 def boundary_normals(points, triangles, bc_edges):
@@ -422,7 +422,7 @@ def test():
                 pg['lr'] *= 0.5
 
     pde_adj.plot_interp(title="Initial solution")
-    U_graph.set_grid(Us_true*0.9)
+    U_graph.set_grid(Us_true*0.)
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Updated solution")
 
@@ -463,7 +463,7 @@ def test2():
     pde_adj.plot_interp(title="Predicted solution")
 
 if __name__ == "__main__":
-    setup_logging(debug=2)
+    setup_logging(debug=1)
     torch.manual_seed(123)
 
     # test_adjoint()
