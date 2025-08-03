@@ -39,7 +39,7 @@ class ConfigFVM:
 
     # Stability parameters
     v_factor: float = 0.1     # Modification for velocity KT scheme
-    lim_p: int = 1          # Order of limiter (1 for BJ)
+    lim_p: int = 2          # Order of limiter (1 for BJ)
     lim_K: int = 0.1
 
     # Exit parameters

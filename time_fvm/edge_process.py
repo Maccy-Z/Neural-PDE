@@ -303,6 +303,8 @@ class SlopeLimiter:
             self._limit = self.p3
         elif lim_p == 4:
             self._limit = self.p4
+        elif lim_p == 5:
+            self._limit = self.p5
         else:
             raise NotImplementedError(f"Limiter of order {lim_p} is not implemented.")
 
@@ -339,13 +341,22 @@ class SlopeLimiter:
         phi = torch.where(a < 2 * b, phi, 1)
         return phi
 
+    def p5(self, delta, dU):
+        """ 5th order limiter """
+        a = delta.abs()
+        b = dU.abs()
+        a_eps = a ** 5 + self.eps_p
+        S = 8 * b ** 2 * (a ** 2 - 2 * b * (a - b))
+        phi = (a_eps + a * S) / (a_eps + b * (delta ** 4 + S))
+
+        phi = torch.where(a < 2 * b, phi, 1)
+        return phi
+
     def limit(self, delta, dU):
         """ delta: maximum allowed values
             dU: Predicted value from lstsq gradient
         """
         phi = self._limit(delta, dU)    # shape = [n_cells, neigh=3, n_comp]
-
-        # print(f'{phi[4508, :, 0] = }')
         # Cell wide clamping
         phi = torch.min(phi, dim=1, keepdim=True).values  # shape = [n_cells, neigh=1, n_comp]
 
