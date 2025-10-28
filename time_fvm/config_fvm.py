@@ -6,9 +6,9 @@ class ConfigFarfield:
     mode: str = "farfield_blended"    # {decay, farfield, farfield_blended, adaptive, interior} BC
 
     # Farfield physical parameters
-    v_far: float = 1.
+    v_far: float = 2.
     rho_far: float = 1
-    T_far: float = 200
+    T_far: float = 100
 
     # Farfield limit / simulation parameters
     decay_tau: float = 0.05
@@ -24,22 +24,22 @@ class ConfigFVM:
     n_iter: int = 50000
 
     # mesh parameters
-    min_A: float = 0.3e-3
-    max_A: float = 1e-3
-    lnscale: float = 4
+    min_A: float = 0.5e-3
+    max_A: float = 2e-3
+    lnscale: float = 2
 
     # Physical parameters
-    viscosity: float = 1e-5     # At room temp
+    viscosity: float = 1000e-5     # At room temp
     visc_bulk: float = 1e-5
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant
 
-    gamma: float = 1.4  # Ratio of specific heats
-    C_v: float = 10     # Specific heat at constant volume
+    gamma: float = 1.2  # Ratio of specific heats
+    C_v: float = 2     # Specific heat at constant volume
 
     # Stability parameters
     v_factor: float = 0.1     # Modification for velocity KT scheme
-    lim_p: int = 2          # Order of limiter (1 for BJ)
+    lim_p: int = 4          # Order of limiter (1 for BJ)
     lim_K: int = 0.1
 
     # Exit parameters

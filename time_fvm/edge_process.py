@@ -411,7 +411,7 @@ class FVMEdgeInfo:
     mom_faces: torch.Tensor     # shape = (n_edges, 2, 2)  Face values
     Q_faces: torch.Tensor       # shape = (n_edges, 2, 1)  Face energy values
     phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
-
+    cell_grads: torch.Tensor = None # shape = (n_cells, 2, n_comp)  Gradient at cells. Used for boundary setter as None.
 
     def __init__(self, cfg: ConfigFVM, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
         self.device = device
@@ -468,8 +468,6 @@ class FVMEdgeInfo:
         c_print(f'_build_spm_face_grads done', color="magenta")
         c_print(f'Complete init FVMEdgeInfo', color="magenta")
 
-        self.cell_grads = None
-
 
     def clear_temp(self):
         del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val, self.cell_disps
@@ -519,7 +517,6 @@ class FVMEdgeInfo:
             self.boundary_setter.init_farfield(self.cfg, self.farfield_mask, exit_cell2edge, ff_edge_normals)
 
 
-    # @torch.compile()
     def precompute_shared(self, Us, dt):
         """ Precompute shared values that are used multiple times later.
             Us.shape = [n_cells, n_component] """
@@ -552,18 +549,6 @@ class FVMEdgeInfo:
         U_face_all = torch.empty((self.n_edges, 2, self.n_comp + 7), device=self.device)    # [momx, momy, rho, Q, div_V, face_grad X 4]
         U_face_all[self.tri_to_edge, self.tri_edge_signs] = cell_values
         U_face_all[self.bc_locations, self.bc_edge_side] = cell_values_bc
-        # U_face_all[self.bc_edge_mask, ~self.bc_edge_side] = cell_values_bc
-
-        # """ TEMP TEST """
-        # neum_mask_all = torch.zeros_like(self.bc_edge_mask)
-        # neum_mask_all = neum_mask_all.unsqueeze(-1).repeat(1, 4)
-        # neum_mask_all[self.bc_edge_mask] = self.neumann_mask
-        # where_neum_all = torch.where(neum_mask_all)
-        #
-        # where_neum = torch.where(self.neumann_mask)
-        # neum_vals = U_face_bc[where_neum[0], where_neum[1]]
-        # U_face_all[where_neum_all[0], :, where_neum_all[1]] = neum_vals.unsqueeze(-1)
-
 
         # Decompose components back
         self.Vs_faces = U_face_all[:, :, :2]  # shape = [n_edges, edges=2, n_comp=2]
@@ -587,10 +572,10 @@ class FVMEdgeInfo:
         self.grad_V = grad_F[:, :, :2]
         self.grad_T_n = dFdn_correct[:, 2]      # shape = [n_edges]
 
+        self.cell_grads = cell_grads
 
     def _limit_face_vals(self, Us, U_face_bc, cell_grads):
         """ Limited B-J scheme for cell to face interpolation.
-
         """
         U_cent = Us.unsqueeze(1)        # shape = [n_cells, 1, n_comp]
         Us_cell_face = torch.cat([Us, U_face_bc])        # shape = [n_cells + n_edges_bc, n_comp]
@@ -709,6 +694,23 @@ class FVMEdgeInfo:
 
 
     def _build_spm_face_grads(self):
+        """Build sparse operators to compute normal face gradients from cell values.
+
+        Constructs the sparse matrix/operator and offset vector used to compute
+        dU/dn on each face from cell-centered values and boundary conditions.
+        The routine:
+          - builds A_face for interior faces (differences / distances),
+          - lifts it to component-wise form,
+          - builds boundary contributions for Dirichlet and Neumann faces,
+          - assembles the final lifted sparse operator self.A_face_grad and offset self.b_face_grad.
+
+        Outputs:
+          - self.A_face_grad : sparse matrix for mapping flattened cell values to face normal gradients
+                              (shape corresponds to [n_edges * n_comp, n_cells * n_comp])
+          - self.b_face_grad : offset vector for boundary contributions (shape [n_edges * n_comp])
+
+        Implementation preserves existing behavior and shapes used elsewhere in the class.
+        """
         n_edges = self.edge_to_tri_main.shape[0]  # number of faces (edges)
         n_cells = self.n_cells
         n_bc = self.n_edges_bc  # number of boundary edges
@@ -894,6 +896,12 @@ class BoundarySetter:
         self.A_bc, self.b_bc = A_bc, b_bc
 
     def set_face_values(self, Us, cell_grads=None, dt=None):
+        """Compute and return boundary face values from cell values.
+
+        Uses the precomputed sparse operator to map flattened cell values to
+        boundary face values, then applies non-orthogonal correction and
+        farfield adjustments if enabled.
+        """
         Us_flat = Us.flatten()
         # Final U_face in flattened form.a
         U_face_flat = torch.mv(self.A_bc, Us_flat) + self.b_bc      # shape = [n_edges_bc * n_comp]
@@ -973,3 +981,4 @@ class BoundarySetter:
         self.use_farfield = True
         self.farfield_calc = FarfieldBC(cfg, farfield_mask, farfield_normals)
         self.exit_cell2edge = exit_cell2edge
+

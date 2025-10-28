@@ -7,6 +7,7 @@ import mup
 from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph
+from pde.graph_grid.graph_utils import plot_edges
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pdes.PDEs import Fluid, FluidLearned, NNFunc
@@ -272,64 +273,6 @@ def true_pde():
     # print(f'{Us.shape = }, {Us_all.shape = }')
 
 
-def plot_grads():
-    from matplotlib import pyplot as plt
-
-    cfg = Config()
-    # U_graph, triangles = load_graph(cfg)
-    U_graph, triangles = mesh_graph(cfg)
-    # U_graph, triangles = mesh_heat(cfg)
-
-    us_all, _ = U_graph.get_all_us_Xs()
-
-    pde_fn = FluidLearned(cfg, device=cfg.DEVICE)
-    # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
-
-    Us_true = torch.load("./Us_solution.pth")
-    loss_fn = MSELoss2(Us_true)
-
-    # loss_fn = DummyLoss()
-
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
-
-    pde_adj.forward_solve()
-    pde_adj.plot_interp(title="Initial solution")
-
-    # exit("Done with forward solve")
-
-    losses, grads = [], []
-    X_range = torch.linspace(0, 1000, 50)
-    for i in X_range:
-        # U_graph.reset()
-        pde_fn.a.data[0] = i.to(device=cfg.DEVICE)
-
-        pde_adj.forward_solve()
-        loss = pde_adj.adjoint_solve().detach().cpu()
-        pde_adj.backward()
-
-
-        grad = pde_fn.a.grad[0].cpu()
-        losses.append(loss)
-        grads.append(grad)
-
-        pde_fn.zero_grad()
-
-        # break
-
-    losses = torch.tensor(losses)
-    grads = torch.tensor(grads)
-
-    plt.plot(X_range, losses, marker='o')
-    plt.xlabel('Loss')
-    plt.show()
-
-    plt.plot(X_range, grads, marker='o')
-    plt.xlabel('Gradient')
-    plt.show()
-    print(losses)
-    print(grads)
-
-
 def test_adjoint():
     cfg = Config()
     # U_graph, triangles = load_graph(cfg)
@@ -347,6 +290,7 @@ def test_adjoint():
     optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
 
+    pred_loss_hist = []
     for i in range(2001):
         U_graph.set_grid(Us_true.clone())
 
@@ -369,10 +313,21 @@ def test_adjoint():
         optim.step(), optim_other.step()
         optim.zero_grad(), optim_other.zero_grad()
 
+        if i % 100 == 0:
+            U_graph.set_grid(Us_true * 0)
+            pde_adj.forward_solve()
+            Us_pred = U_graph.get_all_us_Xs()[0]
+            pred_loss = loss_fn(Us_pred, requires_grad=False)
+            pred_loss_hist.append(pred_loss.detach().cpu().item())
+            print(f'{pred_loss = }')
+
+
     U_graph.set_grid(Us_true)
     pde_adj.plot_interp(title="True solution")
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Predicted solution")
+
+    print(pred_loss_hist)
 
 
 def test():
@@ -392,7 +347,10 @@ def test():
     optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
 
-    resid_factor = 0.005
+    resid_factor = 0 # 0.0025
+    pde_adj.plot_interp(title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
+
+    pred_loss_hist = []
     for i in range(2001):
         final_loss = 0
         # Adjoint gradient
@@ -421,10 +379,22 @@ def test():
             for pg in optim.param_groups:
                 pg['lr'] *= 0.5
 
-    pde_adj.plot_interp(title="Initial solution")
-    U_graph.set_grid(Us_true*0.)
+        if i % 100 == 0:
+            U_graph.set_grid(Us_true * 0)
+            pde_adj.forward_solve()
+            Us_pred = U_graph.get_all_us_Xs()[0]
+            pred_loss = loss_fn(Us_pred, requires_grad=False)
+            pred_loss_hist.append(pred_loss.detach().cpu().item())
+            print(f'{pred_loss = }')
+
+    U_graph.set_grid(Us_true * 0)
     pde_adj.forward_solve()
-    pde_adj.plot_interp(title="Updated solution")
+    pde_adj.plot_interp(title=["Velocity x", "Velocity y", "Pressure"])
+    pass
+    pass
+    pass
+
+    print(pred_loss_hist)
 
 
 def test2():
@@ -463,11 +433,13 @@ def test2():
     pde_adj.plot_interp(title="Predicted solution")
 
 if __name__ == "__main__":
-    setup_logging(debug=1)
+    setup_logging(debug=2)
     torch.manual_seed(123)
 
-    # test_adjoint()
-    test()
+    true_pde()
+    # test()
+    test_adjoint()
+
     # test2()
 
     # optim_pde()

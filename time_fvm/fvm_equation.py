@@ -70,13 +70,12 @@ class PhysicalSetup:
         self.P_face = self.R * rho_faces * T_faces
         self.c = torch.sqrt(self.gamma * self.P_face / rho_faces)  # shape = [n_edges, edges=2, n_comp=1]
 
+        # print(f'{self.c.mean() = }')
         # assert not torch.any(torch.isnan(self.c))
 
-    #@torch.compile()
     def update(self):
         # E_props = self.E_props
         #E_props.T_faces = E_props.T_faces.clamp(min=10, max=2000)
-
         self._tau()
         self._pressure()
 
@@ -244,7 +243,6 @@ class KTDiffusion(FVMEdgeFunc):
         self.phy_setup = phy_setup
         self.a_clip = 1
 
-    #@torch.compile()
     def edge_fluxes(self, dt):
         E_props = self.E_props
         rho_face = E_props.rho_faces
@@ -260,7 +258,10 @@ class KTDiffusion(FVMEdgeFunc):
         c = self.phy_setup.c.max(dim=1).values  # shape = [n_edges, 1]
         # a = Vs_max + c
 
-        a = torch.cat([self.v_factor * c, self.v_factor * c, c, c], dim=1)  # shape = [n_edges, n_comp]
+        # Reduce diffusion for velocity for low Mach number flows
+        M = (Vs_max / (c + 1e-8)).abs()
+        v_factor = torch.clamp(M, min=self.v_factor, max=1)
+        a = torch.cat([v_factor * c, v_factor * c, c, c], dim=1)  # shape = [n_edges, n_comp]
         a = a + Vs_max  # shape = [n_edges, n_comp]
 
         # Maximum diffusion distance is a * dt/2 < tri_height -> a < 2 * tri_height / dt
@@ -269,6 +270,7 @@ class KTDiffusion(FVMEdgeFunc):
         a = a.clamp(max=self.a_clip * edge_len / dt)  # shape = [n_edges, 1]
         kt_fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * edge_len  # shape = [n_edges, n_comp]
 
+        # print(f'{M.max() = }')
         return kt_fluxes #* 0.25
 
 
@@ -303,7 +305,7 @@ class FVMEquation:
         self.KT_diff = KTDiffusion(cfg.v_factor, self.phy_setup, E_props, device=device)
 
         # self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
-        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP6")
+        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP4")
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
@@ -334,9 +336,7 @@ class FVMEquation:
         divergence = self._flux_to_div(fluxes)
 
         # For plotting
-        self.divergence = divergence
-
-        #
+        # self.divergence = divergence
         # self.pressure_flux = self.P_force.edge_fluxes()
         # self.pressure_div = self._flux_to_div(self.pressure_flux)
         # self.advect_flux = self.U_advect.edge_fluxes()
