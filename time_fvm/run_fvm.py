@@ -52,7 +52,7 @@ def mesh_graph(cfg: ConfigFVM, new):
             v_in = 0.1 if (0.05 < (y0+y1)/2 < 1.45) else 0
             T = 100 #if (y0+y1)/2 > 0.7 else 250
             # bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Dirich, E.Dirich], [None, 0, 1.01, T], [0, None, None, None])
-            bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Dirich], [2., 0, None, T], [None, None, 0, None], tag=e_tag)
+            bc_tags[bc_idx] = Edge([E.Inlet, E.Inlet, E.Inlet, E.Inlet], [None, None, None, None], [None, None, None, None], tag=e_tag)
 
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None], tag=e_tag)
@@ -63,7 +63,7 @@ def mesh_graph(cfg: ConfigFVM, new):
     return Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp
 
 
-def init_conds(centroids, cfg: ConfigFVM, load_state):
+def init_conds(centroids, cfg: ConfigFVM, load_state, vx=5., vy=0., rho=1., T=100.):
 
     if load_state:
         with open("save_state.pt", "rb") as f:
@@ -72,10 +72,10 @@ def init_conds(centroids, cfg: ConfigFVM, load_state):
         x, y = centroids[:, 0], centroids[:, 1]
 
         us_init = torch.zeros_like(x).unsqueeze(1).repeat(1, 4)
-        us_init[:, 0] = 2.#50 * (x<.4) + 0 * (x>.4)
-        us_init[:, 1] = 0
-        us_init[:, 2] = 1.# * (x<.4) + 1. #* (x>.4)
-        us_init[:, 3] = 100# * (x<.4) + 200 #* (x>.4)
+        us_init[:, 0] = vx #50 * (x<.4) + 0 * (x>.4)
+        us_init[:, 1] = vy
+        us_init[:, 2] = rho # * (x<.4) + 1. #* (x>.4)
+        us_init[:, 3] = T # * (x<.4) + 200 #* (x>.4)
 
         # Energy: C_v * T + 0.5 * (u^2 + v^2)
         E = cfg.C_v * us_init[:, 3] + 0.5 * (us_init[:, 0] ** 2 + us_init[:, 1] ** 2)
@@ -96,6 +96,18 @@ def main():
 
     cfg = ConfigFVM()
 
+    # Useful to set some parameters here
+    T_nat = 100
+    rho_nat = 1
+    V_x_nat = 6
+    cfg.exit_cfg.T_far = T_nat
+    cfg.exit_cfg.rho_far = rho_nat
+    cfg.exit_cfg.v_far = V_x_nat
+    cfg.inlet_cfg.T_nat = T_nat
+    cfg.inlet_cfg.rho_nat = rho_nat
+    cfg.inlet_cfg.V_x_nat = V_x_nat
+
+
     prob_definition = mesh_graph(cfg, new)
     Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp = prob_definition
 
@@ -110,7 +122,7 @@ def main():
     print(f'{mesh.areas.min() = }')
 
     centroids = mesh.centroids.clone()
-    us_init = init_conds(centroids, cfg, load_state)
+    us_init = init_conds(centroids, cfg, load_state, vx=V_x_nat, rho=rho_nat, T=T_nat)
     solver = FVMEquation(cfg, mesh, N_comp, bc_tags, us_init=us_init, device="cuda")
     solver.solve()
 

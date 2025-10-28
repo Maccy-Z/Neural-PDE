@@ -83,7 +83,7 @@ class TSolver(ABC):
         E_props = self.eq.E_props
 
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
-        plot_t = 0.25
+        plot_t = 0.05
         next_plot_t = plot_t
 
         dts = []
@@ -188,7 +188,7 @@ class TSolver(ABC):
         else:
             self._solve_profile()
 
-    @torch.compile()
+    # @torch.compile()
     def _solve_step(self, t):
         new_Us = self._step(t)
         self.cells.update_cells(new_Us)
