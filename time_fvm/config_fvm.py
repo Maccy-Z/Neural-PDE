@@ -34,13 +34,13 @@ class ConfigFVM:
     n_iter: int = 50000
 
     # mesh parameters
-    min_A: float = 0.5e-3
-    max_A: float = 2e-3
+    min_A: float = 0.25e-3
+    max_A: float = 1e-3
     lnscale: float = 2
 
     # Physical parameters
-    viscosity: float = 500e-5     # At room temp
-    visc_bulk: float = 1e-5
+    viscosity: float = 200e-5     # At room temp
+    visc_bulk: float = 200e-5
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant
 

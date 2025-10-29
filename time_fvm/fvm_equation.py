@@ -267,7 +267,7 @@ class KTDiffusion(FVMEdgeFunc):
         # Maximum diffusion distance is a * dt/2 < tri_height -> a < 2 * tri_height / dt
         # Assume tri_height = k * edge_len / 2
         edge_len = E_props.edge_len
-        a = a.clamp(max=self.a_clip * edge_len / dt)  # shape = [n_edges, 1]
+        # a = a.clamp(max=self.a_clip * edge_len / dt)  # shape = [n_edges, 1]
         kt_fluxes = (a/2) * (Us[:, 0] - Us[:, 1]) * edge_len  # shape = [n_edges, n_comp]
 
         # print(f'{M.max() = }')

@@ -115,8 +115,7 @@ class FVMEdgeInfo:
     edge_to_tri_bc: torch.Tensor  # shape = (n_edges_bc)
     exit_cell2edge: torch.Tensor  # shape = (n_cells, 2)  # Exit edge for each cell
     bc_edge_side: torch.Tensor  # shape = (n_edges_bc, 2)  # Side of the edge for each boundary edge
-    use_farfield: bool
-    boundary_setter: any
+    boundary_setter: BoundarySetter
 
     # Gradients
     G_mats: torch.Tensor  # shape = (2*n_cells, n_cells)  Gradient matrix for every cell
