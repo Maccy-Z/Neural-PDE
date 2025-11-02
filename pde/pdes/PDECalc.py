@@ -6,25 +6,8 @@ from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSyst
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDEs import PDEFunc
 
-class PDECalc(ABC):
-    @abstractmethod
-    def jacobian(self, pde_aux_input=None):
-        """ Compute the Jacobian of the PDE residuals with respect to the u values. """
-        pass
 
-    @abstractmethod
-    def jacob_transpose(self):
-        """ Compute the transpose of the Jacobian of the PDE residuals with respect to the u values. """
-        pass
-
-    @abstractmethod
-    def residuals(self, aux_input=None):
-        """ Compute the residuals of the PDE. """
-        pass
-
-
-
-class GraphPDECalc(PDECalc):
+class GraphPDECalc:
     """ Computes PDE Jacobian and residuals for graph-based PDEs, including Neumann BCs."""
 
     def __init__(self, U_graph: UGraph, pde_func: PDEFunc):
@@ -41,25 +24,26 @@ class GraphPDECalc(PDECalc):
         self.resid_jac_val = torch.func.vmap(torch.func.jacrev(self.pde_func.residuals, has_aux=True, argnums=0))
 
         self.neumann_mode = U_graph.neumann_mode
-        self.pde_perm = U_graph.pde_perm
-        self.bc_perm = U_graph.bc_perm
+
 
         if U_graph.neumann_mode:
-            self.deriv_calc_bc = U_graph.deriv_calc_bc
+            self.pde_perm = U_graph.pde_idx
+            self.bc_perm = U_graph.bc_idx
+            # self.deriv_calc_bc = U_graph.deriv_calc_bc
 
         # Precompute transforms with jacobian structure
-        deriv_jac_list = self.U_graph.deriv_calc.jacobian()
-        self.row_multipliers = [CSRRowMultiplier(spm, check_sparsity=True) for spm in deriv_jac_list]
-        self.csr_summer = CSRSummer(deriv_jac_list, check_sparsity=True)
+        deriv_jac_pde = self.U_graph.deriv_calc.jacobian()
+        self.row_multipliers = [CSRRowMultiplier(spm, check_sparsity=True) for spm in deriv_jac_pde]
+        self.csr_summer = CSRSummer(deriv_jac_pde, check_sparsity=True)
 
         dummy_jac = self.csr_summer.blank_csr()
 
         self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
 
-        # Simplify solver system for linear solver
-        dirich_mask = self.U_graph.dirich_mask.flatten()
-        trivial_rows = torch.where(dirich_mask)[0]
-        self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
+        # # Simplify solver system for linear solver
+        # dirich_mask = self.U_graph.dirich_mask.flatten()
+        # trivial_rows = torch.where(dirich_mask)[0]
+        # self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
     #@torch.no_grad()  # Gradient explicity handled.
     def jacobian(self, pde_aux_input=None):
@@ -75,32 +59,39 @@ class GraphPDECalc(PDECalc):
 
             Vector derivatives are handled as batches of [N_comp, N_pde], then merged into a column-concatenated vector [N_comp*N_pde]. Components are grouped together.
         """
-        # 1) Finite differences D.
-        U_dUs, Xs = self.U_graph.get_Us_dUs()  # shape = [N_pde, N_derivs, N_components]
+        U_graph = self.U_graph
 
-        # 2) dD/dU. shape = [N_derivs, N_u_grad]
+        # 1) Finite differences D=dUs/dXs and Jacobian dD/dU
+        U_dUs, Xs = self.U_graph.get_Us_dUs()  # U_dUs.shape = [N_Us, N_derivs, N_comp]
         dDdU = self.deriv_calc.jacobian()  # shape = [N_derivs][N_Us_, N_Us_]
 
-        # 3) dR/dD. shape = [N_pde*N_comp, N_derivs*N_comp] = [N_pde_, N_derivs_]
-        dRdD_main, resid_main = self.resid_jac_val(U_dUs, Xs) if (pde_aux_input is None) else self.resid_jac_val(U_dUs, Xs, pde_aux_input)    # [N_pde, N_component, N_deriv, N_component]
+        # 2) Split out equation and bc parts
+        U_dUs_pde = U_dUs[U_graph.pde_mask]  # shape = [N_pde, N_derivs, N_comp]
+        Xs_pde = Xs[U_graph.pde_mask]  # shape = [N_pde, N_dim]
+
+        # 3) Compute dR/dD on equation points.
+        dRdD_pde, resid_main = self.resid_jac_val(U_dUs_pde, Xs_pde) if (pde_aux_input is None) else self.resid_jac_val(U_dUs_pde, Xs_pde, pde_aux_input)    # [N_pde, N_component, N_deriv, N_component]
                                                                                                                                         # residuals.shape = [N_pde, N_component]
-        dRdD_main = dRdD_main.reshape(self.N_pdes * self.N_component, (self.N_deriv + 1) * self.N_component)  # [N_pde_, N_deriv_]
+        dRdD_pde = dRdD_pde.reshape(self.N_pdes * self.N_component, (self.N_deriv + 1) * self.N_component)  # [N_pde_, N_deriv_]
         resid_main = resid_main.reshape(self.N_pdes * self.N_component)  # [N_pde_]
 
-        # 4) Reshape to cannonical ordering
-        dRdD = torch.zeros(((self.U_graph.N_us_tot * self.N_component), (self.N_deriv + 1) * self.N_component), device=self.device)
-        dRdD[self.pde_perm] = dRdD_main  # [N_Us_, N_deriv_]
-        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device)
-        residuals[self.pde_perm] = resid_main  # [N_Us_]
+        # 4) Compute dRdD on BC points.
+        dRdD_bc, resid_bc = self.U_graph.bc_calc.resid_jac(U_dUs)
+        # bc_deriv_pred = self.U_graph.get_neum_preds()  # shape = [N_bc_derivs_]
+        # bc_deriv_true = self.U_graph.deriv_val
+        # resid_bc = bc_deriv_pred - bc_deriv_true  # shape = [N_bc_derivs_]
+        # dRdD_bc = self.deriv_calc_bc.dRdD  # shape = [N_bc_derivs, N_deriv_]
 
-        # 5) Add on Neumann preds / dRdD:
-        if self.neumann_mode:
-            bc_deriv_pred = self.U_graph.get_neum_preds()  # shape = [N_bc_derivs_]
-            bc_deriv_true = self.U_graph.deriv_val
-            resid_bc = bc_deriv_pred - bc_deriv_true  # shape = [N_bc_derivs_]
-            dRdD_bc = self.deriv_calc_bc.dRdD  # shape = [N_bc_derivs, N_deriv_]
-            dRdD[self.bc_perm] = dRdD_bc
-            residuals[self.bc_perm] = resid_bc
+
+        # 4) Reshape to cannonical ordering
+        dRdD = torch.zeros(((self.U_graph.N_us_tot * self.N_component), (self.N_deriv + 1) * self.N_component),
+                           device=self.device)  # [N_Us_, N_deriv_]
+        dRdD[self.pde_perm] = dRdD_pde
+        dRdD[self.bc_perm] = dRdD_bc
+
+        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device) # [N_Us_]
+        residuals[self.pde_perm] = resid_main
+        residuals[self.bc_perm] = resid_bc
 
         # 6.1) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
         partials = []

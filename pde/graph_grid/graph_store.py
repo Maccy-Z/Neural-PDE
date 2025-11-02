@@ -14,17 +14,17 @@ class P_Types(Flag):
     FIX = auto()   # Dirichlet: u = Dirichlet(x) enforced on this point.
     DERIV = auto()  # deriv(u, us) = Neumann(x) enforced on this point. Can be used as central Neumann derivative or edge, depending on other nodes.
 
-    GRAD = auto()   # u requires fitting on point.
+    UPDATE = auto()   # u requires fitting on point.
 
     # User BC types
     DirichBC = FIX  # Dirichlet BC enforced on point.
-    NeumCentralBC = DERIV | PDE | GRAD # Neumann BC + PDE enforced on point.
-    NeumOffsetBC = DERIV | GRAD # Only Neumann BC on point.
+    NeumCentralBC = DERIV | PDE | UPDATE # Neumann BC + PDE enforced on point.
+    NeumOffsetBC = DERIV | UPDATE # Only Neumann BC on point.
     BothBC = FIX | DERIV  # Both Dirichlet and Neumann BC enforced on point.
-    Ghost = NONE | GRAD # Ghost point
+    Ghost = NONE | UPDATE # Ghost point
 
     # Normal point
-    Normal = PDE | GRAD # Standard PDE enforced on point.
+    Normal = PDE | UPDATE # Standard PDE enforced on point.
 
 class P_TimeTypes(Flag):
     """ Point types for time dependent problems. """

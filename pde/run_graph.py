@@ -265,11 +265,11 @@ def true_pde():
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
-    Us_all, updt_mask, _ = U_graph.get_us_mask()
-    Us = Us_all[updt_mask]
-
-    with open("./Us_solution.pth", "wb") as f:
-        torch.save(Us, f)
+    # Us_all, updt_mask, _ = U_graph.get_us_mask()
+    # Us = Us_all[updt_mask]
+    #
+    # with open("./Us_solution.pth", "wb") as f:
+    #     torch.save(Us, f)
     # print(f'{Us.shape = }, {Us_all.shape = }')
 
 
@@ -434,11 +434,12 @@ def test2():
 
 if __name__ == "__main__":
     setup_logging(debug=2)
+    torch.set_printoptions(linewidth=120)
     torch.manual_seed(123)
 
     true_pde()
     # test()
-    test_adjoint()
+    # test_adjoint()
 
     # test2()
 

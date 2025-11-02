@@ -3,7 +3,7 @@ import torch.func as func
 from codetiming import Timer
 import logging
 
-from pde.pdes.PDECalc import PDECalc
+from pde.pdes.PDECalc import GraphPDECalc
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDEs import PDEFunc
 from pde.loss import Loss
@@ -11,7 +11,7 @@ from pde.solvers.linear_solvers import LinearSolver
 
 
 class PDEAdjoint:
-    def __init__(self, pde_calc: PDECalc, adj_lin_solver: LinearSolver, loss_fn: Loss):
+    def __init__(self, pde_calc: GraphPDECalc, adj_lin_solver: LinearSolver, loss_fn: Loss):
         self.pde_calc = pde_calc
         self.adj_lin_solver = adj_lin_solver
         self.loss_fn = loss_fn

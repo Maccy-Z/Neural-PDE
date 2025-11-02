@@ -44,6 +44,7 @@ class Dummy(PDEFunc):
 
         return u_dus[0] * (self.a + 1) + self.a  # Return a constant value of 10 for all components
 
+
 class Heat(PDEFunc):
     def __init__(self, cfg: Config, device='cpu'):
         super().__init__(cfg=cfg, device=device)
