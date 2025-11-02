@@ -132,11 +132,11 @@ class SolverNewton:
         t_jacob = self.timer.last
 
         with self.timer:
-            # jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
-            # deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
-            # deltas = self.pde_calc.postproc_solve(deltas)
+            jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
+            deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
+            deltas = self.pde_calc.postproc_solve(deltas)
 
-            deltas = self.lin_solver.solve(jacobian, old_resid)
+            # deltas = self.lin_solver.solve(jacobian, old_resid)
 
         t_solve = self.timer.last
 

@@ -26,24 +26,21 @@ class GraphPDECalc:
         self.neumann_mode = U_graph.neumann_mode
 
 
-        if U_graph.neumann_mode:
+        if self.neumann_mode:
             self.pde_perm = U_graph.pde_idx
             self.bc_perm = U_graph.bc_idx
-            # self.deriv_calc_bc = U_graph.deriv_calc_bc
 
         # Precompute transforms with jacobian structure
         deriv_jac_pde = self.U_graph.deriv_calc.jacobian()
         self.row_multipliers = [CSRRowMultiplier(spm, check_sparsity=True) for spm in deriv_jac_pde]
         self.csr_summer = CSRSummer(deriv_jac_pde, check_sparsity=True)
-
         dummy_jac = self.csr_summer.blank_csr()
-
         self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
 
-        # # Simplify solver system for linear solver
-        # dirich_mask = self.U_graph.dirich_mask.flatten()
-        # trivial_rows = torch.where(dirich_mask)[0]
-        # self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
+        # Simplify solver system for linear solver
+        dirich_mask = self.U_graph.dirich_mask.flatten()
+        trivial_rows = torch.where(dirich_mask)[0]
+        self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
     #@torch.no_grad()  # Gradient explicity handled.
     def jacobian(self, pde_aux_input=None):
@@ -82,8 +79,7 @@ class GraphPDECalc:
         # resid_bc = bc_deriv_pred - bc_deriv_true  # shape = [N_bc_derivs_]
         # dRdD_bc = self.deriv_calc_bc.dRdD  # shape = [N_bc_derivs, N_deriv_]
 
-
-        # 4) Reshape to cannonical ordering
+        # 5) Reshape to cannonical ordering
         dRdD = torch.zeros(((self.U_graph.N_us_tot * self.N_component), (self.N_deriv + 1) * self.N_component),
                            device=self.device)  # [N_Us_, N_deriv_]
         dRdD[self.pde_perm] = dRdD_pde
