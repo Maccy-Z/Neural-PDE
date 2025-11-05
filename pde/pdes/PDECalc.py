@@ -15,9 +15,9 @@ class GraphPDECalc:
         self.device = U_graph.device
 
         self.U_graph = U_graph
-        self.N_pdes = U_graph.N_pdes
+        self.N_pde = U_graph.N_pdes
         self.N_us_grad = U_graph.N_us_grad
-        self.N_component = U_graph.N_comp
+        self.N_comp = U_graph.N_comp
         self.N_deriv = U_graph.N_deriv
 
         self.deriv_calc = U_graph.deriv_calc
@@ -69,8 +69,8 @@ class GraphPDECalc:
         # 3) Compute dR/dD on equation points.
         dRdD_pde, resid_main = self.resid_jac_val(U_dUs_pde, Xs_pde) if (pde_aux_input is None) else self.resid_jac_val(U_dUs_pde, Xs_pde, pde_aux_input)    # [N_pde, N_component, N_deriv, N_component]
                                                                                                                                         # residuals.shape = [N_pde, N_component]
-        dRdD_pde = dRdD_pde.reshape(self.N_pdes * self.N_component, (self.N_deriv + 1) * self.N_component)  # [N_pde_, N_deriv_]
-        resid_main = resid_main.reshape(self.N_pdes * self.N_component)  # [N_pde_]
+        dRdD_pde = dRdD_pde.reshape(self.N_pde * self.N_comp, (self.N_deriv + 1) * self.N_comp)  # [N_pde_, N_deriv_]
+        resid_main = resid_main.reshape(self.N_pde * self.N_comp)  # [N_pde_]
 
         # 4) Compute dRdD on BC points.
         dRdD_bc, resid_bc = self.U_graph.bc_calc.resid_jac(U_dUs)
@@ -80,18 +80,18 @@ class GraphPDECalc:
         # dRdD_bc = self.deriv_calc_bc.dRdD  # shape = [N_bc_derivs, N_deriv_]
 
         # 5) Reshape to cannonical ordering
-        dRdD = torch.zeros(((self.U_graph.N_us_tot * self.N_component), (self.N_deriv + 1) * self.N_component),
+        dRdD = torch.zeros(((self.U_graph.N_us_tot * self.N_comp), (self.N_deriv + 1) * self.N_comp),
                            device=self.device)  # [N_Us_, N_deriv_]
         dRdD[self.pde_perm] = dRdD_pde
         dRdD[self.bc_perm] = dRdD_bc
 
-        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device) # [N_Us_]
+        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_comp), device=self.device) # [N_Us_]
         residuals[self.pde_perm] = resid_main
         residuals[self.bc_perm] = resid_bc
 
         # 6.1) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
         partials = []
-        for d in range(self.N_component*(self.N_deriv+1)):
+        for d in range(self.N_comp * (self.N_deriv + 1)):
             prod = self.row_multipliers[d].mul(dDdU[d], dRdD[:, d])  # shape = [N_pde_, N_u_grad_]
             partials.append(prod)
 
@@ -105,26 +105,32 @@ class GraphPDECalc:
         return self.transposer.transpose(jacobian)
 
     def residuals(self, aux_input=None):
-        U_dUs, Xs = self.U_graph.get_Us_dUs()  # shape = [N_pde, N_derivs, N_components]
+        U_graph = self.U_graph
 
-        # residuals.shape = [N_pde, N_component]
+        U_dUs, Xs = U_graph.get_Us_dUs()  # shape = [N_pde, N_derivs, N_comp]
+        U_dUs_pde = U_dUs[U_graph.pde_mask]  # shape = [N_pde, N_derivs, N_comp]
+        Xs_pde = Xs[U_graph.pde_mask]  # shape = [N_pde, N_dim]
+
+        # residuals.shape = [N_pde, N_comp]
         if aux_input is None:
-            resid_main, _ = func.vmap(self.pde_func.residuals)(U_dUs, Xs)
+            resid_main, _ = func.vmap(self.pde_func.residuals)(U_dUs_pde, Xs_pde)
         else:
-            resid_main, _ = func.vmap(self.pde_func.residuals)(U_dUs, Xs, aux_input)
+            resid_main, _ = func.vmap(self.pde_func.residuals)(U_dUs_pde, Xs_pde, aux_input)
 
-        resid_main = resid_main.reshape(self.N_pdes * self.N_component) # shape = [N_pde * N_component]
+        resid_main = resid_main.reshape(self.N_pde * self.N_comp) # shape = [N_pde * N_comp]
 
 
-        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_component), device=self.device) # shape = [N_Us_]
+        residuals = torch.zeros((self.U_graph.N_us_tot * self.N_comp), device=self.device) # shape = [N_Us_]
         residuals[self.pde_perm] = resid_main  # [N_Us_]
 
         # 2) Neumann BCs
         if self.neumann_mode:
-            bc_deriv_pred = self.U_graph.get_neum_preds()
-            bc_deriv_true = self.U_graph.deriv_val
-            bc_residuals = bc_deriv_pred - bc_deriv_true
-            residuals[self.bc_perm] = bc_residuals
+            # bc_deriv_pred = self.U_graph.get_neum_preds()
+            # bc_deriv_true = self.U_graph.deriv_val
+            # bc_residuals = bc_deriv_pred - bc_deriv_true
+            # residuals[self.bc_perm] = bc_residuals
+            dRdD_bc, resid_bc = self.U_graph.bc_calc.resid_jac(U_dUs)
+            residuals[self.bc_perm] = resid_bc
 
         return residuals
 

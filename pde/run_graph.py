@@ -433,7 +433,7 @@ def test2():
     pde_adj.plot_interp(title="Predicted solution")
 
 if __name__ == "__main__":
-    setup_logging(debug=2)
+    setup_logging(debug=0)
     torch.set_printoptions(linewidth=120)
     torch.manual_seed(123)
 
