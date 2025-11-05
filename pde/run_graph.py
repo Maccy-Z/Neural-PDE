@@ -365,7 +365,7 @@ def test():
         # final_loss += loss
         torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.5)
         if i % 50 == 0:
-            c_print(f'{i}/400 loss: {final_loss.detach().cpu().item():.3g}' # , {loss.detach().cpu().item():.2g}'
+            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}' # , {loss.detach().cpu().item():.2g}'
                     , color="bright_green")
             # for n, p in pde_fn.other_params.named_parameters():
             #     print(f'{n = }, {p.cpu().detach() }')
@@ -432,13 +432,14 @@ def test2():
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Predicted solution")
 
+
 if __name__ == "__main__":
-    setup_logging(debug=0)
+    setup_logging(debug=1)
     torch.set_printoptions(linewidth=120)
     torch.manual_seed(123)
 
     true_pde()
-    # test()
+    test()
     # test_adjoint()
 
     # test2()
