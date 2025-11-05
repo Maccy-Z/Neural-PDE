@@ -434,9 +434,9 @@ def test2():
 
 
 if __name__ == "__main__":
-    setup_logging(debug=1)
+    setup_logging(debug=2)
     torch.set_printoptions(linewidth=120)
-    torch.manual_seed(123)
+    torch.manual_seed(1233)
 
     true_pde()
     test()
