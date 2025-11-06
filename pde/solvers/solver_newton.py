@@ -100,6 +100,9 @@ class EfficientIntervalOptimizer:
 
 
 class SolverNewton:
+    """ Newton Raphson solver for finding roots of PDE residuals.
+        pde_calc can be replaced for loading different PDEs.
+    """
     def __init__(self, pde_calc: GraphPDECalc, lin_solver: LinearSolver, cfg: FwdConfig):
         # self.device = cfg.DEVICE
         self.cfg = cfg
@@ -142,7 +145,6 @@ class SolverNewton:
 
         logging.debug(f"Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s,")
         return deltas, jacobian, old_resid
-
 
     @torch.no_grad()
     def find_pde_root(self, U_graph: UGraph, aux_input=None):

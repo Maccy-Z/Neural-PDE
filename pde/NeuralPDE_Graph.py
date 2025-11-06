@@ -11,6 +11,7 @@ from pde.config import Config
 from pde.loss import Loss
 from pde.graph_grid.graph_utils import plot_interp, plot_points
 
+
 class NeuralPDEGraph:
     u_graph: UGraph
     loss_fn: Loss
@@ -21,20 +22,24 @@ class NeuralPDEGraph:
         fwd_cfg = cfg.fwd_cfg
         self.loss_fn = loss_fn
         self.cfg = cfg
-        self.DEVICE = cfg.DEVICE
+        self.device = cfg.device
 
-        self.pde_calc = GraphPDECalc(U_graph, pde_fn)
+        torch.save(self.U_graph, "U_graph.pt")
+        self.U_graph = torch.load("U_graph.pt", weights_only=False)
+
+
+        self.U_graph = U_graph
+
+        self.pde_calc = GraphPDECalc(self.U_graph, pde_fn)
 
         # Forward solver
-        fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
+        fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.device, cfg=fwd_cfg.lin_solve_cfg)
         self.newton_solver = SolverNewton(self.pde_calc, fwd_lin_solver, cfg=fwd_cfg)
 
         # Adjoint solver
-        adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.DEVICE, adj_cfg.lin_solve_cfg)
+        adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.device, adj_cfg.lin_solve_cfg)
         self.pde_adjoint = PDEAdjoint(self.pde_calc, adj_lin_solver, loss_fn)
 
-        self.pde_fn = pde_fn
-        self.U_graph = U_graph
 
         self.triangles = triangles
 

@@ -19,7 +19,7 @@ def true_pde():
     us_all, _ = u_graph.get_all_us_Xs()
     derivs = u_graph.deriv_calc_eval.derivative(us_all)
 
-    pde_fn = Fluid(cfg, device=cfg.DEVICE)
+    pde_fn = Fluid(cfg, device=cfg.device)
     pde_adj = NeuralPDEGraph(pde_fn, u_graph, cfg, DummyLoss(), triangles)
     # pde_adj.forward_solve()
 

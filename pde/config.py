@@ -103,7 +103,7 @@ class AdjointConfig:
 
 @dataclass
 class Config:
-    DEVICE: str = "cuda"
+    device: str = "cuda"
 
     # Phyiscal Parameters
     mu = 1.

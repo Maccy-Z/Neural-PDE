@@ -7,7 +7,7 @@ class grid_setup:
 
         grid_N = cfg.N
         N = torch.tensor(cfg.N)
-        Xs_grid = XGrid2D(cfg.xmin, cfg.xmax, N, device=cfg.DEVICE)
+        Xs_grid = XGrid2D(cfg.xmin, cfg.xmax, N, device=cfg.device)
 
         # Dirichlet BC
         dirichlet_bc = torch.full(grid_N, float('nan'))

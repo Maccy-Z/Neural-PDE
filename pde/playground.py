@@ -16,7 +16,7 @@ setup_logging()
 def fit_model():
 
     cfg = Config()
-    pde_fn = NNFunc(cfg, device=cfg.DEVICE)
+    pde_fn = NNFunc(cfg, device=cfg.device)
 
     optim = torch.optim.Adam(pde_fn.parameters(), lr=0.01)
 
@@ -52,7 +52,7 @@ def fit_model():
 
 def true_pde():
     cfg = Config()
-    pde_fn = Poisson(cfg, device=cfg.DEVICE)
+    pde_fn = Poisson(cfg, device=cfg.device)
     pde_grid = grid_setup(cfg)
     pde_adj = NeuralPDE(pde_fn, pde_grid, None, cfg)
 

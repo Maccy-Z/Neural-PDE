@@ -142,7 +142,7 @@ def mesh_heat(cfg, max_degree=2, grad_neigh=25):
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.DEVICE)
+    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
 
     with open("save_u_graph.pth", "wb") as f:
         torch.save((U_graph, triangles), f)
@@ -232,7 +232,7 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.DEVICE)
+    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
 
     # with open("save_u_graph.pth", "wb") as f:
     #     torch.save((U_graph, triangles), f)
@@ -253,7 +253,7 @@ def true_pde():
     # U_graph, triangles = mesh_heat(cfg)
 
     Us_all, _ = U_graph.get_all_us_Xs()
-    pde_fn = Fluid(cfg, device=cfg.DEVICE)
+    pde_fn = Fluid(cfg, device=cfg.device)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
     # Us_target = U_graph.pde_mask.float()
@@ -283,7 +283,7 @@ def test_adjoint():
     U_graph.set_grid(Us_true)
     loss_fn = MSELossNorm(Us_true)
 
-    pde_fn = NNFunc(cfg, device=cfg.DEVICE)
+    pde_fn = NNFunc(cfg, device=cfg.device)
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
@@ -340,7 +340,7 @@ def test():
     U_graph.set_grid(Us_true)
     loss_fn = MSELossNorm(Us_true)
 
-    pde_fn = NNFunc(cfg, device=cfg.DEVICE)
+    pde_fn = NNFunc(cfg, device=cfg.device)
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
@@ -407,7 +407,7 @@ def test2():
     U_graph.set_grid(Us_true.clone())
     loss_fn = MSELoss2(Us_true)
 
-    pde_fn = NNFunc(cfg, device=cfg.DEVICE)
+    pde_fn = NNFunc(cfg, device=cfg.device)
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
@@ -436,10 +436,10 @@ def test2():
 if __name__ == "__main__":
     setup_logging(debug=2)
     torch.set_printoptions(linewidth=120)
-    torch.manual_seed(1233)
+    torch.manual_seed(1)
 
     true_pde()
-    test()
+    # test()
     # test_adjoint()
 
     # test2()

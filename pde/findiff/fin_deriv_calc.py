@@ -1,17 +1,16 @@
 import torch
 
 from pde.graph_grid.graph_store import DerivGraph, Deriv
-from pde.BaseDerivCalc import BaseDerivCalc
 from pde.utils_sparse import coo_row_select, coo_col_select, CSRToInt32, csr_block_repeat, plot_sparsity, coo_interleave, csr_col_shift
 from pde.utils_sparse import coo_zero_elements, coo_col_interleave, coo_row_interleave
 
 
-class FinDerivCalcSPMV(BaseDerivCalc):
+class FinDerivCalcSPMV:
     """ Using sparse matrix-vector multiplication to compute Grad^n(u) using finite differences. """
     def __init__(self, fd_graphs: dict[tuple, DerivGraph], N_comp, device="cpu"):
         """ Initialise sparse matrices from finite difference graphs.
-            Compute d = A * u [eq_mask]. Compile eq_mask into A.
-            Jacobian is A[eq_mask][us_mask]
+            Compute d = A * u. Compile eq_mask into A.
+            Jacobian is A.T
 
             pde_mask: PDE points
             bc_mask: Neumann BC points
@@ -74,9 +73,9 @@ class FinDerivCalcSPMV(BaseDerivCalc):
             spm.shape = [N_pde, N_points]
             return.shape = {N_deriv: [N_pde, N_components]}
         """
-        derivatives = {(0, 0): Us}
         Us = Us.contiguous()
 
+        derivatives = {(0, 0): Us.clone()}
         if get_orders is None:
             for order, spm in self.fd_spms.items():
                 derivatives[order] = torch.mm(spm, Us)
@@ -104,7 +103,6 @@ class BCCalc:
         self.N_Us = N_Us
         order_to_j = {deg: i for i, deg in enumerate(dif_degrees)}
         N_derivs = len(dif_degrees)
-
 
         C = []
         for p in bc_specs.values():

@@ -20,7 +20,7 @@ class NeuralPDE:
         fwd_cfg = cfg.fwd_cfg
         self.loss_fn = loss_fn
         self.cfg = cfg
-        self.DEVICE = cfg.DEVICE
+        self.DEVICE = cfg.device
 
         # Grid and BC
         Xs_grid = grid_setup.Xs_grid
@@ -32,7 +32,7 @@ class NeuralPDE:
         pde_forward = PDEForward(us_grid, pde_fn)
 
         # Forward solver
-        fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.DEVICE, cfg=fwd_cfg.lin_solve_cfg)
+        fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.device, cfg=fwd_cfg.lin_solve_cfg)
         fwd_jacob_calc = get_jac_calc(us_grid, pde_forward, fwd_cfg)
         newton_solver = SolverNewton(pde_forward, us_grid, fwd_lin_solver, jac_calc=fwd_jacob_calc, cfg=fwd_cfg)
 

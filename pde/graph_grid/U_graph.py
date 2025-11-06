@@ -9,6 +9,7 @@ from pde.graph_grid.graph_store import P_Types as T
 from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff, nearest_neighbors
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, BCCalc
 from pde.graph_grid.graph_utils import plot_interp, plot_points
+from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSystemSimplifier, plot_sparsity
 
 print_fn = lambda s: c_print(f"{s}", color="bright_black")
 
@@ -65,9 +66,8 @@ class UGraph(UBase):
 
     pde_mask: Tensor  # [N_us_tot]                   # Mask for where to enforce PDE on. Bool
     updt_mask: Tensor  # [N_us_tot]                   # Mask for nodes that need to be updated. Bool
-    dirich_mask: Tensor  # [N_us_tot, N_comp]                   # Mask for derivative BC nodes. Bool
-    neumann_mask: Tensor  # [N_us_tot]                   # Mask for derivative BC nodes. Bool
-    neumann_mode: bool    # True if there are derivative BCs.
+    pde_idx: Tensor  # [N_pde * N_component]        # Indices for PDE nodes in flattened Us
+    bc_idx: Tensor   # [N_bc * N_component]         # Indices for
 
     N_us_tot: int           # Total number of points
     N_us_grad: int          # Number of points that need fitting
@@ -76,16 +76,12 @@ class UGraph(UBase):
     N_deriv: int         # Number of derivatives used
     #N_dirich: int         # Number of Dirichlet BCs
 
-    graphs: dict[tuple, DerivGraph] # [N_graphs]                  # Gradient graphs for each gradient type.
-        # edge_index: torch.Tensor   # [2, num_edges]      # Edges between nodes
-        # edge_coeff: torch.Tensor  # [num_edges]       # Finite diff coefficients for each edge
-        # neighbors: list[Tensor]     # [N_us_tot, N_neigh]           # Neighborhood for each node
-
     deriv_calc: FinDerivCalcSPMV
-    deriv_orders_bc: dict[int, list[Deriv]]  # [N_deriv_BC, 2]     # Derivative order for each derivative BC
-
-    # If Neumann:
-    deriv_val: Tensor # [N_deriv_BC]            # Derivative values at nodes for BC
+    bc_calc: BCCalc
+    row_multipliers: list[CSRRowMultiplier]
+    csr_summer: CSRSummer
+    transposer: CSRTransposer
+    simplifier: CSRSystemSimplifier
 
     def _check(self, setup_dict):
         """ Check problem is well specified """
@@ -129,83 +125,71 @@ class UGraph(UBase):
                 neum_mask.append(True)
             else:
                 neum_mask.append(False)
-        self.neumann_mask = torch.tensor(neum_mask)
-        self.neumann_mode = len(deriv_val) > 0
+        #self.neumann_mask = torch.tensor(neum_mask)
         # 1.3) Set up initial node values
         self._Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
         self._Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
 
+        print(f'On init {self._Us.data_ptr() = }')
         # 2.1) Get the neighborhood graph
         stencils = nearest_neighbors(self.tri, self._Xs, grad_neigh)
         # 2.2) Compute finite difference stencils / graphs.
         diff_degrees = gen_multi_idx_tuple(max_degree)
-        self.graphs = {}
+        graphs = {}
         for degree in diff_degrees[1:]:  # 0th order is just itself.
-            # print_fn(f"Generating graph for ")
             with Timer(text=f"Degree {degree}: Time to solve: : {{:.4f}}", logger=print_fn):
                 edge_idx, fd_weights = calc_coeff(self._Xs, stencils, grad_neigh, degree)
-                self.graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_us_tot, self.N_us_tot))
+                graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_us_tot, self.N_us_tot))
+                            # edge_index: torch.Tensor   # [2, num_edges]      # Edges between nodes
+                            # edge_coeff: torch.Tensor  # [num_edges]       # Finite diff coefficients for each edge
+                            # neighbors: list[Tensor]     # [N_us_tot, N_neigh]           # Neighborhood for each node
 
         if device == "cuda":
             self._cuda()
+            [graph.cuda() for graph in graphs.values()]
 
-        self.deriv_calc = FinDerivCalcSPMV(self.graphs, N_comp=self.N_comp,
-                                           device=self.device)
+        self.deriv_calc = FinDerivCalcSPMV(graphs, N_comp=self.N_comp, device=self.device)
         self.N_deriv = self.deriv_calc.N_deriv
 
-        # # 3) Derivative boundary conditions. Linear equations N X derivs - value = 0
-        if self.neumann_mode:
-            self.deriv_val = torch.tensor(deriv_val).flatten()
-            self.deriv_orders_bc = deriv_orders
+        # 3) Derivative boundary conditions. f(derivs_i) - value = 0
+        # 3.1) Compute jacobian permutation
+        # Single loop through all points in setup_dict
+        jacob_main_pos, jacob_neum_pos, neum_dirich_bc = [], [], []
+        for i, point in enumerate(setup_dict.values()):
+            if T.UPDATE in point.point_type:
+                # Categorize the point
+                if T.NeumOffsetBC in point.point_type:
+                    jacob_neum_pos.append(i)
+                    neum_dirich_bc.append(point.is_dirichlet)
+                else:
+                    jacob_main_pos.append(i)
+        neum_dirich_bc = torch.tensor(neum_dirich_bc, dtype=torch.bool)
+        pde_idx, bc_idx = torch.tensor(jacob_main_pos), torch.tensor(jacob_neum_pos)
+        # 3.2) Repeat for each component. Ordering as Us.flatten()
+        self.pde_idx = torch.stack([self.N_comp * pde_idx + i for i in range(self.N_comp)], dim=-1).flatten()       # shape = [N_pde * N_comp]
+        self.bc_idx = torch.stack([self.N_comp * bc_idx + i for i in range(self.N_comp)], dim=-1).flatten()         # shape = [N_bc * N_comp]
 
-            # 3.1) Compute jacobian permutation
-            # Single loop through all points in setup_dict
-            jacob_main_pos = []
-            jacob_neum_pos = []
-            neum_dirich_bc = []
-            for i, point in enumerate(setup_dict.values()):
-                if T.UPDATE in point.point_type:
-                    # Categorize the point
-                    if T.NeumOffsetBC in point.point_type:
-                        jacob_neum_pos.append(i)
-                        neum_dirich_bc.append(point.is_dirichlet)
-                    else:
-                        jacob_main_pos.append(i)
-            neum_dirich_bc = torch.tensor(neum_dirich_bc, dtype=torch.bool)
+        dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
+        dirich_mask[bc_idx] = neum_dirich_bc
 
+        self.bc_calc = BCCalc(deriv_orders, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
 
-            # 3.2) Repeat for each component. Ordering as Us.flatten()
-            pde_idx, bc_idx = torch.tensor(jacob_main_pos), torch.tensor(jacob_neum_pos)
-            self.pde_idx = torch.stack([self.N_comp * pde_idx + i for i in range(self.N_comp)], dim=-1).flatten()       # shape = [N_pde * N_comp]
-            self.bc_idx = torch.stack([self.N_comp * bc_idx + i for i in range(self.N_comp)], dim=-1).flatten()         # shape = [N_bc * N_comp]
-
-            self.row_perm = torch.cat([self.pde_idx, self.bc_idx])
-
-            self.dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
-            self.dirich_mask[bc_idx] = neum_dirich_bc
-
-            self.bc_calc = BCCalc(self.deriv_orders_bc, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
-
-        #
-        #     self._cuda_bc()
-        #     self.deriv_calc_bc = NeumanBCCalc(self.graphs, self.neumann_mask, self.updt_mask, self.deriv_orders_bc, N_component, device=self.device)
-
-        # # TODO: Testing
-        # mask = torch.ones_like(self.updt_mask)
-        # self.deriv_calc_eval = FinDerivCalcSPMV(self.graphs, mask, mask, self.N_comp, device=self.device)
+        # 4) Helper for sparse operations
+        deriv_jac_pde = self.deriv_calc.jacobian()
+        self.row_multipliers = [CSRRowMultiplier(spm, check_sparsity=True) for spm in deriv_jac_pde]
+        self.csr_summer = CSRSummer(deriv_jac_pde, check_sparsity=True)
+        dummy_jac = self.csr_summer.blank_csr()
+        self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
+        # Simplify trivial rows for linear solver
+        trivial_rows = torch.where(dirich_mask.flatten())[0]
+        self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
     def get_Us_dUs(self):
-        _, Xs = self.get_all_us_Xs()  # Shape = [N_total, 2].
-
-        # 1) Finite differences D. shape = [N_pde, N_derivs, N_components]
+        Xs = self._Xs  # Shape = [N_total, 2].
+        # Finite differences D. shape = [N_pde, N_derivs, N_components]
         grads_dict = self.deriv_calc.derivative(self._Us)  # shape = [N_pde, N_comp]. Derivative removes boundary points.
         U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
         return U_dUs, Xs
-
-    def get_neum_preds(self):
-        """ Get the derivative values for the boundary conditions. """
-        return self.deriv_calc_bc.residuals(self._Us)      # shape = [N_bc_derivs, N_comp]
-
 
     def reset(self):
         self._Us = torch.zeros_like(self._Us)
@@ -216,11 +200,6 @@ class UGraph(UBase):
         self._Xs = self._Xs.cuda(non_blocking=True)
 
         self.pde_mask = self.pde_mask.cuda(non_blocking=True)
-        self.neumann_mask = self.neumann_mask.cuda(non_blocking=True)
         self.updt_mask = self.updt_mask.cuda(non_blocking=True)
-        [graph.cuda() for graph in self.graphs.values()]
 
-    def _cuda_bc(self):
-        self.deriv_val = self.deriv_val.cuda(non_blocking=True)
-        self.neumann_mask = self.neumann_mask.cuda(non_blocking=True)
 
