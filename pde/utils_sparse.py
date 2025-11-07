@@ -405,7 +405,6 @@ class CSRSummer:
             assert len(B_list_new) == len(self.index_mapping_list), (
                 "The number of tensors in B_list_new must match the initial B_list."
             )
-
             for k, B in enumerate(B_list_new):
                 # Ensure the sparsity pattern matches the initial B_k
                 if not torch.equal(B.crow_indices(), self.initial_crow_indices_list[k]):
@@ -431,6 +430,22 @@ class CSRSummer:
     def blank_csr(self):
         J = torch.sparse_csr_tensor(self.output_crow_indices, self.output_col_indices, torch.ones_like(self.output_col_indices), size=self.size)
         return J
+
+    def sum_simple(self, B_values_list: list[torch.Tensor]) -> torch.Tensor:
+        # Initialize the output values tensor
+        nnz_total = self.output_col_indices.size(0)
+        output_values = torch.zeros(nnz_total, dtype=self.dtype, device=self.device)
+
+        for k, B_values in enumerate(B_values_list):
+            positions = self.index_mapping_list[k]
+            output_values.index_add_(0, positions, B_values)
+
+        # Create the output CSR tensor
+        J = torch.sparse_csr_tensor(
+            self.output_crow_indices, self.output_col_indices, output_values, size=self.size
+        )
+        return J
+
 
 
 class CSRRowMultiplier:
@@ -472,6 +487,22 @@ class CSRRowMultiplier:
             size=self.size,
             device=self.A_csr.device
         )
+
+    def mul_simple(self, A: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+        """
+        Multiply the CSR tensor A row-wise by vector b.
+        """
+        if self.check_sparsity:
+            # Ensure the matrix has the same sparsity pattern
+            crow_indices = A.crow_indices()
+            col_indices = A.col_indices()
+            assert torch.equal(crow_indices, self.crow_indices) and torch.equal(col_indices, self.col_indices), "Matrix has different sparsity pattern"
+
+        # Scale the values by the corresponding row elements
+        scaled_values = A.values() * b[self.row_indices]
+
+        # Return a new CSR tensor with the scaled values
+        return scaled_values
 
 
 class CSRConcatenator:

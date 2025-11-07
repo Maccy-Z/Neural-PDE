@@ -1,8 +1,7 @@
 import torch
 from cprint import c_print
-import numpy as np
-from collections import defaultdict
 import mup
+import time
 
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
@@ -73,15 +72,13 @@ def train_adjoint():
     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
 
     pred_loss_hist = []
+    t = time.time()
     for i in range(2001):
         U_graph.set_grid(Us_true.clone())
 
         converged = pde_adj.forward_solve()
         loss = pde_adj.adjoint_solve()
         pde_adj.backward()
-
-        # print(f'{loss = :.5g}')
-
 
         torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.5)
         if i % 25 == 0:
@@ -132,28 +129,33 @@ def train_new():
     pde_adj.plot_interp(title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
 
     pred_loss_hist = []
+    st = time.time()
     for i in range(2001):
-        final_loss = 0
         # Adjoint gradient
         init_loss, final_loss, resid = pde_adj.single_step()
         # optim.zero_grad(), optim_other.zero_grad()
 
         # Residual gradient
-        residuals = pde_adj.pde_calc.residuals()
-        loss = resid_factor*(residuals**2).mean()
-        loss.backward()
+        # residuals = pde_adj.pde_calc.residuals()
+        # loss = resid_factor*(residuals**2).mean()
+        # loss.backward()
 
         # final_loss += loss
         torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.5)
+
+
+        optim.step(), optim_other.step()
+        optim.zero_grad(), optim_other.zero_grad()
+
+        # Printing
         if i % 50 == 0:
-            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}' # , {loss.detach().cpu().item():.2g}'
+            dt = time.time() - st
+            st = time.time()
+            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}, T = {dt:.3g}' # , {loss.detach().cpu().item():.2g}'
                     , color="bright_green")
             # for n, p in pde_fn.other_params.named_parameters():
             #     print(f'{n = }, {p.cpu().detach() }')
                 # print(n, f' parameter: {p.cpu().detach()}', "gradient:", p.grad.cpu())
-
-        optim.step(), optim_other.step()
-        optim.zero_grad(), optim_other.zero_grad()
 
         if i == 1000 or i == 1500:
             resid_factor *= 2
@@ -171,9 +173,6 @@ def train_new():
     U_graph.set_grid(Us_true * 0)
     pde_adj.forward_solve()
     pde_adj.plot_interp(title=["Velocity x", "Velocity y", "Pressure"])
-    pass
-    pass
-    pass
 
     print(pred_loss_hist)
 
@@ -215,11 +214,11 @@ def train_resid():
 
 
 if __name__ == "__main__":
-    setup_logging(debug=0)
+    setup_logging(debug=3)
     torch.set_printoptions(linewidth=120)
-    torch.manual_seed(1)
+    torch.manual_seed(123)
 
-    true_pde()
+    # true_pde()
     train_new()
     # test_adjoint()
 

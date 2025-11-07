@@ -1,8 +1,7 @@
 import torch
 import torch.func as func
-from abc import ABC, abstractmethod
+import time
 
-from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSystemSimplifier, plot_sparsity
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDEs import PDEFunc
 
@@ -33,17 +32,7 @@ class GraphPDECalc:
         self.transposer = U_graph.transposer
         self.simplifier = U_graph.simplifier
 
-        # deriv_jac_pde = self.U_graph.deriv_calc.jacobian()
-        # self.row_multipliers = [CSRRowMultiplier(spm, check_sparsity=True) for spm in deriv_jac_pde]
-        # self.csr_summer = CSRSummer(deriv_jac_pde, check_sparsity=True)
-        # dummy_jac = self.csr_summer.blank_csr()
-        # self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
-        #
-        # # Simplify solver system for linear solver
-        # dirich_mask = self.U_graph.dirich_mask.flatten()
-        # trivial_rows = torch.where(dirich_mask)[0]
-        # self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
-
+    # @torch.compile()
     def _compute_resid_jac(self, U_dUs_pde, Xs_pde, pde_aux_input=None):
         """
         Compute residuals and their Jacobian with respect to derivatives.
@@ -51,7 +40,6 @@ class GraphPDECalc:
             U_dUs_pde: PDE derivatives [N_pde, N_derivs, N_comp]
             Xs_pde: PDE coordinates [N_pde, N_dim]
             pde_aux_input: Optional auxiliary input for the PDE function
-
         Returns:
             dRdD: Jacobian [N_pde, N_component, N_deriv, N_component]
             residuals: Residuals [N_pde, N_component]
@@ -63,6 +51,7 @@ class GraphPDECalc:
         else:
             return vmap_jacrev(U_dUs_pde, Xs_pde, pde_aux_input)
 
+    # @torch.compile()
     def jacobian(self, pde_aux_input=None):
         """
             Compute jacobian dR/dU = dR/dD * dD/dU.
@@ -79,9 +68,8 @@ class GraphPDECalc:
         """
         U_graph = self.U_graph
 
-        # 1) Finite differences D=dUs/dXs and Jacobian dD/dU
+        # 1) Finite difference gradients
         U_dUs, Xs = U_graph.get_Us_dUs()  # U_dUs.shape = [N_Us, N_derivs, N_comp]
-        dDdU = self.deriv_calc.jacobian()  # shape = [N_derivs][N_Us_, N_Us_]
 
         # 2) Split out equation and bc parts
         U_dUs_pde = U_dUs[U_graph.pde_mask]  # shape = [N_pde, N_derivs, N_comp]
@@ -89,7 +77,7 @@ class GraphPDECalc:
 
         # 3) Compute dR/dD on equation points.
         dRdD_pde, resid_main = self._compute_resid_jac(U_dUs_pde, Xs_pde, pde_aux_input)    # dRdD_pde.shape = [N_pde, N_comp, N_deriv, N_comp]
-                                                                                         # residuals.shape = [N_pde, N_comp]
+        # residuals.shape = [N_pde, N_comp]
         dRdD_pde = dRdD_pde.reshape(self.N_pde * self.N_comp, (self.N_deriv + 1) * self.N_comp)  # [N_pde_, N_deriv_]
         resid_main = resid_main.reshape(self.N_pde * self.N_comp)  # [N_pde_]
 
@@ -107,14 +95,14 @@ class GraphPDECalc:
         residuals[self.bc_perm] = resid_bc
 
         # 6.1) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
+        dDdU = self.deriv_calc.jacobian()           # shape = [N_derivs][N_Us_, N_Us_]
         partials = []
         for d in range(self.N_comp * (self.N_deriv + 1)):
-            prod = self.row_multipliers[d].mul(dDdU[d], dRdD[:, d])  # shape = [N_pde_, N_u_grad_]
+            prod = self.row_multipliers[d].mul_simple(dDdU[d], dRdD[:, d])  # shape = [N_pde_, N_u_grad_]
             partials.append(prod)
 
         # 6.2) Sum over k: sum_k partials_ijk
-        jacobian = self.csr_summer.sum(partials)
-
+        jacobian = self.csr_summer.sum_simple(partials)        # shape = [N_pde_, N_u_grad_]
         return jacobian, residuals
 
     def jacob_transpose(self):

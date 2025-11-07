@@ -49,6 +49,17 @@ class LinearSolver:
         x = self.postproc_tensor(x)
         return x
 
+    def cpu_sparse(self, A: torch.Tensor, b: torch.Tensor):
+        A = A.numpy()
+        b = b.numpy()
+        deltas = linalg.spsolve(A, b, use_umfpack=True)
+        deltas = torch.from_numpy(deltas)
+        return deltas
+
+    def cpu_dense(self, A: torch.Tensor, b: torch.Tensor):
+        deltas = torch.linalg.solve(A, b)
+        return deltas
+
     def cuda_sparse(self, A_cp: cp.array, b: torch.Tensor):
         #A_cupy = cp.from_dlpack(A)
         b_cupy = cp.from_dlpack(b)
@@ -63,18 +74,13 @@ class LinearSolver:
 
     def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
         A = A.to_dense()
-        deltas = torch.linalg.solve(A, b)
-        return deltas
+        # deltas = torch.linalg.solve(A, b)
 
-    def cpu_sparse(self, A: torch.Tensor, b: torch.Tensor):
-        A = A.numpy()
-        b = b.numpy()
-        deltas = linalg.spsolve(A, b, use_umfpack=True)
-        deltas = torch.from_numpy(deltas)
-        return deltas
-
-    def cpu_dense(self, A: torch.Tensor, b: torch.Tensor):
-        deltas = torch.linalg.solve(A, b)
+        # Normalise columns to reduce numerical error
+        col_norms = A.norm(dim=0, keepdim=True).clamp_min(1e-3)
+        A3 = A / col_norms
+        x3 = torch.linalg.solve(A3, b)
+        deltas = x3 / col_norms.squeeze(0)
         return deltas
 
     def cuda_amgx(self, A_cp: cp.array, b: torch.Tensor):

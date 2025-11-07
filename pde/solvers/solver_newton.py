@@ -135,11 +135,6 @@ class SolverNewton:
         jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
         deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
         deltas = self.pde_calc.postproc_solve(deltas)
-
-            # deltas = self.lin_solver.solve(jacobian, old_resid)
-
-        # t_solve = self.timer.last
-        # logging.debug(f"Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s,")
         return deltas
 
     @torch.no_grad()
@@ -182,7 +177,7 @@ class SolverNewton:
                 max_abs_residual = torch.max(new_resid.abs())
             t_line = self.timer.last
 
-            logging.info(f'Newton solver Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
+            logging.info(f'NR Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
             logging.debug(f'jacob time: {t_jacob:.4f}, solve time: {t_solve:.4g}, Line+postproc time: {t_line:.4f}s')
 
 

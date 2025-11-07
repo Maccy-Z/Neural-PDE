@@ -1,5 +1,6 @@
 import torch
 from codetiming import Timer
+import logging
 
 from pde.graph_grid.U_graph import UGraph
 from pde.pdes.PDECalc import GraphPDECalc
@@ -42,6 +43,7 @@ class NeuralPDEGraph:
 
 
         self.triangles = triangles
+        self.timer = Timer(name="timer", logger=None)
 
     def forward_solve(self, aux_input=None):
         """ Solve PDE forward problem. """
@@ -67,40 +69,35 @@ class NeuralPDEGraph:
 
         return residuals
 
-
     def single_step(self):
         """ Perform a single step of the Newton solver and compute the exact derivative:
                 U_old - U_new = dU = J^-1(u_old, theta) f(U_old, theta)
                 J^T lambda = dL/dtheta|(U_new)
                 dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
          """
-        Us_old = self.U_graph.get_all_us_Xs()[0]
-        # init_loss = self.loss_fn(Us_old)
 
-
-        # with Timer( text="Newton step and adjoint: {:.4f}s"):
-
-        # Compute at u_old
+        # Compute forward step form Us_old
         J, old_resid = self.pde_calc.jacobian()
         deltas = self.newton_solver.newton_step(J, old_resid)
-        deltas = deltas.detach()
-        # Compute loss derivative at u_new, Jacobian a u_old
+
+        # Compute loss derivative at Us_new, Jacobian at Us_old
         Us_new = self.U_graph.get_test_update(deltas)
         adjoint, _ = self.pde_adjoint.adjoint_solve(self.U_graph, Us_loss=Us_new)
 
-
-        # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
-        # with Timer(text="Backward: {:.4f}s"):
-        adj_f = adjoint @ (J @ deltas - old_resid)
-        adj_f.backward()
+        with self.timer:
+            # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
+            adj_f = adjoint @ (J @ deltas - old_resid)
+            adj_f.backward()
+        t_backward = self.timer.last
 
         with torch.no_grad():
+            Us_old = self.U_graph.get_all_us_Xs()[0]
             init_loss = self.loss_fn(Us_old, requires_grad=False)
             final_loss = self.loss_fn(Us_new, requires_grad=False)
 
         # print(f'{adj_f = }, {init_loss = }, {final_loss = }')
+        logging.info(f"Backward time: {t_backward:.4f}s")
         return init_loss, final_loss, old_resid
-
 
     def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):
         """ Plot the interpolated solution. """
@@ -110,7 +107,6 @@ class NeuralPDEGraph:
             _, Xs = self.U_graph.get_all_us_Xs()
 
         plot_interp(Xs, Us.T, Xlims=Xlims, title=title, triangles=self.U_graph.tri)
-
 
     def plot_derivs(self, order):
         us_all, Xs = self.U_graph.get_all_us_Xs()
@@ -134,18 +130,15 @@ class NeuralPDEGraph:
         # plot_interp(Xs, divergence, title=str(order), triangles=self.u_graph.tri)
         pass
 
-
     def _plot_interp(self, value):
         us_all, Xs = self.U_graph.get_all_us_Xs()
         plot_interp(Xs, value, triangles=self.U_graph.tri)
-
 
     def plot_points(self, values, Xlims=None, show_index=False, title=""):
         Xlims = None # [(0,0.2), (0, 1.5)]
         _, Xs = self.U_graph.get_all_us_Xs()
 
         plot_points(Xs, values, Xlims=Xlims, show_index=show_index, title=title)
-
 
     def _plot_points(self, values, Xlims=None):
         _, Xs = self.U_graph.get_all_us_Xs()
