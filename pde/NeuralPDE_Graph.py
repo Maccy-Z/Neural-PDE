@@ -79,8 +79,10 @@ class NeuralPDEGraph:
 
 
         # with Timer( text="Newton step and adjoint: {:.4f}s"):
+
         # Compute at u_old
-        deltas, J, old_resid = self.newton_solver.newton_step()
+        J, old_resid = self.pde_calc.jacobian()
+        deltas = self.newton_solver.newton_step(J, old_resid)
         deltas = deltas.detach()
         # Compute loss derivative at u_new, Jacobian a u_old
         Us_new = self.U_graph.get_test_update(deltas)
@@ -91,8 +93,6 @@ class NeuralPDEGraph:
         # with Timer(text="Backward: {:.4f}s"):
         adj_f = adjoint @ (J @ deltas - old_resid)
         adj_f.backward()
-        # J_delta = J @ deltas - old_resid
-        # J_delta.backward(adjoint)
 
         with torch.no_grad():
             init_loss = self.loss_fn(Us_old, requires_grad=False)

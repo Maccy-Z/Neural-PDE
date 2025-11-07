@@ -128,23 +128,19 @@ class SolverNewton:
         U_graph.set_grid(Us_init)
         return pde_resid_norm
 
-    def newton_step(self, aux_input=None):
+    @torch.no_grad()
+    def newton_step(self, jacobian, old_resid, aux_input=None):
         """ Run a single Newton step. Done differentiably. """
-        with self.timer:
-            jacobian, old_resid = self.pde_calc.jacobian(aux_input)
-        t_jacob = self.timer.last
 
-        with self.timer:
-            jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
-            deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
-            deltas = self.pde_calc.postproc_solve(deltas)
+        jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
+        deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
+        deltas = self.pde_calc.postproc_solve(deltas)
 
             # deltas = self.lin_solver.solve(jacobian, old_resid)
 
-        t_solve = self.timer.last
-
-        logging.debug(f"Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s,")
-        return deltas, jacobian, old_resid
+        # t_solve = self.timer.last
+        # logging.debug(f"Jacobian time: {t_jacob:.4f}s, Solve time: {t_solve:.4f}s,")
+        return deltas
 
     @torch.no_grad()
     def find_pde_root(self, U_graph: UGraph, aux_input=None):
@@ -161,7 +157,12 @@ class SolverNewton:
             Us_init = U_graph.get_all_us_Xs()[0]
 
             # Compute Jacobian, residuals and solve linear system
-            deltas, jacobian, old_resid = self.newton_step(aux_input)
+            with self.timer:
+                jacobian, old_resid = self.pde_calc.jacobian(aux_input)
+            t_jacob = self.timer.last
+            with self.timer:
+                deltas = self.newton_step(jacobian, old_resid, aux_input=aux_input)
+            t_solve = self.timer.last
 
             # Find best alpha using line search
             with self.timer:
@@ -182,7 +183,7 @@ class SolverNewton:
             t_line = self.timer.last
 
             logging.info(f'Newton solver Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
-            logging.debug(f'Line/postproc time: {t_line:.4f}s')
+            logging.debug(f'jacob time: {t_jacob:.4f}, solve time: {t_solve:.4g}, Line+postproc time: {t_line:.4f}s')
 
 
             if new_resid_norm < self.solve_acc:

@@ -67,10 +67,10 @@ class GraphPDECalc:
         """
             Compute jacobian dR/dU = dR/dD * dD/dU.
 
-            us_grad.shape = [N_u_grad]. Gradients of trained u values.
-            dR/dU.shape = [N_pde, N_u_grad]
+            us_grad.shape = [N_Us_grad]. Gradients of trained u values.
+            dR/dU.shape = [N_pde, N_Us_grad]
             dR/dD.shape = [N_pde, N_derivs]
-            dD/dU.shape = [N_pde, N_derivs, N_u_grad]
+            dD/dU.shape = [N_pde, N_derivs, N_Us_grad]
 
             dR_i/dU_j = sum_k dR_i/dD_jk * dD_jk/dU_j
 
@@ -88,8 +88,8 @@ class GraphPDECalc:
         Xs_pde = Xs[U_graph.pde_mask]  # shape = [N_pde, N_dim]
 
         # 3) Compute dR/dD on equation points.
-        dRdD_pde, resid_main = self._compute_resid_jac(U_dUs_pde, Xs_pde, pde_aux_input)    # dRdD_pde.shape = [N_pde, N_component, N_deriv, N_component]
-                                                                                         # residuals.shape = [N_pde, N_component]
+        dRdD_pde, resid_main = self._compute_resid_jac(U_dUs_pde, Xs_pde, pde_aux_input)    # dRdD_pde.shape = [N_pde, N_comp, N_deriv, N_comp]
+                                                                                         # residuals.shape = [N_pde, N_comp]
         dRdD_pde = dRdD_pde.reshape(self.N_pde * self.N_comp, (self.N_deriv + 1) * self.N_comp)  # [N_pde_, N_deriv_]
         resid_main = resid_main.reshape(self.N_pde * self.N_comp)  # [N_pde_]
 

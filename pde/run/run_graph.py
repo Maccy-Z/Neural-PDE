@@ -7,9 +7,26 @@ import mup
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pde.pdes.PDEs import Fluid, FluidLearned, NNFunc
-from pde.utils import setup_logging
+from pde.utils import setup_logging, ARTEFACT_DIR
 from pde.loss import DummyLoss, MSELoss2, MSELossNorm
 from pde.run.generate_graph import mesh_graph, load_graph
+
+
+def init_setup(cfg: Config):
+    U_graph, triangles = mesh_graph(cfg)
+    # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
+
+    Us_true = torch.load("../Us_solution.pth", weights_only=True)
+    U_graph.set_grid(Us_true)
+    loss_fn = MSELossNorm(Us_true)
+
+    pde_fn = NNFunc(cfg, device=cfg.device)
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
+
+    # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
+    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
+    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)  # , betas=(0.95, 0.95))
+
 
 def true_pde():
     cfg = Config()
@@ -30,15 +47,15 @@ def true_pde():
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
-    # Us_all, updt_mask, _ = U_graph.get_us_mask()
-    # Us = Us_all[updt_mask]
-    #
-    # with open("./Us_solution.pth", "wb") as f:
-    #     torch.save(Us, f)
-    # print(f'{Us.shape = }, {Us_all.shape = }')
+    Us_all, updt_mask, _ = U_graph.get_us_mask()
+    Us = Us_all[updt_mask]
+
+    with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
+        torch.save(Us, f)
+    print(f'{Us.shape = }, {Us_all.shape = }')
 
 
-def test_adjoint():
+def train_adjoint():
     cfg = Config()
     # U_graph, triangles = load_graph(cfg)
     U_graph, triangles = mesh_graph(cfg)
@@ -95,13 +112,12 @@ def test_adjoint():
     print(pred_loss_hist)
 
 
-def test():
+def train_new():
     cfg = Config()
-    # U_graph, triangles = load_graph(cfg)
     U_graph, triangles = mesh_graph(cfg)
     # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
 
-    Us_true = torch.load("../Us_solution.pth", weights_only=True)
+    Us_true = torch.load(ARTEFACT_DIR / "Us_solution.pth", weights_only=True)
     U_graph.set_grid(Us_true)
     loss_fn = MSELossNorm(Us_true)
 
@@ -162,7 +178,7 @@ def test():
     print(pred_loss_hist)
 
 
-def test2():
+def train_resid():
     cfg = Config()
     # U_graph, triangles = load_graph(cfg)
     U_graph, triangles = mesh_graph(cfg)
@@ -199,12 +215,12 @@ def test2():
 
 
 if __name__ == "__main__":
-    setup_logging(debug=2)
+    setup_logging(debug=0)
     torch.set_printoptions(linewidth=120)
     torch.manual_seed(1)
 
     true_pde()
-    # test()
+    train_new()
     # test_adjoint()
 
     # test2()

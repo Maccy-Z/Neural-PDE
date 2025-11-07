@@ -2,7 +2,7 @@ import torch
 import torch.func as func
 
 from pde.config import JacMode
-from pde.BaseU import UBase
+# from pde.BaseU import UBase
 from pde.cartesian_grid.U_grid import USplitGrid, UNormalGrid
 from pde.utils import get_split_indices, clamp
 from pde.BasePDEGrad import PDEFwdBase
