@@ -24,7 +24,7 @@ class NeuralPDEGraph:
         self.cfg = cfg
         self.device = cfg.device
 
-        torch.save(self.U_graph, "U_graph.pt")
+        torch.save(U_graph, "U_graph.pt")
         self.U_graph = torch.load("U_graph.pt", weights_only=False)
 
 

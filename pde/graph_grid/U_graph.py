@@ -130,7 +130,6 @@ class UGraph(UBase):
         self._Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
         self._Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
 
-        print(f'On init {self._Us.data_ptr() = }')
         # 2.1) Get the neighborhood graph
         stencils = nearest_neighbors(self.tri, self._Xs, grad_neigh)
         # 2.2) Compute finite difference stencils / graphs.
@@ -149,10 +148,9 @@ class UGraph(UBase):
             [graph.cuda() for graph in graphs.values()]
 
         self.deriv_calc = FinDerivCalcSPMV(graphs, N_comp=self.N_comp, device=self.device)
-        self.N_deriv = self.deriv_calc.N_deriv
+        self.N_deriv = len(diff_degrees) - 1        # Exclude zeroth order
 
-        # 3) Derivative boundary conditions. f(derivs_i) - value = 0
-        # 3.1) Compute jacobian permutation
+        # 3) Derivative boundary conditions and Compute jacobian permutation
         # Single loop through all points in setup_dict
         jacob_main_pos, jacob_neum_pos, neum_dirich_bc = [], [], []
         for i, point in enumerate(setup_dict.values()):
@@ -174,7 +172,7 @@ class UGraph(UBase):
 
         self.bc_calc = BCCalc(deriv_orders, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
 
-        # 4) Helper for sparse operations
+        # 4) Helper for efficient sparse operations
         deriv_jac_pde = self.deriv_calc.jacobian()
         self.row_multipliers = [CSRRowMultiplier(spm, check_sparsity=True) for spm in deriv_jac_pde]
         self.csr_summer = CSRSummer(deriv_jac_pde, check_sparsity=True)
