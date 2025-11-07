@@ -6,7 +6,6 @@ from pde.utils import setup_logging
 from pde.loss import DummyLoss
 
 
-
 def load_graph(cfg):
     u_graph, triangles = torch.load("save_u_graph.pth", weights_only=False)
     return u_graph, triangles

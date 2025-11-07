@@ -1,6 +1,10 @@
 from matplotlib import pyplot as plt
 import torch
+from pathlib import Path
 
+
+BASE_DIR = Path(__file__).parent.resolve()
+ARTEFACT_DIR = BASE_DIR / "artefacts"
 
 def show_grid(u: torch.Tensor, title=None, origin="lower"):
     """
@@ -59,7 +63,6 @@ def dict_key_by_value(d, value):
             return k
 
     raise ValueError(f"Value {value} not found in dictionary")
-
 
 
 def setup_logging(debug=True):

@@ -18,3 +18,9 @@ Thumbs.db
 *.cache
 
 *.vtu
+
+*.pt
+*.pth
+*.pkl
+
+/pde/artefacts/*

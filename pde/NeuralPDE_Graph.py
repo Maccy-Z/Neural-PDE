@@ -10,7 +10,7 @@ from pde.solvers.solver_newton import SolverNewton
 from pde.config import Config
 from pde.loss import Loss
 from pde.graph_grid.graph_utils import plot_interp, plot_points
-
+from pde.utils import ARTEFACT_DIR
 
 class NeuralPDEGraph:
     u_graph: UGraph
@@ -24,8 +24,8 @@ class NeuralPDEGraph:
         self.cfg = cfg
         self.device = cfg.device
 
-        torch.save(U_graph, "U_graph.pt")
-        self.U_graph = torch.load("U_graph.pt", weights_only=False)
+        torch.save(U_graph, ARTEFACT_DIR / "U_graph.pt")
+        self.U_graph = torch.load(ARTEFACT_DIR / "U_graph.pt", weights_only=False)
 
 
         self.U_graph = U_graph

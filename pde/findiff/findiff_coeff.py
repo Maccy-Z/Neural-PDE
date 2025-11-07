@@ -10,9 +10,9 @@ from rbf.pde import fd
 import logging
 
 from pde.utils_sparse import plot_sparsity, csr_torch_to_scipy, csr_scipy_to_torch
+from pde.utils import ARTEFACT_DIR
 
-
-CACHE_DIR = "cache_calc_coeff" # Directory to store cache files
+CACHE_DIR = ARTEFACT_DIR / "cache_calc_coeff"
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 def get_cache_key(func_name, *args, **kwargs):

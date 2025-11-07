@@ -139,7 +139,7 @@ def mesh_heat(cfg, max_degree=2, grad_neigh=25):
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
     U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
 
-    with open("../save_u_graph.pth", "wb") as f:
+    with open("../artefacts/save_u_graph.pth", "wb") as f:
         torch.save((U_graph, triangles), f)
 
     # exit("Done")
@@ -237,6 +237,6 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
 
 
 def load_graph(cfg)-> tuple[UGraph, torch.Tensor]:
-    u_graph, triangles = torch.load("../save_u_graph.pth", weights_only=False)
+    u_graph, triangles = torch.load("../artefacts/save_u_graph.pth", weights_only=False)
     return u_graph, triangles
 
