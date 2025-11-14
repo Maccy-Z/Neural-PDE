@@ -432,6 +432,7 @@ class CSRSummer:
         return J
 
     def sum_simple(self, B_values_list: list[torch.Tensor]) -> torch.Tensor:
+        """ Input list of value tensors, instead of sparse matrices. """
         # Initialize the output values tensor
         nnz_total = self.output_col_indices.size(0)
         output_values = torch.zeros(nnz_total, dtype=self.dtype, device=self.device)
@@ -490,7 +491,7 @@ class CSRRowMultiplier:
 
     def mul_simple(self, A: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
         """
-        Multiply the CSR tensor A row-wise by vector b.
+        Multiply the CSR tensor A row-wise by vector b. Just return values, instead of full sparse matrix.
         """
         if self.check_sparsity:
             # Ensure the matrix has the same sparsity pattern
