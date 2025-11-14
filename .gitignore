@@ -24,3 +24,4 @@ Thumbs.db
 *.pkl
 
 /pde/artefacts/*
+/time_fvm/saves/
