@@ -448,7 +448,6 @@ class CSRSummer:
         return J
 
 
-
 class CSRRowMultiplier:
     def __init__(self, A_csr: torch.Tensor, check_sparsity=False):
         """
