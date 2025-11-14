@@ -105,8 +105,9 @@ class GraphPDECalc:
         jacobian = self.csr_summer.sum_simple(partials)        # shape = [N_pde_, N_u_grad_]
         return jacobian, residuals
 
-    def jacob_transpose(self):
-        jacobian, _ = self.jacobian()
+    def jacob_transpose(self, jacobian=None):
+        if jacobian is None:
+            jacobian, _ = self.jacobian()
         return self.transposer.transpose(jacobian)
 
     def residuals(self, aux_input=None):

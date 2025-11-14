@@ -82,7 +82,7 @@ class NeuralPDEGraph:
 
         # Compute loss derivative at Us_new, Jacobian at Us_old
         Us_new = self.U_graph.get_test_update(deltas)
-        adjoint, _ = self.pde_adjoint.adjoint_solve(self.U_graph, Us_loss=Us_new)
+        adjoint, _ = self.pde_adjoint.adjoint_solve(self.U_graph, jac=J, Us_loss=Us_new)
 
         with self.timer:
             # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)

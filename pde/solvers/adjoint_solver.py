@@ -15,14 +15,14 @@ class PDEAdjoint:
         self.adj_lin_solver = adj_lin_solver
         self.loss_fn = loss_fn
 
-    def adjoint_solve(self, U_graph: UGraph, Us_loss=None):
+    def adjoint_solve(self, U_graph: UGraph, jac=None, Us_loss=None):
         """ Solve for adjoint.
             dgdU = J^T * adjoint
             Us_loss: Optional. If different Us is needed to compute loss gradient than the jacobian J(Us, theta)
                     shape = [N_us_grad, N_comp]
          """
         with torch.no_grad():
-            jac_T = self.pde_calc.jacob_transpose()    # Shape = [N_eq, N_Us]
+            jac_T = self.pde_calc.jacob_transpose(jac)    # Shape = [N_eq, N_Us]
 
         # One adjoint value for each trained u value, including boundary points.
         if Us_loss is None:
