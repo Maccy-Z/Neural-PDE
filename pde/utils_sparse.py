@@ -3,7 +3,7 @@ import cupy as cp
 import numpy as np
 from matplotlib import pyplot as plt
 from scipy import sparse as sp
-
+from cupyx.scipy import sparse as cpx_sparse
 
 def csr_torch_to_scipy(csr):
     crow_indices = csr.crow_indices().cpu().numpy()
@@ -31,8 +31,18 @@ def csr_scipy_to_torch(sparse_np):
 
     return torch.sparse_coo_tensor(indices, values, shape).coalesce()
 
+def csr_torch_to_cupy(csr: torch.Tensor):
+    """ Convert a torch sparse CSR tensor to a cupy sparse CSR matrix. """
+    crow_indices = cp.from_dlpack(csr.crow_indices().int())
+    col_indices = cp.from_dlpack(csr.col_indices().int())
+    values = cp.from_dlpack(csr.values())
+    shape = csr.size()
 
-def csr_compress(csr):
+    csr_cupy = cpx_sparse.csr_matrix((values, col_indices, crow_indices), shape=shape)
+    return csr_cupy
+
+
+def csr_compress(csr: torch.Tensor):
     """ Compress a sparse CSR matrix by removing zero entries."""
     device = csr.values().device
 

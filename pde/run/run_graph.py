@@ -13,33 +13,29 @@ from pde.run.generate_graph import mesh_graph, load_graph
 
 def init_setup(cfg: Config):
     U_graph, triangles = mesh_graph(cfg)
-    # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
 
-    Us_true = torch.load("../Us_solution.pth", weights_only=True)
+    Us_true = torch.load(ARTEFACT_DIR/"Us_solution.pth", weights_only=True)
     U_graph.set_grid(Us_true)
     loss_fn = MSELossNorm(Us_true)
 
     pde_fn = NNFunc(cfg, device=cfg.device)
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
     optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)  # , betas=(0.95, 0.95))
 
+    return U_graph, Us_true, pde_fn, optim, optim_other
 
 def true_pde():
+    """ Generate true solution using known PDE. """
     cfg = Config()
-    # U_graph, triangles = load_graph(cfg)
     U_graph, triangles = mesh_graph(cfg)
-    # U_graph, triangles = mesh_heat(cfg)
 
     Us_all, _ = U_graph.get_all_us_Xs()
     pde_fn = Fluid(cfg, device=cfg.device)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
-    # Us_target = U_graph.pde_mask.float()
-    # Us_target = torch.repeat_interleave(Us_target, U_graph.N_comp, dim=0)
-    loss_fn = DummyLoss()  # MaskLoss(Us_target)
+    loss_fn = DummyLoss()
 
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
 
@@ -55,10 +51,9 @@ def true_pde():
 
 
 def train_adjoint():
+    """ Train PDE using adjoint method."""
     cfg = Config()
-    # U_graph, triangles = load_graph(cfg)
     U_graph, triangles = mesh_graph(cfg)
-    # U_graph, triangles = mesh_heat(cfg)
 
     Us_true = torch.load("../Us_solution.pth", weights_only=True)
     U_graph.set_grid(Us_true)
@@ -110,20 +105,12 @@ def train_adjoint():
 
 
 def train_new():
+    """ Train PDE using exact newton gradient + residuals. """
     cfg = Config()
-    U_graph, triangles = mesh_graph(cfg)
-    # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
+    U_graph, Us_true, pde_fn, optim, optim_other = init_setup(cfg)
 
-    Us_true = torch.load(ARTEFACT_DIR / "Us_solution.pth", weights_only=True)
-    U_graph.set_grid(Us_true)
     loss_fn = MSELossNorm(Us_true)
-
-    pde_fn = NNFunc(cfg, device=cfg.device)
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
-
-    # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
-    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, None)
 
     resid_factor = 0 # 0.0025
     pde_adj.plot_interp(title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
@@ -178,8 +165,8 @@ def train_new():
 
 
 def train_resid():
+    """ Train model using residual loss only. """
     cfg = Config()
-    # U_graph, triangles = load_graph(cfg)
     U_graph, triangles = mesh_graph(cfg)
     # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
 
@@ -187,12 +174,8 @@ def train_resid():
     U_graph.set_grid(Us_true.clone())
     loss_fn = MSELoss2(Us_true)
 
-    pde_fn = NNFunc(cfg, device=cfg.device)
+    pde_fn, optim, optim_other = init_setup(cfg)
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
-
-    # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
-    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
 
     for i in range(1001):
 

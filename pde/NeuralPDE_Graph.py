@@ -78,7 +78,10 @@ class NeuralPDEGraph:
 
         # Compute forward step form Us_old
         J, old_resid = self.pde_calc.jacobian()
-        deltas = self.newton_solver.newton_step(J, old_resid)
+        with self.timer:
+            deltas = self.newton_solver.newton_step(J, old_resid)
+        err = (J @ deltas - old_resid).norm()
+        logging.info(f'One Newton step residual norm: {err:.3g}, T = {self.timer.last:.3g}s')
 
         # Compute loss derivative at Us_new, Jacobian at Us_old
         Us_new = self.U_graph.get_test_update(deltas)
@@ -96,7 +99,7 @@ class NeuralPDEGraph:
             final_loss = self.loss_fn(Us_new, requires_grad=False)
 
         # print(f'{adj_f = }, {init_loss = }, {final_loss = }')
-        logging.info(f"Backward time: {t_backward:.4f}s")
+        logging.debug(f"Backprop time: {t_backward:.4f}s")
         return init_loss, final_loss, old_resid
 
     def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):

@@ -1,14 +1,19 @@
+git+https://github.com/Maccy-Z/c_print.git
 matplotlib
 numpy
 scipy
 codetiming
 torch
+
+#torch_geometric
+#torch_sparse
+#torch_scatter
+#meshpy
+
+nvmath-python[cu12,dx]
 # Using conda condacupy # conda
 # cupy-cuda12x
-torch
-git+https://github.com/Maccy-Z/c_print.git
-cython
-torch_geometric
-torch_sparse
-torch_scatter
+
+mup
+treverhines-rbf
 meshpy

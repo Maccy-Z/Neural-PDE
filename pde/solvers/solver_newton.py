@@ -129,11 +129,13 @@ class SolverNewton:
         return pde_resid_norm
 
     @torch.no_grad()
-    def newton_step(self, jacobian, old_resid, aux_input=None):
-        """ Run a single Newton step. Done differentiably. """
+    def newton_step(self, jacobian, resid):
+        """ Run a single Newton-Raphson step.
+            Include pre and postprocessing for efficiency.
+        """
 
-        jac_proc, old_resid_proc = self.pde_calc.preproc_solve(jacobian, old_resid)
-        deltas = self.lin_solver.solve(jac_proc, old_resid_proc)
+        jacobian, resid = self.pde_calc.preproc_solve(jacobian, resid)
+        deltas = self.lin_solver.solve(jacobian, resid)
         deltas = self.pde_calc.postproc_solve(deltas)
         return deltas
 
@@ -156,7 +158,7 @@ class SolverNewton:
                 jacobian, old_resid = self.pde_calc.jacobian(aux_input)
             t_jacob = self.timer.last
             with self.timer:
-                deltas = self.newton_step(jacobian, old_resid, aux_input=aux_input)
+                deltas = self.newton_step(jacobian, old_resid)
             t_solve = self.timer.last
 
             # Find best alpha using line search

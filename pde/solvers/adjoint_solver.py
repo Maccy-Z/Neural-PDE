@@ -1,5 +1,4 @@
 import torch
-import torch.func as func
 from codetiming import Timer
 import logging
 
@@ -7,7 +6,6 @@ from pde.pdes.PDECalc import GraphPDECalc
 from pde.graph_grid.U_graph import UGraph
 from pde.loss import Loss
 from pde.solvers.linear_solvers import LinearSolver
-from pde.utils import ARTEFACT_DIR
 
 class PDEAdjoint:
     def __init__(self, pde_calc: GraphPDECalc, adj_lin_solver: LinearSolver, loss_fn: Loss):
@@ -39,7 +37,7 @@ class PDEAdjoint:
         t_adjoint = timer.last
 
         residual = (jac_T @ adjoint - loss_u).norm()
-        logging.info(f'Adjoint residual: {residual:.3g}, T: {t_adjoint:.3g}s')
+        logging.info(f'Adjoint lin solve. Residual: {residual:.3g}, T: {t_adjoint:.3g}s')
         # torch.save({"J": jac_T, "adj": adjoint, "loss_u": loss_u}, ARTEFACT_DIR/"jac_T.pt")
         return adjoint, loss
 
