@@ -93,16 +93,16 @@ class FinDerivCalcSPMV:
 
 
 class BCCalc:
-    def __init__(self, bc_specs: dict[int, list[Deriv]], N_comp: int, N_Us: int, dif_degrees: list[tuple],
+    def __init__(self, bc_specs: dict[int, list[Deriv]], dirich_bc_mask, N_comp: int, N_Us: int, dif_degrees: list[tuple],
                  device="cpu"):
         """ Boundary condition specified as sum_n w_n * dU_i/dX_{j} - C = r -> 0"""
         self.device = device
-
+        self.dirich_bc_mask = dirich_bc_mask.flatten()      # shape = [N_bc * N_comp]
         self.N_comp = N_comp
         self.N_bc = len(bc_specs)
         self.N_Us = N_Us
-        order_to_j = {deg: i for i, deg in enumerate(dif_degrees)}
         N_derivs = len(dif_degrees)
+
 
         C = []
         for p in bc_specs.values():
@@ -111,6 +111,7 @@ class BCCalc:
         self.C = torch.tensor(C, device=device)
 
         # Convert from indexing per point to indexing per component (like Us_)
+        order_to_j = {deg: i for i, deg in enumerate(dif_degrees)}
         idxes, orders, comps, weights = [], [], [], []      # idx.shape = [N_bc], {orders, comps, weights} = [N_bc][N_deriv_per_bc]
         for U_idx, p in bc_specs.items():
             for deriv in p:
@@ -178,90 +179,6 @@ class BCCalc:
         residuals = self.forward(U_dUs)
         return self.J, residuals
 
-
-# class NeumanBCCalc(FinDerivCalcSPMV):
-#     """ Compute FinDiff derivatives for (linear) Neumann BCs, and full jacobian for R = sum_n grad_n(u) - constant.
-#         Precompute the selection derivatives and jacobian, that directly returns residuals / residual jacobian without going through autograd / sparse matmuls
-#     """
-#     def __init__(self, fd_graphs: dict[tuple, DerivGraph], bc_eq_mask: torch.Tensor, grad_mask: torch.Tensor, deriv_orders: dict[int, Deriv],
-#                  N_comp, device="cpu"):
-#         """
-#             deriv_orders: Derivative order for each derivative BC
-#         """
-#         # Construct all required derivatives and jacobian.
-#         super().__init__(fd_graphs, bc_eq_mask, grad_mask, N_comp, device=device)
-#         N_bc_eqs = sum(bc_eq_mask)
-#         N_Us = bc_eq_mask.shape[0]
-#         N_Us_tot = bc_eq_mask.shape[0] * N_comp
-#
-#         # self.fd_spms[(1, 0)].shape = [N_bc_eqs, N_us_tot]
-#         # Reshape to blocks, which allows for mixing up the derivatives.
-#         fd_spms_old = {order: csr_block_repeat(spm, N_comp) for order, spm in self.fd_spms.items()}    # shape = [N_derivs][N_bc_eqs*N_comp, N_us_tot*N_comp]
-#         orders = [(0, 0)] + list(self.fd_spms.keys())  # Include zeroth order (original value) in orders.
-#         order_dict = {o: i for i, o in enumerate(orders)}  # Map order to index.
-#         # For (0, 0) component, make diagonal matrix x
-#         zeroth_order_idx = torch.where(self.eq_mask.repeat(N_comp))[0]
-#
-#         # Build up full derivative matrix, combining all derivatives. [sum_n(w_n * deriv_n)] u - N = 0
-#         deriv_mat = []          # shape = [N_bc_points*N_comp, N_us_tot*N_comp]. Ordered in component major (points grouped).
-#
-#         dRdD = torch.zeros((N_comp * N_bc_eqs, (self.N_deriv+1) * N_comp), device=self.device)
-#         for bc_idx, derivs in enumerate(deriv_orders.values()):
-#             # For each boundary condition:
-#             for bc_x_idx, deriv_bc in enumerate(derivs):
-#                 deriv_row = []
-#                 # For each component of boundary condition:
-#                 for component, order, weight in zip(deriv_bc.comp, deriv_bc.orders, deriv_bc.weights, strict=True):
-#                     row = N_comp * bc_idx + bc_x_idx
-#                     col = N_comp * order_dict[order] + component
-#                     dRdD[row, col] = weight
-#
-#                     us_idx = bc_idx + component * N_bc_eqs
-#                     if order == (0, 0):
-#                         indices = torch.tensor([[zeroth_order_idx[us_idx]]])
-#                         row_val = torch.sparse_coo_tensor(indices=indices, values=torch.tensor([weight], dtype=torch.float32), device=self.device, size=(N_Us_tot,))
-#                         deriv_row.append(row_val)
-#                     else:
-#                         # Get the derivative matrix for this component and order.
-#                         spm = fd_spms_old[order][us_idx] * weight
-#                         deriv_row.append(spm)
-#
-#
-#                 deriv_row = torch.stack(deriv_row, dim=0)
-#                 deriv_row_sum = torch.sparse.sum(deriv_row, dim=0)
-#                 deriv_mat.append(deriv_row_sum)
-#
-#         deriv_mat = torch.stack(deriv_mat, dim=0).coalesce()
-#         self.deriv_mat = CSRToInt32(deriv_mat.to_sparse_csr())
-#         self.jac_mat = coo_col_select(deriv_mat, self.grad_mask.repeat(N_comp)).to_sparse_csr()   # shape = [N_bc_eqs_, N_grad_]
-#         self.jac_mat = CSRToInt32(self.jac_mat)
-#         self.dRdD = dRdD        # shape = [N_bc_eqs*N_comp, N_deriv*N_comp]
-#         self.N_bc_eqs = N_bc_eqs
-#
-#         # del self.fd_spms
-#         del self.jac_spms
-#
-#
-#     def residuals(self, Us) -> torch.Tensor:
-#         """ Us.shape = [N_us_tot, N_components]
-#             return.shape = [N_neumann*N_components]
-#         """
-#         Us2 = Us.T.flatten()
-#         self.deriv_mat = self.deriv_mat.to(Us2.device)
-#         bc_grads = torch.mv(self.deriv_mat, Us2)
-#         # return bc_grads
-#         grads_dict = self.derivative(Us)
-#         U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_bc_eqs, N_derivs, N_component]
-#         U_dUs = U_dUs.view(self.N_bc_eqs, self.N_comp *(self.N_deriv + 1))  # shape = [N_bc_eqs, N_comp*(N_derivs+1)]
-#         U_dUs = torch.repeat_interleave(U_dUs, self.N_comp, dim=0)
-#
-#         lhs = self.dRdD * U_dUs
-#         lhs = lhs.sum(dim=1)  # shape = [N_bc_eqs*N_comp]
-#         return lhs
-#         # print(residuals.shape )
-#         # exit(8)
-#         # pass
-#
-#     def jacobian(self) -> torch.Tensor:
-#         return self.jac_mat
-#
+    def dirich_bc_vals(self):
+        """ Return Dirichlet BC values C. """
+        return self.C[self.dirich_bc_mask]

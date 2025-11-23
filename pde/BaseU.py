@@ -24,36 +24,7 @@ class UBase(abc.ABC):
     us_grad_idx: Tensor
 
 
-    def update_grid(self, deltas):
-        """
-        Update grid with changes, and fix boundary conditions with new grid.
-        deltas.shape = [N*N_comp]
-        us -> us - deltas
-        """
-        deltas = deltas.view(-1, self.N_comp)
-        # self._Us -= deltas
-        self.set_grid(self._Us - deltas)
 
-    def get_test_update(self, deltas):
-        """
-        Get test update for grid with changes, without applying them.
-        deltas.shape = [N*N_comp]
-        us -> us - deltas
-        """
-        deltas = deltas.view(-1, self.N_comp)
-        us_test = torch.clone(self._Us) - deltas
-        return us_test
-
-    def get_us_mask(self):
-        """
-        Return us, and mask of which elements are trainable. Used for masking Jacobian equations.
-        """
-        return self._Us, self.updt_mask, self.pde_mask
-
-
-    def get_all_us_Xs(self):
-        """ Return all grid points, including fake boundaries. """
-        return self._Us, self._Xs
 
 
     @abstractmethod

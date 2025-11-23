@@ -1,6 +1,6 @@
 import torch
 import scipy.sparse.linalg as linalg
-import time
+import logging
 import cupy as cp
 import cupyx.scipy.sparse as sp
 import cupyx.scipy.sparse.linalg as sp_linalg
@@ -118,8 +118,8 @@ class LinearSolver:
                 # c_print("Dense solve fallback", color="yellow")
                 r2 = b - A @ x
                 x = x + self.cuda_dense(A, r2)
-                rel_err3 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
-                c_print(f'Dense rel err: {rel_err3:.3g}', color="yellow")
+                # rel_err3 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
+                logging.info(f'Remaining error: {rel_err2:.3g}', color="yellow")
 
                 self.cudss_solver.n_uses = self.cudss_solver.max_n_uses + 1  # Force replan next solve.
         return x

@@ -115,11 +115,17 @@ def train_new():
     U_graph.set_grid(Us_true)
     pde_adj.plot_interp(title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
 
+    U_graph.set_grid(torch.zeros_like(Us_true))
+    Us_init = Us_true.clone()
     pred_loss_hist = []
     st = time.time()
     for i in range(2001):
-        # if i > 100:
-        #     U_graph.set_grid(torch.zeros_like(Us_true))
+        if i % 101 == 0:
+            U_graph.set_grid(torch.zeros_like(Us_true))
+        elif i % 11 == 0:
+            U_graph.set_grid(Us_true)
+        else:
+            U_graph.set_grid(Us_init)
 
         optim.zero_grad(), optim_other.zero_grad()
 
@@ -150,13 +156,15 @@ def train_new():
             for pg in optim.param_groups:
                 pg['lr'] *= 0.5
 
-        if i % 400 == 0:
+        if i % 100 == 0:
             U_graph.set_grid(torch.zeros_like(Us_true))
             pde_adj.forward_solve()
             Us_pred = U_graph.get_all_us_Xs()[0]
             pred_loss = loss_fn(Us_pred, requires_grad=False)
             pred_loss_hist.append(pred_loss.detach().cpu().item())
             print(f'{pred_loss = }')
+
+            Us_init = U_graph.get_all_us_Xs()[0]
             # U_graph.set_grid(Us_true)
 
     U_graph.set_grid(torch.zeros_like(Us_true))

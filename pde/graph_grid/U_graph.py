@@ -3,7 +3,6 @@ from torch import Tensor
 from cprint import c_print
 from codetiming import Timer
 
-from pde.BaseU import UBase
 from pde.graph_grid.graph_store import DerivGraph, Point, Deriv
 from pde.graph_grid.graph_store import P_Types as T
 from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff, nearest_neighbors
@@ -58,14 +57,16 @@ def tri_to_n_hop(tris, hops=6):
     return n_hop_reach_cols
 
 
-class UGraph(UBase):
+class UGraph:
     """ Holder for graph structure. """
+    device: torch.device | str
+
     _Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
     _Us: Tensor   # [N_us_tot, N_component]                   # Value at node
     deriv_val: Tensor # [N_deriv_BC*N_component]            # Derivative values at nodes for BC
 
     pde_mask: Tensor  # [N_us_tot]                   # Mask for where to enforce PDE on. Bool
-    updt_mask: Tensor  # [N_us_tot]                   # Mask for nodes that need to be updated. Bool
+    dirich_mask: Tensor  # [N_us_tot * N_component]   # Mask for Dirichlet BCs
     pde_idx: Tensor  # [N_pde * N_component]        # Indices for PDE nodes in flattened Us
     bc_idx: Tensor   # [N_bc * N_component]         # Indices for
 
@@ -112,8 +113,6 @@ class UGraph(UBase):
         # PDE is enforced on normal points.
         self.pde_mask = torch.tensor([T.PDE in P.point_type for P in setup_dict.values()])
         self.bc_mask = torch.tensor([T.DERIV in P.point_type for P in setup_dict.values()])
-        # U requires gradient for normal or ghost points.
-        self.updt_mask = torch.tensor([T.UPDATE in P.point_type for P in setup_dict.values()])
 
         # 1.2) Derivative BC properties
         deriv_orders, deriv_val, neum_mask = {}, [], []
@@ -152,23 +151,23 @@ class UGraph(UBase):
 
         # 3) Derivative boundary conditions and Compute jacobian permutation
         # Single loop through all points in setup_dict
-        jacob_main_pos, jacob_neum_pos, neum_dirich_bc = [], [], []
+        jacob_main_pos, jacob_neum_pos, dirich_bc = [], [], []
         for i, point in enumerate(setup_dict.values()):
             if T.UPDATE in point.point_type:
                 # Categorize the point
                 if T.NeumOffsetBC in point.point_type:
                     jacob_neum_pos.append(i)
-                    neum_dirich_bc.append(point.is_dirichlet)
+                    dirich_bc.append(point.is_dirichlet)
                 else:
                     jacob_main_pos.append(i)
-        neum_dirich_bc = torch.tensor(neum_dirich_bc, dtype=torch.bool)
         pde_idx, bc_idx = torch.tensor(jacob_main_pos), torch.tensor(jacob_neum_pos)
-        dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
-        dirich_mask[bc_idx] = neum_dirich_bc
+        dirich_bc = torch.tensor(dirich_bc, dtype=torch.bool)
+        self.dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
+        self.dirich_mask[bc_idx] = dirich_bc
         # 3.2) Repeat for each component. Ordering as Us.flatten()
         self.pde_idx = torch.stack([self.N_comp * pde_idx + i for i in range(self.N_comp)], dim=-1).flatten()       # shape = [N_pde * N_comp]
         self.bc_idx = torch.stack([self.N_comp * bc_idx + i for i in range(self.N_comp)], dim=-1).flatten()         # shape = [N_bc * N_comp]
-        self.bc_calc = BCCalc(deriv_orders, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
+        self.bc_calc = BCCalc(deriv_orders, dirich_bc, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
 
         # 4) Helper for efficient sparse operations
         deriv_jac_pde = self.deriv_calc.jacobian()
@@ -179,7 +178,7 @@ class UGraph(UBase):
 
         # Simplify trivial rows for linear solver
 
-        trivial_rows = torch.where(dirich_mask.flatten())[0]
+        trivial_rows = torch.where(self.dirich_mask.flatten())[0]
         self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
     def get_Us_dUs(self):
@@ -198,10 +197,42 @@ class UGraph(UBase):
         self._Xs = self._Xs.cuda(non_blocking=True)
 
         self.pde_mask = self.pde_mask.cuda(non_blocking=True)
-        self.updt_mask = self.updt_mask.cuda(non_blocking=True)
 
     def set_grid(self, new_Us):
         """
         Set grid to new values. Used for Jacobian computation.
+        Set dirichlet boundary condition to BC values
         """
         self._Us = new_Us
+        self._Us[self.dirich_mask] = self.bc_calc.dirich_bc_vals() # Enforce Dirichlet BCs
+
+    def update_grid(self, deltas):
+        """
+        Update grid with changes, and fix boundary conditions with new grid.
+        deltas.shape = [N*N_comp]
+        us -> us - deltas
+        """
+        deltas = deltas.view(-1, self.N_comp)
+        self.set_grid(self._Us - deltas)
+
+    def get_test_update(self, deltas):
+        """
+        Get test update for grid with changes, without applying them.
+        deltas.shape = [N*N_comp]
+        us -> us - deltas
+        """
+        deltas = deltas.view(-1, self.N_comp)
+        Us_test = torch.clone(self._Us) - deltas
+        # Us_test[self.dirich_mask] = self.bc_calc.dirich_bc_vals()
+        return Us_test
+
+    def get_us_mask(self):
+        """
+        Return us, and mask of which elements are trainable. Used for masking Jacobian equations.
+        """
+        return self._Us, None, self.pde_mask
+
+
+    def get_all_us_Xs(self):
+        """ Return all grid points, including fake boundaries. """
+        return self._Us, self._Xs
