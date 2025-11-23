@@ -292,6 +292,7 @@ def gmres_cust(A, b, x0=None, rtol=1e-5, maxiter=1000, restart=None):
     # Initialize
     x = x0
 
+    b_norm = torch.norm(b)
     r = b - Ain_vec(x)
     beta = torch.norm(r)
     eye = torch.eye(restart + 1, dtype=dtype, device=device)
@@ -327,7 +328,9 @@ def gmres_cust(A, b, x0=None, rtol=1e-5, maxiter=1000, restart=None):
         r = b - Ain_vec(x)
         residual_norm = torch.norm(r)
 
-        if residual_norm < rtol:
+        # Exit if converged
+        err_ratio = residual_norm / b_norm
+        if err_ratio < rtol:
             return x, {'converged': True, 'iterations': k * restart + j + 1, 'residual_norm': residual_norm}
 
         # Restart with new initial residual

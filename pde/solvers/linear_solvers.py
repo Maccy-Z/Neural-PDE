@@ -5,47 +5,46 @@ import cupy as cp
 import cupyx.scipy.sparse as sp
 import cupyx.scipy.sparse.linalg as sp_linalg
 from typing import Callable
+from cprint import c_print
 
 from pde.solvers.gmres import gmres, gmres_cust
 from pde.solvers.pyamgx_holder import PyAMGXManager
 from pde.solvers.nvmath_cudss import CUDSSSolver
-from pde.config import LinMode
-from pde.utils_sparse import csr_compress, csr_torch_to_cupy
+from pde.config import LinMode, FwdConfig, AdjConfig
+from pde.utils_sparse import csr_compress, csr_normalise
 
 class LinearSolver:
     """ Solve Ax = b for x """
     solver: Callable
     preproc: Callable
     postproc: Callable
-    cfg: dict = None
-    col_norms: torch.Tensor = None
+    solver_cfg: dict = None
+    col_norms: torch.Tensor | None = None
 
-    def __init__(self, mode: LinMode, device: str, cfg: dict=None):
-
+    def __init__(self, mode: LinMode, device: str, cfg: FwdConfig|AdjConfig=None):
+        self.cfg = cfg
         self.preproc = self.preproc_default
         self.postproc = self.postproc_defualt
 
         if device == "cuda":
+            self.preproc = self.preproc_sparse
+            self.postproc = self.postproc_sparse
+
             if mode == LinMode.DENSE:
                 self.solver = self.cuda_dense
             elif mode == LinMode.SPARSE:
                 self.solver = self.cuda_sparse
-                self.preproc = self.preproc_sparse
-                self.postproc = self.postproc_sparse
             elif mode == LinMode.ITERATIVE:
                 self.solver = self.cuda_iterative
-                self.cfg = cfg
-                self.preproc = self.preproc_sparse
+                self.solver_cfg = cfg.solver_cfg
             elif mode == LinMode.AMGX:
-                self.cfg = cfg
-                self.amgx_solver = PyAMGXManager().create_solver(cfg)
+                self.solver_cfg = cfg.solver_cfg
+                self.amgx_solver = PyAMGXManager().create_solver(self.solver_cfg)
                 self.solver = self.cuda_amgx
-                self.preproc = self.preproc_sparse
-                self.postproc = self.postproc_sparse
             elif mode == LinMode.CUDSS:
-                self.cudss_solver = CUDSSSolver(cfg)
+                self.cudss_solver = CUDSSSolver(cfg.solver_cfg)
                 self.solver = self.cudss
-
+                self.gmres_cfg = cfg.gmres_cfg
 
         elif device == "cpu":
             if mode == LinMode.DENSE:
@@ -54,9 +53,10 @@ class LinearSolver:
                 self.solver = self.cpu_sparse
 
     def solve(self, A, b) -> torch.Tensor:
-        A, b = self.preproc_tensor(A, b)
-        x = self.solver(A, b)
+        A_proc, b_proc = self.preproc_tensor(A, b)
+        x = self.solver(A_proc, b_proc)
         x = self.postproc(x)
+
         return x
 
     def cpu_sparse(self, A: torch.Tensor, b: torch.Tensor):
@@ -82,13 +82,7 @@ class LinearSolver:
 
     def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
         A = A.to_dense()
-        # deltas = torch.linalg.solve(A, b)
-
-        # Normalise columns to reduce numerical error
-        col_norms = A.norm(dim=0, keepdim=True).clamp_min(1e-3)
-        A = A / col_norms
-        x3 = torch.linalg.solve(A, b)
-        deltas = x3 / col_norms.squeeze(0)
+        deltas = torch.linalg.solve(A, b)
         return deltas
 
     def cuda_amgx(self, A_cp: cp.ndarray, b: torch.Tensor):
@@ -105,22 +99,29 @@ class LinearSolver:
         A_sparse_cupy = sp.csr_matrix(A_cp)
 
         # Solve the sparse linear system Ax = b using CuPy
-        x, info = gmres(A_sparse_cupy, b_cp, **self.cfg)
+        x, info = gmres(A_sparse_cupy, b_cp, **self.solver_cfg)
         x = torch.from_dlpack(x)
 
         return x
 
-
     def cudss(self, A: torch.Tensor, b: torch.Tensor):
+        """ Solve using CUDSS.
+            Optional GMRES refinement, then dense solve if not converged.  """
         x = self.cudss_solver.forward(A, b)
-        #
-        # A_cp = csr_torch_to_cupy(A)
-        # b_cp = cp.from_dlpack(b)
-        # x0 = cp.from_dlpack(x)
-        # x_cp, info = gmres(A_cp, b_cp, x0=x0, **{"maxiter": 10, "restart": 10, "rtol": 1e-9})
-        # x = torch.from_dlpack(x_cp)
+        rel_err = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
+        if rel_err > 1e-3:
+            x, info = gmres_cust(A, b, x0=x, **self.gmres_cfg)
+            rel_err2 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
+            # print(f'CUDSS rel err: {rel_err:.3g} -> GMRES rel err: {rel_err2:.3g}, {info['residual_norm']:2g}')
+            if rel_err2 > 3e-3:
+                # Use old solution as start. x = x2 + A^-1 (b - A x2)
+                # c_print("Dense solve fallback", color="yellow")
+                r2 = b - A @ x
+                x = x + self.cuda_dense(A, r2)
+                rel_err3 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
+                c_print(f'Dense rel err: {rel_err3:.3g}', color="yellow")
 
-        x, _ = gmres_cust(A, b, x0=x, **{"maxiter": 10, "restart": 10, "rtol": 1e-9})
+                self.cudss_solver.n_uses = self.cudss_solver.max_n_uses + 1  # Force replan next solve.
         return x
 
     def preproc_tensor(self, A: torch.Tensor, b: torch.Tensor):
@@ -141,36 +142,15 @@ class LinearSolver:
             x = x / self.col_norms
         return x
 
-    def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor, precondition=False):
-        """ Convert a torch tensor to a cupy sparse tensor """
-        print(f'{A._nnz() = }')
-        if A.is_sparse_csr:
-            if precondition:
-                A = A.to_dense() # Convert to dense for preprocessing
-                """ Normalise rows and columns """
-                # row_norms = A.norm(dim=1)
-                # row_norms = row_norms + 1e-1 * torch.sign(row_norms)
-                # row_norms = row_norms /row_norms.mean()
-                # A = A / row_norms.unsqueeze(1)
-                # b = b.squeeze() / row_norms
-
-                col_norms = A.norm(dim=0, keepdim=True).clamp_min(1e-3)
-                A = A / col_norms
-                self.col_norms = col_norms.squeeze(0)
-                A = A.to_sparse_csr()
-
-            indptr, indices, values = csr_compress(A)
-            # indptr, indices, values = A.crow_indices(), A.col_indices(), A.values()
-
-            values_cp = cp.from_dlpack(values)
-            indices_cp = cp.from_dlpack(indices)
-            indptr_cp = cp.from_dlpack(indptr)
-
-            A_sparse_cp = sp.csr_matrix((values_cp, indices_cp, indptr_cp), shape=A.size())
-        else:
-            A_cp = cp.from_dlpack(A)
-            A_sparse_cp = sp.csr_matrix(A_cp)
-        return A_sparse_cp, b
+    def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """ Normalise and simplify sparse matrix A before solving. """
+        # Compress CSR matrix
+        if self.cfg.csr_compress:
+            crow_indices, col_indices, values = csr_compress(A) # crow_indices, col_indices, values
+            A = torch.sparse_csr_tensor(crow_indices=crow_indices, col_indices=col_indices, values=values, size=A.size(), device=A.device)
+        # Normalize rows and columns
+        A, b, self.col_norms = csr_normalise(A, b, self.cfg.norm_col, self.cfg.norm_row)
+        return A, b
 
 
 

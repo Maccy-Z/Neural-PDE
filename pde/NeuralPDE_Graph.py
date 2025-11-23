@@ -18,31 +18,25 @@ class NeuralPDEGraph:
     loss_fn: Loss
     adjoint: torch.Tensor
 
-    def __init__(self, pde_fn: PDEFunc, U_graph: UGraph, cfg: Config, loss_fn:Loss = None, triangles=None):
-        adj_cfg = cfg.adj_cfg
-        fwd_cfg = cfg.fwd_cfg
-        self.loss_fn = loss_fn
+    def __init__(self, pde_fn: PDEFunc, U_graph: UGraph, cfg: Config, loss_fn:Loss = None):
         self.cfg = cfg
         self.device = cfg.device
+        adj_cfg = cfg.adj_cfg
+        fwd_cfg = cfg.fwd_cfg
 
-        torch.save(U_graph, ARTEFACT_DIR / "U_graph.pt")
-        self.U_graph = torch.load(ARTEFACT_DIR / "U_graph.pt", weights_only=False)
-
-
+        self.loss_fn = loss_fn
         self.U_graph = U_graph
 
         self.pde_calc = GraphPDECalc(self.U_graph, pde_fn)
 
         # Forward solver
-        fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.device, cfg=fwd_cfg.lin_solve_cfg)
+        fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.device, cfg=fwd_cfg)
         self.newton_solver = SolverNewton(self.pde_calc, fwd_lin_solver, cfg=fwd_cfg)
 
         # Adjoint solver
-        adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.device, adj_cfg.lin_solve_cfg)
+        adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.device, cfg=adj_cfg)
         self.pde_adjoint = PDEAdjoint(self.pde_calc, adj_lin_solver, loss_fn)
 
-
-        self.triangles = triangles
         self.timer = Timer(name="timer", logger=None)
 
     def forward_solve(self, aux_input=None):
@@ -75,17 +69,16 @@ class NeuralPDEGraph:
                 J^T lambda = dL/dtheta|(U_new)
                 dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
          """
-
         # Compute forward step form Us_old
         J, old_resid = self.pde_calc.jacobian()
         with self.timer:
             deltas = self.newton_solver.newton_step(J, old_resid)
-        err = (J @ deltas - old_resid).norm()
-        logging.info(f'One Newton step residual norm: {err:.3g}, T = {self.timer.last:.3g}s')
+        fwd_resid = (J @ deltas - old_resid).norm()
+        logging.info(f'One Newton step residual norm: {fwd_resid:.3g}, T = {self.timer.last:.3g}s')
 
         # Compute loss derivative at Us_new, Jacobian at Us_old
         Us_new = self.U_graph.get_test_update(deltas)
-        adjoint, _ = self.pde_adjoint.adjoint_solve(self.U_graph, jac=J, Us_loss=Us_new)
+        adjoint, _, adj_resid = self.pde_adjoint.adjoint_solve(self.U_graph, jac=J, Us_loss=Us_new)
 
         with self.timer:
             # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
@@ -100,6 +93,9 @@ class NeuralPDEGraph:
 
         # print(f'{adj_f = }, {init_loss = }, {final_loss = }')
         logging.debug(f"Backprop time: {t_backward:.4f}s")
+
+        if adj_resid > 0.01 or fwd_resid > 0.01:
+            logging.warning(f'High residuals in single step: Forward resid: {fwd_resid:.3g}, Adjoint resid: {adj_resid:.3g}')
         return init_loss, final_loss, old_resid
 
     def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):

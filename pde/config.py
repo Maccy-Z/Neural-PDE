@@ -69,33 +69,41 @@ class FwdConfig:
 
     # Forward linear solver settings
     lin_mode: LinMode = LinMode.CUDSS
-    lin_solve_cfg: dict = None
+    solver_cfg: dict = None
+
+    norm_row: bool = True       # Normalize rows of A
+    norm_col: bool = True      # Normalize columns of A
+    csr_compress: bool = True   # Remove zero entries before solving
 
 
     def __post_init__(self):
         if self.lin_mode == LinMode.AMGX:
-            self.lin_solve_cfg = amgx_cfg
+            self.solver_cfg = amgx_cfg
         elif self.lin_mode == LinMode.ITERATIVE:
-            self.lin_solve_cfg = {"maxiter": 3000, "restart": 3000, "rtol": 1e-9}
+            self.solver_cfg = {"maxiter": 3000, "restart": 3000, "rtol": 1e-9}
         elif self.lin_mode == LinMode.CUDSS:
-            self.lin_solve_cfg = {'ir_n_steps': 1, "norm_mode": "row"}
+            self.solver_cfg = {'ir_n_steps': 1, 'max_n_uses': 300}
+            self.gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
 
 @dataclass
-class AdjointConfig:
-
+class AdjConfig:
     # Linear solver settings
     lin_mode: LinMode = LinMode.CUDSS
-    lin_solve_cfg: dict = None
+    solver_cfg: dict = None
 
+    norm_row: bool = True      # Normalize rows of A
+    norm_col: bool = True       # Normalize columns of A
+    csr_compress: bool = True   # Remove zero entries before solving
 
     def __post_init__(self):
         if self.lin_mode == LinMode.AMGX:
-            self.lin_solve_cfg = amgx_cfg
+            self.solver_cfg = amgx_cfg
         elif self.lin_mode == LinMode.ITERATIVE:
-            self.lin_solve_cfg = {"maxiter": 500, "restart": 100, "rtol": 1e-4}
+            self.solver_cfg = {"maxiter": 500, "restart": 100, "rtol": 1e-4}
         elif self.lin_mode == LinMode.CUDSS:
-            self.lin_solve_cfg = {'ir_n_steps': 0, "norm_mode": "col"}
+            self.solver_cfg = {'ir_n_steps': 0, 'max_n_uses': 300}
+            self.gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
 @dataclass
 class Config:
@@ -114,4 +122,4 @@ class Config:
     fwd_cfg: FwdConfig = field(default_factory=FwdConfig)
 
     # Adjoint config
-    adj_cfg: AdjointConfig = field(default_factory=AdjointConfig)
+    adj_cfg: AdjConfig = field(default_factory=AdjConfig)

@@ -1,6 +1,7 @@
 import torch
 from codetiming import Timer
 import logging
+from cprint import c_print
 
 from pde.pdes.PDECalc import GraphPDECalc
 from pde.graph_grid.U_graph import UGraph
@@ -38,8 +39,7 @@ class PDEAdjoint:
 
         residual = (jac_T @ adjoint - loss_u).norm()
         logging.info(f'Adjoint lin solve. Residual: {residual:.3g}, T: {t_adjoint:.3g}s')
-        # torch.save({"J": jac_T, "adj": adjoint, "loss_u": loss_u}, ARTEFACT_DIR/"jac_T.pt")
-        return adjoint, loss
+        return adjoint, loss, residual
 
     def backpropagate(self, adjoint):
         """

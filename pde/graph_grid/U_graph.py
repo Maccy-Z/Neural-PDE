@@ -163,13 +163,11 @@ class UGraph(UBase):
                     jacob_main_pos.append(i)
         neum_dirich_bc = torch.tensor(neum_dirich_bc, dtype=torch.bool)
         pde_idx, bc_idx = torch.tensor(jacob_main_pos), torch.tensor(jacob_neum_pos)
+        dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
+        dirich_mask[bc_idx] = neum_dirich_bc
         # 3.2) Repeat for each component. Ordering as Us.flatten()
         self.pde_idx = torch.stack([self.N_comp * pde_idx + i for i in range(self.N_comp)], dim=-1).flatten()       # shape = [N_pde * N_comp]
         self.bc_idx = torch.stack([self.N_comp * bc_idx + i for i in range(self.N_comp)], dim=-1).flatten()         # shape = [N_bc * N_comp]
-
-        dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
-        dirich_mask[bc_idx] = neum_dirich_bc
-
         self.bc_calc = BCCalc(deriv_orders, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
 
         # 4) Helper for efficient sparse operations
@@ -178,7 +176,9 @@ class UGraph(UBase):
         self.csr_summer = CSRSummer(deriv_jac_pde, check_sparsity=True)
         dummy_jac = self.csr_summer.blank_csr()
         self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
+
         # Simplify trivial rows for linear solver
+
         trivial_rows = torch.where(dirich_mask.flatten())[0]
         self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
@@ -200,4 +200,8 @@ class UGraph(UBase):
         self.pde_mask = self.pde_mask.cuda(non_blocking=True)
         self.updt_mask = self.updt_mask.cuda(non_blocking=True)
 
-
+    def set_grid(self, new_Us):
+        """
+        Set grid to new values. Used for Jacobian computation.
+        """
+        self._Us = new_Us

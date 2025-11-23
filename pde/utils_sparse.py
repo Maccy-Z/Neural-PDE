@@ -41,7 +41,6 @@ def csr_torch_to_cupy(csr: torch.Tensor):
     csr_cupy = cpx_sparse.csr_matrix((values, col_indices, crow_indices), shape=shape)
     return csr_cupy
 
-
 def csr_compress(csr: torch.Tensor):
     """ Compress a sparse CSR matrix by removing zero entries."""
     device = csr.values().device
@@ -156,96 +155,82 @@ def permutation_to_csr(perm, dtype=torch.float32, device="cpu"):
     )
     return sparse_matrix
 
-#
-# class CsrBuilder:
-#     """ Incrementally build a sparse CSR tensor from dense blocks. """
-#     def __init__(self, total_rows, total_cols, device=None):
-#         """
-#         Initializes the builder for a CSR sparse tensor.
-#         Parameters:
-#         - total_rows: int, total number of rows in the matrix.
-#         - total_cols: int, total number of columns in the matrix.
-#         - device: torch device (optional).
-#         """
-#         self.dtype = torch.int64
-#         self.total_rows = total_rows
-#         self.total_cols = total_cols
-#         self.device = device
-#
-#         self.zero_ten = torch.tensor([0], dtype=self.dtype, device=self.device)
-#
-#         # Internal storage for CSR components
-#         self.nnz_per_row = torch.tensor([0] * self.total_rows, device=self.device, dtype=self.dtype)  # Number of non-zero elements per row
-#         self.col_indices = []                # Column indices of non-zero elements
-#         self.values = []                     # Non-zero values
-#
-#     def add_block(self, block_dense_values, block_row_offset, block_col_offset):
-#         """
-#         Adds a dense block to the CSR components using efficient tensor operations.
-#
-#         Parameters:
-#         - block_dense_values: 2D tensor (n x m), dense block of values.
-#         - block_row_offset: int, the starting row index of the block in the overall matrix.
-#         - block_col_offset: int, the starting column index of the block in the overall matrix.
-#         """
-#         n, m = block_dense_values.shape
-#         crow_idxs, col_idxs, values = self.to_csr(block_dense_values)
-#
-#         # Count non-zero elements per row in the block
-#         counts = crow_idxs[1:] - crow_idxs[:-1]
-#
-#         # Update nnz_per_row for the corresponding global rows
-#         # Using scatter_add for efficient batch updates
-#         self.nnz_per_row[block_row_offset:block_row_offset + n] += counts
-#
-#         # Calculate global column indices
-#         global_cols = col_idxs + block_col_offset
-#         self.col_indices.append(global_cols)
-#
-#         # Extract the non-zero values
-#         non_zero_values = values
-#         self.values.append(non_zero_values)
-#
-#     def build(self):
-#         """
-#         Builds and returns the sparse CSR tensor from the accumulated components.
-#
-#         Returns:
-#         - csr_tensor: torch.sparse_csr_tensor, the constructed sparse CSR tensor.
-#         """
-#         # Compute crow_indices by cumulatively summing nnz_per_row
-#         crow_indices = torch.cat([
-#             self.zero_ten,
-#             torch.cumsum(self.nnz_per_row, dim=0, dtype=self.dtype)
-#         ])
-#
-#         # Convert col_indices and values to tensors
-#         col_indices_tensor = torch.cat(self.col_indices).to(self.dtype)
-#         values_tensor = torch.cat(self.values)
-#
-#         # Create the sparse CSR tensor
-#         csr_tensor = torch.sparse_csr_tensor(
-#             crow_indices,
-#             col_indices_tensor,
-#             values_tensor,
-#             size=(self.total_rows, self.total_cols),
-#         )
-#         return csr_tensor
-#
-#     def reset(self):
-#         self.nnz_per_row = torch.tensor([0] * self.total_rows, device=self.device, dtype=torch.int32)  # Number of non-zero elements per row
-#         self.col_indices = []                # Column indices of non-zero elements
-#         self.values = []                     # Non-zero values
-#
-#     def to_csr(self, A_torch):
-#         """ Cupy is faster than torch """
-#         A_cp = cp.asarray(A_torch)
-#         A_csr_cp = cp.sparse.csr_matrix(A_cp)
-#
-#         crow_indices = torch.from_dlpack(A_csr_cp.indptr)
-#         col_indices = torch.from_dlpack(A_csr_cp.indices)
-#         values = torch.from_dlpack(A_csr_cp.data)
-#         return crow_indices, col_indices, values
+
+import torch
+
+
+def csr_normalise(A: torch.Tensor, b: torch.Tensor, norm_row, norm_col):
+    """
+    Efficiently normalizes a Sparse CSR Tensor by rows and columns
+    without converting to dense.
+    Returns:
+        A_norm: Normalized Sparse CSR Tensor
+        b_norm: Normalized b tensor (if row norm is applied)
+        col_norms: Column norms used for normalization (if column norm is applied)
+    """
+
+    # Ensure A is actually CSR
+    if A.layout != torch.sparse_csr:
+        raise ValueError(f"Expected sparse_csr tensor, got {A.layout}")
+
+    # Extract underlying components
+    # cloning values ensures we don't modify the input tensor in-place immediately
+    # which is better for autograd and safety.
+    values = A.values().clone()
+    col_indices = A.col_indices()
+    crow_indices = A.crow_indices()
+    rows, cols = A.shape
+    device = A.device
+
+    # --- Column Normalization ---
+    if norm_col:
+        # 1. Compute Column Norms
+        # Create a container for column squared sums
+        col_sq_sums = torch.zeros(cols, device=device, dtype=values.dtype)
+        # Add squared values to their specific column index
+        # This is the vectorized equivalent of iterating columns
+        col_sq_sums.index_add_(0, col_indices, values.pow(2))
+        # Sqrt and clamp
+        col_norms = col_sq_sums.sqrt().clamp_min(1e-3)
+        # 2. Update Values
+        # Gather the norm corresponding to every specific value based on its column index
+        # scale size matches values size
+        scale = col_norms[col_indices]
+        values = values / scale
+    else:
+        col_norms = None
+    # --- Row Normalization ---
+    if norm_row:
+        # 1. Reconstruct Row Indices for every value
+        # CSR stores row pointers (crow_indices). We need to know which row every individual value belongs to
+        row_counts = crow_indices[1:] - crow_indices[:-1]
+        # Create an index tensor mapping every value to its row index
+        # This maps size (M,) -> size (nnz,)
+        row_indices_per_value = torch.repeat_interleave(
+            torch.arange(rows, device=device), row_counts
+        )
+        # 2. Compute Row Norms via Scatter Add
+        # (Replacing torch.sparse.sum which caused the CUDA error)
+        row_sq_sums = torch.zeros(rows, device=device, dtype=values.dtype)
+        row_sq_sums.index_add_(0, row_indices_per_value, values.pow(2))
+        row_norms = row_sq_sums.sqrt().clamp_min(1e-3)
+        # 3. Apply Norms
+        # Gather norm for each value based on the row index we calculated
+        values = values / row_norms[row_indices_per_value]
+        # 4. Update b
+        # Assuming b matches dimension 0 of A
+        if b is not None:
+            # Handle dimensions of b (vector vs matrix)
+            if b.dim() == 1:
+                b = b / row_norms
+            else:
+                b = b / row_norms.unsqueeze(-1)
+    # Reconstruct the CSR tensor with new values
+    # We reuse the original indices (zero-copy for indices usually)
+    A_norm = torch.sparse_csr_tensor(
+        crow_indices, col_indices, values, size=A.shape, device=device
+    )
+    return A_norm, b, col_norms
 
 
 class CSRTransposer:
