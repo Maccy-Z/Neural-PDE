@@ -31,24 +31,22 @@ class NeuralPDEGraph:
 
         # Forward solver
         fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.device, cfg=fwd_cfg)
-        self.newton_solver = SolverNewton(self.pde_calc, fwd_lin_solver, cfg=fwd_cfg)
+        self.newton_solver = SolverNewton(fwd_lin_solver, cfg=fwd_cfg)
 
         # Adjoint solver
         adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.device, cfg=adj_cfg)
-        self.pde_adjoint = PDEAdjoint(self.pde_calc, adj_lin_solver, loss_fn)
+        self.pde_adjoint = PDEAdjoint(adj_lin_solver, loss_fn)
 
         self.timer = Timer(name="timer", logger=None)
 
     def forward_solve(self, aux_input=None):
         """ Solve PDE forward problem. """
-
-        converged = self.newton_solver.find_pde_root(self.U_graph, aux_input)
+        converged = self.newton_solver.find_pde_root(self.pde_calc, self.U_graph, aux_input)
         return converged
 
     def adjoint_solve(self):
         """ Solve for adjoint. Call self.backward to get gradients, using adjoints. """
-
-        adjoint, loss = self.pde_adjoint.adjoint_solve(self.U_graph)
+        adjoint, loss = self.pde_adjoint.adjoint_solve(self.pde_calc, self.U_graph)
         self.adjoint = adjoint
         return loss
 
@@ -56,7 +54,7 @@ class NeuralPDEGraph:
         """ Once adjoint is calculated, backpropagate through PDE to get gradients.
             dL/dP = - adjoint * df/dP
          """
-        residuals = self.pde_adjoint.backpropagate(self.adjoint)  # Shape = [N, ..., Nparams]
+        residuals = self.pde_adjoint.backpropagate(self.pde_calc, self.adjoint)  # Shape = [N, ..., Nparams]
 
         # Delete adjoint to stop reuse.
         self.adjoint = None
@@ -72,13 +70,13 @@ class NeuralPDEGraph:
         # Compute forward step form Us_old
         J, old_resid = self.pde_calc.jacobian()
         with self.timer:
-            deltas = self.newton_solver.newton_step(J, old_resid)
+            deltas = self.newton_solver.newton_step(self.pde_calc, J, old_resid)
         fwd_resid = (J @ deltas - old_resid).norm()
         logging.info(f'One Newton step residual norm: {fwd_resid:.3g}, T = {self.timer.last:.3g}s')
 
         # Compute loss derivative at Us_new, Jacobian at Us_old
         Us_new = self.U_graph.get_test_update(deltas)
-        adjoint, _, adj_resid = self.pde_adjoint.adjoint_solve(self.U_graph, jac=J, Us_loss=Us_new)
+        adjoint, _, adj_resid = self.pde_adjoint.adjoint_solve(self.pde_calc, self.U_graph, jac=J, Us_loss=Us_new)
 
         with self.timer:
             # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)

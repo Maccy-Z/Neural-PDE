@@ -56,14 +56,21 @@ def tri_to_n_hop(tris, hops=6):
 
     return n_hop_reach_cols
 
+class UValues:
+    """ Holds numerical values at each node. """
+    Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
+    Us: Tensor   # [N_us_tot, N_component]                   # Value at
+    def __init__(self, Xs: Tensor, Us: Tensor):
+        self.Xs = Xs
+        self.Us = Us
+
 
 class UGraph:
     """ Holder for graph structure. """
     device: torch.device | str
 
     _Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
-    _Us: Tensor   # [N_us_tot, N_component]                   # Value at node
-    deriv_val: Tensor # [N_deriv_BC*N_component]            # Derivative values at nodes for BC
+    _Us: Tensor   # [N_us_tot, N_component]       # Value at node
 
     pde_mask: Tensor  # [N_us_tot]                   # Mask for where to enforce PDE on. Bool
     dirich_mask: Tensor  # [N_us_tot * N_component]   # Mask for Dirichlet BCs
@@ -94,7 +101,6 @@ class UGraph:
             if p.derivatives is not None:
                 assert p.n_deriv == self.N_comp, "Number of BC components must match number of components."
 
-
     def __init__(self, setup_dict: dict[int, Point], N_component, grad_neigh, max_degree:int = 2, tri=None, device="cpu"):
         """ Initialize the graph with a set of points.
             setup_dict: dict[node_id, Point]. Dictionary of each type of point
@@ -106,8 +112,6 @@ class UGraph:
         self.N_pdes = sum(T.PDE in P.point_type for P in setup_dict.values())
         self.N_comp = N_component
         self._check(setup_dict)
-
-        self._Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
 
         # 1) Node properties and masks
         # PDE is enforced on normal points.
@@ -141,7 +145,6 @@ class UGraph:
                             # edge_index: torch.Tensor   # [2, num_edges]      # Edges between nodes
                             # edge_coeff: torch.Tensor  # [num_edges]       # Finite diff coefficients for each edge
                             # neighbors: list[Tensor]     # [N_us_tot, N_neigh]           # Neighborhood for each node
-
         if device == "cuda":
             self._cuda()
             [graph.cuda() for graph in graphs.values()]
@@ -164,7 +167,7 @@ class UGraph:
         dirich_bc = torch.tensor(dirich_bc, dtype=torch.bool)
         self.dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
         self.dirich_mask[bc_idx] = dirich_bc
-        # 3.2) Repeat for each component. Ordering as Us.flatten()
+        # 3.1) Repeat for each component. Ordering as Us.flatten()
         self.pde_idx = torch.stack([self.N_comp * pde_idx + i for i in range(self.N_comp)], dim=-1).flatten()       # shape = [N_pde * N_comp]
         self.bc_idx = torch.stack([self.N_comp * bc_idx + i for i in range(self.N_comp)], dim=-1).flatten()         # shape = [N_bc * N_comp]
         self.bc_calc = BCCalc(deriv_orders, dirich_bc, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
@@ -175,9 +178,7 @@ class UGraph:
         self.csr_summer = CSRSummer(deriv_jac_pde, check_sparsity=True)
         dummy_jac = self.csr_summer.blank_csr()
         self.transposer = CSRTransposer(dummy_jac, check_sparsity=True)
-
         # Simplify trivial rows for linear solver
-
         trivial_rows = torch.where(self.dirich_mask.flatten())[0]
         self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
@@ -187,9 +188,6 @@ class UGraph:
         grads_dict = self.deriv_calc.derivative(self._Us)  # shape = [N_pde, N_comp]. Derivative removes boundary points.
         U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
         return U_dUs, Xs
-
-    def reset(self):
-        self._Us = torch.zeros_like(self._Us)
 
     def _cuda(self):
         """ Move graph data to CUDA. """
@@ -231,7 +229,6 @@ class UGraph:
         Return us, and mask of which elements are trainable. Used for masking Jacobian equations.
         """
         return self._Us, None, self.pde_mask
-
 
     def get_all_us_Xs(self):
         """ Return all grid points, including fake boundaries. """

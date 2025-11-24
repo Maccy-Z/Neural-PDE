@@ -103,7 +103,7 @@ class SolverNewton:
     """ Newton Raphson solver for finding roots of PDE residuals.
         pde_calc can be replaced for loading different PDEs.
     """
-    def __init__(self, pde_calc: GraphPDECalc, lin_solver: LinearSolver, cfg: FwdConfig):
+    def __init__(self, lin_solver: LinearSolver, cfg: FwdConfig):
         # self.device = cfg.DEVICE
         self.cfg = cfg
 
@@ -112,16 +112,15 @@ class SolverNewton:
         self.N_iter = cfg.N_iter
         self.solve_acc = cfg.solve_acc
 
-        self.pde_calc = pde_calc
 
         self.line_search_optim = EfficientIntervalOptimizer(max_iter=5)
         self.timer = Timer(name="timer", logger=None)
 
-    def _test_residual(self, U_graph, alpha, deltas, Us_init, aux_input):
+    def _test_residual(self, pde_calc, U_graph, alpha, deltas, Us_init, aux_input):
         """ Run test with test Us and get residuals. Then reset grid back to initial state. """
         Us = U_graph.get_test_update(alpha * deltas)
         U_graph.set_grid(Us)
-        pde_resid = self.pde_calc.residuals(aux_input)
+        pde_resid = pde_calc.residuals(aux_input)
         pde_resid_norm = pde_resid.norm()
 
         # Reset grid to initial state
@@ -129,23 +128,23 @@ class SolverNewton:
         return pde_resid_norm
 
     @torch.no_grad()
-    def newton_step(self, jacobian, resid):
+    def newton_step(self, pde_calc: GraphPDECalc, jacobian, resid):
         """ Run a single Newton-Raphson step.
             Include pre and postprocessing for efficiency.
         """
 
-        jacobian, resid = self.pde_calc.preproc_solve(jacobian, resid)
+        jacobian, resid = pde_calc.preproc_solve(jacobian, resid)
         deltas = self.lin_solver.solve(jacobian, resid)
-        deltas = self.pde_calc.postproc_solve(deltas)
+        deltas = pde_calc.postproc_solve(deltas)
         return deltas
 
     @torch.no_grad()
-    def find_pde_root(self, U_graph: UGraph, aux_input=None):
+    def find_pde_root(self, pde_calc: GraphPDECalc, U_graph: UGraph, aux_input=None):
         """
         Find the root of the PDE using Newton Raphson:
             grad(F(x_n)) * (x_{n+1} - x_n) = -F(x_n)
 
-        :param aux_input: Additional conditioning for the PDE
+        aux_input: Additional conditioning for the PDE
         """
         converged, last_i = False, 0
         best_alpha = 1.0
@@ -155,16 +154,16 @@ class SolverNewton:
 
             # Compute Jacobian, residuals and solve linear system
             with self.timer:
-                jacobian, old_resid = self.pde_calc.jacobian(aux_input)
+                jacobian, old_resid = pde_calc.jacobian(aux_input)
             t_jacob = self.timer.last
             with self.timer:
-                deltas = self.newton_step(jacobian, old_resid)
+                deltas = self.newton_step(pde_calc, jacobian, old_resid)
             t_solve = self.timer.last
 
             # Find best alpha using line search
             with self.timer:
                 zero_alpha_norm = old_resid.norm()
-                resid_fn = lambda alpha: self._test_residual(U_graph, alpha, deltas, Us_init, aux_input)
+                resid_fn = lambda alpha: self._test_residual(pde_calc, U_graph, alpha, deltas, Us_init, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
                 dUs = deltas * best_alpha #self.lr
                 U_graph.update_grid(dUs)
@@ -174,7 +173,7 @@ class SolverNewton:
                 lin_error_norm = lin_error.norm()
 
                 # Error from PDE with updated Us
-                new_resid = self.pde_calc.residuals(aux_input)
+                new_resid = pde_calc.residuals(aux_input)
                 new_resid_norm = new_resid.norm()
                 max_abs_residual = torch.max(new_resid.abs())
             t_line = self.timer.last

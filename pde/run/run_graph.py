@@ -20,7 +20,7 @@ def init_setup(cfg: Config):
     pde_fn = NNFunc(cfg, device=cfg.device)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
+    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.05, betas=(0.9, 0.99), weight_decay=1e-4)
     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)  # , betas=(0.95, 0.95))
 
     return U_graph, Us_true, pde_fn, loss_fn, optim, optim_other
@@ -120,7 +120,7 @@ def train_new():
     pred_loss_hist = []
     st = time.time()
     for i in range(2001):
-        if i % 101 == 0:
+        if i % 51 == 0:
             U_graph.set_grid(torch.zeros_like(Us_true))
         elif i % 11 == 0:
             U_graph.set_grid(Us_true)
@@ -209,7 +209,7 @@ def train_resid():
 if __name__ == "__main__":
     setup_logging(debug=3)
     torch.set_printoptions(linewidth=120)
-    torch.manual_seed(123)
+    # torch.manual_seed(123)
 
     # true_pde()
     train_new()

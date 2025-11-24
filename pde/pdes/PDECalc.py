@@ -133,7 +133,6 @@ class GraphPDECalc:
 
         return residuals
 
-
     def preproc_solve(self, jacobian: torch.Tensor, b: torch.Tensor):
         """ Simplify the jacobian by removing trivial rows and columns. """
         return self.simplifier.simplify_system(jacobian, b)
