@@ -64,14 +64,17 @@ class UValues:
         self.Xs = Xs
         self.Us = Us
 
+    def cuda(self):
+        self.Us = self.Us.cuda(non_blocking=True)
+        self.Xs = self.Xs.cuda(non_blocking=True)
 
 class UGraph:
     """ Holder for graph structure. """
     device: torch.device | str
 
-    _Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
-    _Us: Tensor   # [N_us_tot, N_component]       # Value at node
+    U_values: UValues
 
+    _Xs: Tensor  # [N_us_tot, 2]                # Coordinates of nodes
     pde_mask: Tensor  # [N_us_tot]                   # Mask for where to enforce PDE on. Bool
     dirich_mask: Tensor  # [N_us_tot * N_component]   # Mask for Dirichlet BCs
     pde_idx: Tensor  # [N_pde * N_component]        # Indices for PDE nodes in flattened Us
@@ -130,8 +133,10 @@ class UGraph:
                 neum_mask.append(False)
         #self.neumann_mask = torch.tensor(neum_mask)
         # 1.3) Set up initial node values
-        self._Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
-        self._Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
+        Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
+        Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
+        self._Xs = Xs
+        self.U_values = UValues(Xs, Us)
 
         # 2.1) Get the neighborhood graph
         stencils = nearest_neighbors(self.tri, self._Xs, grad_neigh)
@@ -182,54 +187,55 @@ class UGraph:
         trivial_rows = torch.where(self.dirich_mask.flatten())[0]
         self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
-    def get_Us_dUs(self):
-        Xs = self._Xs  # Shape = [N_total, 2].
+    def get_Us_dUs(self, U_values: UValues):
+        # Xs = self._Xs  # Shape = [N_total, 2].
+        Us, Xs = U_values.Us, self._Xs
+
         # Finite differences D. shape = [N_pde, N_derivs, N_components]
-        grads_dict = self.deriv_calc.derivative(self._Us)  # shape = [N_pde, N_comp]. Derivative removes boundary points.
+        grads_dict = self.deriv_calc.derivative(Us)  # shape = [N_pde, N_comp]. Derivative removes boundary points.
         U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
         return U_dUs, Xs
 
     def _cuda(self):
         """ Move graph data to CUDA. """
-        self._Us = self._Us.cuda(non_blocking=True)
-        self._Xs = self._Xs.cuda(non_blocking=True)
-
+        self.U_values.cuda()
+        self._Xs = self._Xs.cuda()
         self.pde_mask = self.pde_mask.cuda(non_blocking=True)
 
-    def set_grid(self, new_Us):
+    def set_grid(self, new_Us, U_values: UValues):
         """
         Set grid to new values. Used for Jacobian computation.
-        Set dirichlet boundary condition to BC values
+        Enforce dirichlet boundary condition to BC values
         """
-        self._Us = new_Us
-        self._Us[self.dirich_mask] = self.bc_calc.dirich_bc_vals() # Enforce Dirichlet BCs
+        U_values.Us = new_Us
+        U_values.Us[self.dirich_mask] = self.bc_calc.dirich_bc_vals() # Enforce Dirichlet BCs
 
-    def update_grid(self, deltas):
+    def update_grid(self,deltas, U_values: UValues):
         """
         Update grid with changes, and fix boundary conditions with new grid.
         deltas.shape = [N*N_comp]
         us -> us - deltas
         """
         deltas = deltas.view(-1, self.N_comp)
-        self.set_grid(self._Us - deltas)
+        self.set_grid(U_values.Us - deltas, U_values)
 
-    def get_test_update(self, deltas):
+    def get_test_update(self, deltas, U_values_old: UValues) -> UValues:
         """
         Get test update for grid with changes, without applying them.
         deltas.shape = [N*N_comp]
         us -> us - deltas
         """
         deltas = deltas.view(-1, self.N_comp)
-        Us_test = torch.clone(self._Us) - deltas
-        # Us_test[self.dirich_mask] = self.bc_calc.dirich_bc_vals()
-        return Us_test
+        Us_test = torch.clone(U_values_old.Us) - deltas
+        Us_test[self.dirich_mask] = self.bc_calc.dirich_bc_vals()
+        return UValues(self._Xs, Us_test)
 
-    def get_us_mask(self):
+    def get_us_mask(self, U_values: UValues):
         """
         Return us, and mask of which elements are trainable. Used for masking Jacobian equations.
         """
-        return self._Us, None, self.pde_mask
+        return U_values.Us, None, self.pde_mask
 
-    def get_all_us_Xs(self):
+    def get_all_us_Xs(self, U_values: UValues):
         """ Return all grid points, including fake boundaries. """
-        return self._Us, self._Xs
+        return U_values.Us, self._Xs

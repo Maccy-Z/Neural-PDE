@@ -2,7 +2,7 @@ import torch
 import torch.func as func
 import time
 
-from pde.graph_grid.U_graph import UGraph
+from pde.graph_grid.U_graph import UGraph, UValues
 from pde.pdes.PDEs import PDEFunc
 
 
@@ -52,7 +52,7 @@ class GraphPDECalc:
             return vmap_jacrev(U_dUs_pde, Xs_pde, pde_aux_input)
 
     # @torch.compile()
-    def jacobian(self, pde_aux_input=None):
+    def jacobian(self, U_values: UValues, pde_aux_input=None):
         """
             Compute jacobian dR/dU = dR/dD * dD/dU.
 
@@ -69,7 +69,7 @@ class GraphPDECalc:
         U_graph = self.U_graph
 
         # 1) Finite difference gradients
-        U_dUs, Xs = U_graph.get_Us_dUs()  # U_dUs.shape = [N_Us, N_derivs, N_comp]
+        U_dUs, Xs = U_graph.get_Us_dUs(U_values)  # U_dUs.shape = [N_Us, N_derivs, N_comp]
 
         # 2) Split out equation and bc parts
         U_dUs_pde = U_dUs[U_graph.pde_mask]  # shape = [N_pde, N_derivs, N_comp]
@@ -105,15 +105,15 @@ class GraphPDECalc:
         jacobian = self.csr_summer.sum_simple(partials)        # shape = [N_pde_, N_u_grad_]
         return jacobian, residuals
 
-    def jacob_transpose(self, jacobian=None):
+    def jacob_transpose(self, U_values: UValues=None, jacobian=None):
         if jacobian is None:
-            jacobian, _ = self.jacobian()
+            jacobian, _ = self.jacobian(U_values)
         return self.transposer.transpose(jacobian)
 
-    def residuals(self, aux_input=None):
+    def residuals(self, U_values: UValues, aux_input=None):
         U_graph = self.U_graph
 
-        U_dUs, Xs = U_graph.get_Us_dUs()  # shape = [N_pde, N_derivs, N_comp]
+        U_dUs, Xs = U_graph.get_Us_dUs(U_values)  # shape = [N_pde, N_derivs, N_comp]
         U_dUs_pde = U_dUs[U_graph.pde_mask]  # shape = [N_pde, N_derivs, N_comp]
         Xs_pde = Xs[U_graph.pde_mask]  # shape = [N_pde, N_dim]
 

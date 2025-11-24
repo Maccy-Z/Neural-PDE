@@ -66,14 +66,13 @@ class FwdConfig:
     N_iter: int = 10
     solve_acc: float = 0.001
 
-
     # Forward linear solver settings
-    lin_mode: LinMode = LinMode.CUDSS
+    lin_mode: LinMode = LinMode.DENSE
     solver_cfg: dict = None
 
     norm_row: bool = True       # Normalize rows of A
     norm_col: bool = True      # Normalize columns of A
-    csr_compress: bool = True   # Remove zero entries before solving
+    csr_compress: bool = False   # Remove zero entries before solving
 
 
     def __post_init__(self):
@@ -89,7 +88,7 @@ class FwdConfig:
 @dataclass
 class AdjConfig:
     # Linear solver settings
-    lin_mode: LinMode = LinMode.CUDSS
+    lin_mode: LinMode = LinMode.DENSE
     solver_cfg: dict = None
 
     norm_row: bool = True      # Normalize rows of A

@@ -5,6 +5,7 @@ import time
 
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
+from pde.graph_grid.U_graph import UValues
 from pde.pdes.PDEs import Fluid, FluidLearned, NNFunc
 from pde.utils import setup_logging, ARTEFACT_DIR
 from pde.loss import DummyLoss, MSELoss2, MSELossNorm
@@ -29,24 +30,22 @@ def true_pde():
     """ Generate true solution using known PDE. """
     cfg = Config()
     U_graph, triangles = mesh_graph(cfg)
-
-    Us_all, _ = U_graph.get_all_us_Xs()
+    U_values = U_graph.U_values
     pde_fn = Fluid(cfg, device=cfg.device)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
     loss_fn = DummyLoss()
 
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn)
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, U_values, cfg, loss_fn)
 
     pde_adj.forward_solve()
     pde_adj.plot_interp(title="Initial solution")
 
-    Us_all, updt_mask, _ = U_graph.get_us_mask()
-    Us = Us_all[updt_mask]
+    Us = U_values.Us
 
     with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
         torch.save(Us, f)
-    print(f'{Us.shape = }, {Us_all.shape = }')
+    print(f'{Us.shape = }')
 
 
 def train_adjoint():
@@ -56,10 +55,11 @@ def train_adjoint():
 
     Us_true = torch.load("../Us_solution.pth", weights_only=True)
     U_graph.set_grid(Us_true)
+    U_values = U_graph.U_values
     loss_fn = MSELossNorm(Us_true)
 
     pde_fn = NNFunc(cfg, device=cfg.device)
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn)
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, U_values, cfg, loss_fn=loss_fn)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
     optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
@@ -110,27 +110,30 @@ def train_new():
 
 
     U_graph, Us_true, pde_fn, loss_fn, optim, optim_other = init_setup(cfg)
-    pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn)
+    U_values = U_graph.U_values
+    pde_adj = NeuralPDEGraph(pde_fn, U_graph, U_values, cfg, loss_fn)
 
-    U_graph.set_grid(Us_true)
-    pde_adj.plot_interp(title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
+    Us_true = UValues(Xs=U_values.Xs, Us=Us_true)
+    Us_zeros = UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
+    Us_current = UValues(Xs=U_values.Xs, Us=Us_true.Us.clone())
 
-    U_graph.set_grid(torch.zeros_like(Us_true))
-    Us_init = Us_true.clone()
+    pde_adj.plot_interp(Us_true, title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
+
+
     pred_loss_hist = []
     st = time.time()
     for i in range(2001):
         if i % 51 == 0:
-            U_graph.set_grid(torch.zeros_like(Us_true))
+            Us_step = Us_zeros #U_graph.set_grid(torch.zeros_like(Us_true), U_values)
         elif i % 11 == 0:
-            U_graph.set_grid(Us_true)
+            Us_step = Us_true #U_graph.set_grid(Us_true, U_values)
         else:
-            U_graph.set_grid(Us_init)
+            Us_step = Us_current #U_graph.set_grid(Us_init, U_values)
 
         optim.zero_grad(), optim_other.zero_grad()
 
         # Adjoint gradient
-        init_loss, final_loss, resid = pde_adj.single_step()
+        init_loss, final_loss, resid = pde_adj.single_step(Us_step)
 
         # # Residual gradient
         # residuals = pde_adj.pde_calc.residuals()
@@ -157,19 +160,16 @@ def train_new():
                 pg['lr'] *= 0.5
 
         if i % 100 == 0:
-            U_graph.set_grid(torch.zeros_like(Us_true))
-            pde_adj.forward_solve()
-            Us_pred = U_graph.get_all_us_Xs()[0]
+            Us_test = UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
+            pde_adj.forward_solve(Us_test)
+            Us_pred = Us_test.Us
             pred_loss = loss_fn(Us_pred, requires_grad=False)
             pred_loss_hist.append(pred_loss.detach().cpu().item())
             print(f'{pred_loss = }')
 
-            Us_init = U_graph.get_all_us_Xs()[0]
-            # U_graph.set_grid(Us_true)
-
-    U_graph.set_grid(torch.zeros_like(Us_true))
-    pde_adj.forward_solve()
-    pde_adj.plot_interp(title=["Velocity x", "Velocity y", "Pressure"])
+    Us_test = UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
+    pde_adj.forward_solve(Us_test)
+    pde_adj.plot_interp(Us_test, title=["Velocity x", "Velocity y", "Pressure"])
 
     print(pred_loss_hist)
 
@@ -207,9 +207,11 @@ def train_resid():
 
 
 if __name__ == "__main__":
-    setup_logging(debug=3)
+    setup_logging(debug=4)
     torch.set_printoptions(linewidth=120)
-    # torch.manual_seed(123)
+    torch.manual_seed(1)
+    # torch.autograd.set_detect_anomaly(True)
+    # torch.use_deterministic_algorithms(True)
 
     # true_pde()
     train_new()

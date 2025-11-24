@@ -2,7 +2,7 @@ import torch
 from codetiming import Timer
 import logging
 
-from pde.graph_grid.U_graph import UGraph
+from pde.graph_grid.U_graph import UGraph, UValues
 from pde.pdes.PDECalc import GraphPDECalc
 from pde.pdes.PDEs import PDEFunc
 from pde.solvers.adjoint_solver import PDEAdjoint
@@ -18,7 +18,7 @@ class NeuralPDEGraph:
     loss_fn: Loss
     adjoint: torch.Tensor
 
-    def __init__(self, pde_fn: PDEFunc, U_graph: UGraph, cfg: Config, loss_fn:Loss = None):
+    def __init__(self, pde_fn: PDEFunc, U_graph: UGraph, U_values: UValues, cfg: Config, loss_fn:Loss = None):
         self.cfg = cfg
         self.device = cfg.device
         adj_cfg = cfg.adj_cfg
@@ -26,6 +26,7 @@ class NeuralPDEGraph:
 
         self.loss_fn = loss_fn
         self.U_graph = U_graph
+        self.U_values = U_values
 
         self.pde_calc = GraphPDECalc(self.U_graph, pde_fn)
 
@@ -39,14 +40,14 @@ class NeuralPDEGraph:
 
         self.timer = Timer(name="timer", logger=None)
 
-    def forward_solve(self, aux_input=None):
+    def forward_solve(self, Us: UValues, aux_input=None):
         """ Solve PDE forward problem. """
-        converged = self.newton_solver.find_pde_root(self.pde_calc, self.U_graph, aux_input)
+        converged = self.newton_solver.find_pde_root(self.pde_calc, self.U_graph, Us, aux_input)
         return converged
 
     def adjoint_solve(self):
         """ Solve for adjoint. Call self.backward to get gradients, using adjoints. """
-        adjoint, loss = self.pde_adjoint.adjoint_solve(self.pde_calc, self.U_graph)
+        adjoint, loss = self.pde_adjoint.adjoint_solve(self.pde_calc, self.U_values)
         self.adjoint = adjoint
         return loss
 
@@ -61,22 +62,22 @@ class NeuralPDEGraph:
 
         return residuals
 
-    def single_step(self):
+    def single_step(self, Us_current: UValues):
         """ Perform a single step of the Newton solver and compute the exact derivative:
                 U_old - U_new = dU = J^-1(u_old, theta) f(U_old, theta)
                 J^T lambda = dL/dtheta|(U_new)
                 dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
          """
         # Compute forward step form Us_old
-        J, old_resid = self.pde_calc.jacobian()
+        J, old_resid = self.pde_calc.jacobian(Us_current)
         with self.timer:
             deltas = self.newton_solver.newton_step(self.pde_calc, J, old_resid)
         fwd_resid = (J @ deltas - old_resid).norm()
         logging.info(f'One Newton step residual norm: {fwd_resid:.3g}, T = {self.timer.last:.3g}s')
 
         # Compute loss derivative at Us_new, Jacobian at Us_old
-        Us_new = self.U_graph.get_test_update(deltas)
-        adjoint, _, adj_resid = self.pde_adjoint.adjoint_solve(self.pde_calc, self.U_graph, jac=J, Us_loss=Us_new)
+        Us_new: UValues = self.U_graph.get_test_update(deltas, U_values_old=Us_current)
+        adjoint, _, adj_resid = self.pde_adjoint.adjoint_solve(self.pde_calc, Us_new, Us_current, jac=J)
 
         with self.timer:
             # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
@@ -85,9 +86,9 @@ class NeuralPDEGraph:
         t_backward = self.timer.last
 
         with torch.no_grad():
-            Us_old = self.U_graph.get_all_us_Xs()[0]
+            Us_old = self.U_graph.get_all_us_Xs(Us_current)[0]
             init_loss = self.loss_fn(Us_old, requires_grad=False)
-            final_loss = self.loss_fn(Us_new, requires_grad=False)
+            final_loss = self.loss_fn(Us_new.Us, requires_grad=False)
 
         # print(f'{adj_f = }, {init_loss = }, {final_loss = }')
         logging.debug(f"Backprop time: {t_backward:.4f}s")
@@ -96,12 +97,9 @@ class NeuralPDEGraph:
             logging.warning(f'High residuals in single step: Forward resid: {fwd_resid:.3g}, Adjoint resid: {adj_resid:.3g}')
         return init_loss, final_loss, old_resid
 
-    def plot_interp(self, Us=None, Xlims=None, title="Interpolated solution"):
+    def plot_interp(self, U_values, Xlims=None, title="Interpolated solution"):
         """ Plot the interpolated solution. """
-        if Us is None:
-            Us, Xs = self.U_graph.get_all_us_Xs()
-        else:
-            _, Xs = self.U_graph.get_all_us_Xs()
+        Us, Xs = U_values.Us, U_values.Xs
 
         plot_interp(Xs, Us.T, Xlims=Xlims, title=title, triangles=self.U_graph.tri)
 

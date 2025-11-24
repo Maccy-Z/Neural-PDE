@@ -4,7 +4,7 @@ import logging
 from cprint import c_print
 
 from pde.pdes.PDECalc import GraphPDECalc
-from pde.graph_grid.U_graph import UGraph
+from pde.graph_grid.U_graph import UGraph, UValues
 from pde.loss import Loss
 from pde.solvers.linear_solvers import LinearSolver
 
@@ -13,22 +13,20 @@ class PDEAdjoint:
         self.adj_lin_solver = adj_lin_solver
         self.loss_fn = loss_fn
 
-    def adjoint_solve(self, pde_calc: GraphPDECalc, U_graph: UGraph, jac=None, Us_loss=None):
+    def adjoint_solve(self, pde_calc: GraphPDECalc, Us_new: UValues, Us_old: UValues, jac=None):
         """ Solve for adjoint.
             dgdU = J^T * adjoint
-            Us_loss: Optional. If different Us is needed to compute loss gradient than the jacobian J(Us, theta)
-                    shape = [N_us_grad, N_comp]
+            Args:
+                pde_calc: GraphPDECalc object to compute Jacobian and residuals
+                Us_new: UValues at which to compute loss gradient, after forward solve
+                Us_old: UValues at which to compute Jacobian
+                jac: Cached Jacobian J(Us_old, theta), for efficiency. If None, it will be recomputed.
          """
         with torch.no_grad():
-            jac_T = pde_calc.jacob_transpose(jac)    # Shape = [N_eq, N_Us]
+            jac_T = pde_calc.jacob_transpose(Us_old, jac)    # Shape = [N_eq, N_Us]
 
         # One adjoint value for each trained u value, including boundary points.
-        if Us_loss is None:
-            Us, updt_mask, _ = U_graph.get_us_mask()
-            Us_grad = Us[updt_mask]
-        else:
-            Us_grad = Us_loss
-
+        Us_grad = Us_new.Us
         loss = self.loss_fn(Us_grad)
         loss_u = self.loss_fn.gradient().flatten()
 
@@ -40,13 +38,13 @@ class PDEAdjoint:
         logging.info(f'Adjoint lin solve. Residual: {residual:.3g}, T: {t_adjoint:.3g}s')
         return adjoint, loss, residual
 
-    def backpropagate(self, pde_calc: GraphPDECalc, adjoint):
+    def backpropagate(self, pde_calc: GraphPDECalc, U_values, adjoint):
         """
             Computes grads and populates model.parameters.grads
             adjoint.shape = [N_us] = [N_PDEs]
         """
         # Computes adjoint * dfdp as vector jacobian product.
-        residuals = pde_calc.residuals()
+        residuals = pde_calc.residuals(U_values)
         residuals.backward(-adjoint)
         return residuals
 
