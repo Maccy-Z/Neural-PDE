@@ -123,6 +123,7 @@ class SolverNewton:
         Us_test = U_graph.get_test_update(alpha * deltas, U_values)
         pde_resid = pde_calc.residuals(Us_test, aux_input)
         pde_resid_norm = pde_resid.norm()
+        print(f'{pde_resid_norm = }')
         return pde_resid_norm
 
     @torch.no_grad()
@@ -160,6 +161,7 @@ class SolverNewton:
                 zero_alpha_norm = old_resid.norm()
                 resid_fn = lambda alpha: self._test_residual(pde_calc, U_graph, U_values, alpha, deltas, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
+                print(f'{i = }, {best_alpha = }')
                 dUs = deltas * best_alpha #self.lr
                 U_graph.update_grid(dUs, U_values)
 
@@ -182,6 +184,6 @@ class SolverNewton:
                 converged = True
                 last_i = i
                 return {"converged": converged, "iter": last_i}
-
+        exit(4)
         logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
         return {"converged": converged, "iter": last_i}
