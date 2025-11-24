@@ -94,14 +94,14 @@ class GraphPDECalc:
         residuals[self.pde_perm] = resid_main
         residuals[self.bc_perm] = resid_bc
 
-        # 6.1) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
+        # 6) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
         dDdU = self.deriv_calc.jacobian()           # shape = [N_derivs][N_Us_, N_Us_]
         partials = []
         for d in range(self.N_comp * (self.N_deriv + 1)):
             prod = self.row_multipliers[d].mul_simple(dDdU[d], dRdD[:, d])  # shape = [N_pde_, N_u_grad_]
             partials.append(prod)
 
-        # 6.2) Sum over k: sum_k partials_ijk
+        # 6.1) Sum over k: sum_k partials_ijk
         jacobian = self.csr_summer.sum_simple(partials)        # shape = [N_pde_, N_u_grad_]
         return jacobian, residuals
 
