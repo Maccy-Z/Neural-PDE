@@ -67,11 +67,11 @@ class FwdConfig:
     solve_acc: float = 0.001
 
     # Forward linear solver settings
-    lin_mode: LinMode = LinMode.DENSE
+    lin_mode: LinMode = LinMode.CUDSS
     solver_cfg: dict = None
 
     norm_row: bool = True       # Normalize rows of A
-    norm_col: bool = True      # Normalize columns of A
+    norm_col: bool = False      # Normalize columns of A
     csr_compress: bool = False   # Remove zero entries before solving
 
 
@@ -88,10 +88,10 @@ class FwdConfig:
 @dataclass
 class AdjConfig:
     # Linear solver settings
-    lin_mode: LinMode = LinMode.DENSE
+    lin_mode: LinMode = LinMode.CUDSS
     solver_cfg: dict = None
 
-    norm_row: bool = True      # Normalize rows of A
+    norm_row: bool = False      # Normalize rows of A
     norm_col: bool = True       # Normalize columns of A
     csr_compress: bool = True   # Remove zero entries before solving
 

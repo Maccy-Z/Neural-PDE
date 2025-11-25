@@ -33,7 +33,7 @@ class EfficientIntervalOptimizer:
         self.tol = tol
         self.max_iter = max_iter
 
-    def optimize(self, loss_func, high=None, low_loss=None):
+    def optimize(self, loss_func, f_zero, high=None):
         """
         Finds a value x in the interval [low, high] that attempts to minimize
         the given loss_func using the Golden Section Search algorithm.
@@ -53,21 +53,32 @@ class EfficientIntervalOptimizer:
             return (low + high) / 2
 
         # Calculate initial interior test points using golden ratio proportions
-        # x_lower is the test point closer to 'low'
-        # x_upper is the test point closer to 'high'
-        x_lower = low + self._INVPHI_COMPLEMENT * current_width
         x_upper = high - self._INVPHI_COMPLEMENT * current_width
-
-        # Evaluate the loss function at these two initial points
-        f_lower = loss_func(x_lower)
+        # Evaluate the loss function at the upper point
         f_upper = loss_func(x_upper)
 
+        # Handle case if f_zero is lower than upper bound.
+        if f_zero is not None:
+            if f_zero < f_upper:
+                # Immediately rule out upper region
+                high = x_upper
+                low = 0
+                # Reinit test points
+                current_width = high - low
+                x_upper = high - self._INVPHI_COMPLEMENT * current_width
+                f_upper = loss_func(x_upper)
+
+        # Calculate the lower interior test point
+        x_lower = low + self._INVPHI_COMPLEMENT * current_width
+        f_lower = loss_func(x_lower)
+
+        # print(f'{f_upper = }, {f_lower = }, {low = }, {high = }')
         for i in range(self.max_iter):
             current_width = high - low  # Update current width
             if current_width <= self.tol:
                 break
 
-            if f_lower < f_upper:  # Minimum is likely in the interval [low, x_upper]
+            if (f_lower < f_upper) or (f_upper > f_zero):  # Minimum is likely in the interval [low, x_upper]
                 high = x_upper  # Narrow the interval from the right
 
                 # The old x_lower becomes the new x_upper (closer to new 'high')
@@ -77,6 +88,7 @@ class EfficientIntervalOptimizer:
                 # Calculate the new x_lower point
                 x_lower = low + self._INVPHI_COMPLEMENT * (high - low)
                 f_lower = loss_func(x_lower)  # Only one new function evaluation
+                # print(f'{(low + high) / 2}, {f_lower = }')
             else:  # Minimum is likely in the interval [x_lower, high]
                 low = x_lower  # Narrow the interval from the left
 
@@ -87,15 +99,18 @@ class EfficientIntervalOptimizer:
                 # Calculate the new x_upper point
                 x_upper = high - self._INVPHI_COMPLEMENT * (high - low)
                 f_upper = loss_func(x_upper)  # Only one new function evaluation
+                # print(f'{(low + high) / 2}, {f_upper = }')
 
         pred_alpha = (low + high) / 2
 
         # Test alpha against low loss, and reduce further if needed.
-        if low_loss is not None:
-            if loss_func(pred_alpha) > low_loss:
-                logging.debug(f"When doing interval optimisation, {pred_alpha = } is still too high. Reducing alpha.")
+        if f_zero is not None:
+            f_alpha = loss_func(pred_alpha)
+            if f_alpha > f_zero*1.01:
+                logging.warning(f"When doing interval optimisation, {pred_alpha = } is still too high. {f_alpha = }, {f_zero = }.")
                 pred_alpha = pred_alpha / 2
-
+                # print(loss_func(0.))
+                # exit(5)
         return pred_alpha
 
 
@@ -123,7 +138,6 @@ class SolverNewton:
         Us_test = U_graph.get_test_update(alpha * deltas, U_values)
         pde_resid = pde_calc.residuals(Us_test, aux_input)
         pde_resid_norm = pde_resid.norm()
-        print(f'{pde_resid_norm = }')
         return pde_resid_norm
 
     @torch.no_grad()
@@ -158,10 +172,12 @@ class SolverNewton:
 
             # Find best alpha using line search
             with self.timer:
+                # print(f'{i = }')
                 zero_alpha_norm = old_resid.norm()
+                # print(f'{zero_alpha_norm = }, {pde_calc.residuals(U_values, aux_input).norm()}')
                 resid_fn = lambda alpha: self._test_residual(pde_calc, U_graph, U_values, alpha, deltas, aux_input)
-                best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, low_loss=zero_alpha_norm)
-                print(f'{i = }, {best_alpha = }')
+                best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, f_zero=zero_alpha_norm)
+                # print(f'{best_alpha = :.5g}')
                 dUs = deltas * best_alpha #self.lr
                 U_graph.update_grid(dUs, U_values)
 
@@ -173,7 +189,7 @@ class SolverNewton:
                 new_resid = pde_calc.residuals(U_values, aux_input)
                 new_resid_norm = new_resid.norm()
                 max_abs_residual = torch.max(new_resid.abs())
-                print(f'{new_resid_norm = }')
+                # print(f'New residual: {new_resid_norm}')
 
             t_line = self.timer.last
 
@@ -186,7 +202,6 @@ class SolverNewton:
                 converged = True
                 last_i = i
                 return {"converged": converged, "iter": last_i}
-
-        exit(4)
+        # exit(5)
         logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
         return {"converged": converged, "iter": last_i}

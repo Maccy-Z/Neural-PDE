@@ -113,9 +113,9 @@ def train_new():
     U_values = U_graph.U_values
     pde_adj = NeuralPDEGraph(pde_fn, U_graph, U_values, cfg, loss_fn)
 
-    Us_true = UValues(Xs=U_values.Xs, Us=Us_true)
-    Us_zeros = UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
-    Us_current = UValues(Xs=U_values.Xs, Us=Us_true.Us.clone())
+    Us_true = U_graph.new_Us(Us_true) #UValues(Xs=U_values.Xs, Us=Us_true)
+    Us_zeros = U_graph.new_Us(torch.zeros_like(Us_true.Us)) #UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
+    Us_current = U_graph.new_Us(Us_true.Us.clone()) # UValues(Xs=U_values.Xs, Us=Us_true.Us.clone())
 
     pde_adj.plot_interp(Us_true, title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
 
@@ -160,14 +160,14 @@ def train_new():
                 pg['lr'] *= 0.5
 
         if i % 100 == 0:
-            Us_test = UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
+            Us_test = U_graph.new_Us(torch.zeros_like(Us_true.Us)) #UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
             pde_adj.forward_solve(Us_test)
             Us_pred = Us_test.Us
             pred_loss = loss_fn(Us_pred, requires_grad=False)
             pred_loss_hist.append(pred_loss.detach().cpu().item())
             print(f'{pred_loss = }')
 
-    Us_test = UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
+    Us_test = U_graph.new_Us(torch.zeros_like(Us_true.Us))
     pde_adj.forward_solve(Us_test)
     pde_adj.plot_interp(Us_test, title=["Velocity x", "Velocity y", "Pressure"])
 

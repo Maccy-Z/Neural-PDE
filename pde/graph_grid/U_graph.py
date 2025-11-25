@@ -219,6 +219,12 @@ class UGraph:
         deltas = deltas.view(-1, self.N_comp)
         self.set_grid(U_values.Us - deltas, U_values)
 
+    def new_Us(self, Us: torch.Tensor) -> UValues:
+        """ Create new UValues object with given Us, respecting boundary conditions. """
+        Us_values = UValues(self._Xs, Us)
+        self.set_grid(Us, Us_values)
+        return Us_values
+
     def get_test_update(self, deltas, U_values_old: UValues) -> UValues:
         """
         Get test update for grid with changes, without applying them.
