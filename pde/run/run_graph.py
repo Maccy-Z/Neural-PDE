@@ -208,7 +208,7 @@ def train_resid():
 
 if __name__ == "__main__":
     setup_logging(debug=4)
-    torch.set_printoptions(linewidth=120)
+    torch.set_printoptions(linewidth=120, precision=7)
     torch.manual_seed(1)
     # torch.autograd.set_detect_anomaly(True)
     # torch.use_deterministic_algorithms(True)

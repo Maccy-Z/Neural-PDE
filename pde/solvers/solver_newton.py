@@ -173,6 +173,8 @@ class SolverNewton:
                 new_resid = pde_calc.residuals(U_values, aux_input)
                 new_resid_norm = new_resid.norm()
                 max_abs_residual = torch.max(new_resid.abs())
+                print(f'{new_resid_norm = }')
+
             t_line = self.timer.last
 
             logging.info(f'NR Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
@@ -184,6 +186,7 @@ class SolverNewton:
                 converged = True
                 last_i = i
                 return {"converged": converged, "iter": last_i}
+
         exit(4)
         logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
         return {"converged": converged, "iter": last_i}
