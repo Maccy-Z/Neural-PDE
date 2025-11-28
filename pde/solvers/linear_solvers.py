@@ -112,14 +112,14 @@ class LinearSolver:
         if rel_err > 1e-3:
             x, info = gmres_cust(A, b, x0=x, **self.gmres_cfg)
             rel_err2 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
-            # print(f'CUDSS rel err: {rel_err:.3g} -> GMRES rel err: {rel_err2:.3g}, {info['residual_norm']:2g}')
+            # print(f'{self.cfg}: CUDSS rel err: {rel_err:.3g} -> GMRES rel err: {rel_err2:.3g}')
             if rel_err2 > 3e-3:
                 # Use old solution as start. x = x2 + A^-1 (b - A x2)
-                # c_print("Dense solve fallback", color="yellow")
+                # c_print(f"Dense solve. {rel_err:.3g} -> {rel_err2:.3g}", color="bright_yellow")
                 r2 = b - A @ x
                 x = x + self.cuda_dense(A, r2)
                 # rel_err3 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
-                logging.info(f'Remaining error: {rel_err2:.3g}', color="yellow")
+                # logging.info(f'Remaining error: {rel_err2:.3g}', color="yellow")
 
                 self.cudss_solver.n_uses = self.cudss_solver.max_n_uses + 1  # Force replan next solve.
         return x
@@ -149,7 +149,7 @@ class LinearSolver:
             crow_indices, col_indices, values = csr_compress(A) # crow_indices, col_indices, values
             A = torch.sparse_csr_tensor(crow_indices=crow_indices, col_indices=col_indices, values=values, size=A.size(), device=A.device)
         # Normalize rows and columns
-        A, b, self.col_norms = csr_normalise(A, b, self.cfg.norm_col, self.cfg.norm_row)
+        A, b, self.col_norms = csr_normalise(A, b, norm_row=self.cfg.norm_row, norm_col=self.cfg.norm_col)
         return A, b
 
 

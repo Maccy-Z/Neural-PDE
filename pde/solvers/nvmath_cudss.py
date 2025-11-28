@@ -74,11 +74,10 @@ class CUDSSSolver:
 
         self.solver = nvmath_advanced.DirectSolver(A_cp, b_cp, options=self.options)
         self.solver.plan_config.use_matching = 1
-        self.solver.plan_config.max_n_uses = 5
+        self.solver.plan_config.matching_algorithm = 0
         plan = self.solver.plan()
-        # print(plan.matching_col_permutation)
 
-        solution_config = self.solver.solution_config
-        solution_config.ir_num_steps = self.ir_n_steps
-        self.solver.factorization_config.pivot_eps=1e-5
+        self.solver.factorization_config.pivot_eps = 1e-5
         self.solver.factorization_config.pivot_eps_algorithm = 0
+
+        self.solver.solution_config.ir_num_steps = self.ir_n_steps

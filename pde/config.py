@@ -101,7 +101,7 @@ class AdjConfig:
         elif self.lin_mode == LinMode.ITERATIVE:
             self.solver_cfg = {"maxiter": 500, "restart": 100, "rtol": 1e-4}
         elif self.lin_mode == LinMode.CUDSS:
-            self.solver_cfg = {'ir_n_steps': 0, 'max_n_uses': 300}
+            self.solver_cfg = {'ir_n_steps': 1, 'max_n_uses': 300}
             self.gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
 @dataclass

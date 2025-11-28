@@ -30,13 +30,10 @@ class PDEAdjoint:
         loss = self.loss_fn(Us_grad)
         loss_u = self.loss_fn.gradient().flatten()
 
-        with Timer(text="Adjoint solve: {:.4f}s", logger=None) as timer:
-            adjoint = self.adj_lin_solver.solve(jac_T, loss_u)
-        t_adjoint = timer.last
+        adjoint = self.adj_lin_solver.solve(jac_T, loss_u)
 
-        residual = (jac_T @ adjoint - loss_u).norm()
-        logging.info(f'Adjoint lin solve. Residual: {residual:.3g}, T: {t_adjoint:.3g}s')
-        return adjoint, loss, residual
+        frac_err = (jac_T @ adjoint - loss_u).norm() / loss_u.norm()
+        return adjoint, loss, frac_err
 
     def backpropagate(self, pde_calc: GraphPDECalc, U_values, adjoint):
         """

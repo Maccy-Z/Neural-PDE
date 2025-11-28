@@ -70,14 +70,12 @@ class NeuralPDEGraph:
          """
         # Compute forward step form Us_old
         J, old_resid = self.pde_calc.jacobian(Us_current)
-        with self.timer:
-            deltas = self.newton_solver.newton_step(self.pde_calc, J, old_resid)
-        fwd_resid = (J @ deltas - old_resid).norm()
-        logging.info(f'One Newton step residual norm: {fwd_resid:.3g}, T = {self.timer.last:.3g}s')
+        deltas = self.newton_solver.newton_step(self.pde_calc, J, old_resid)
+        fwd_err = (J @ deltas - old_resid).norm() / old_resid.norm()
 
         # Compute loss derivative at Us_new, Jacobian at Us_old
         Us_new: UValues = self.U_graph.get_test_update(deltas, U_values_old=Us_current)
-        adjoint, _, adj_resid = self.pde_adjoint.adjoint_solve(self.pde_calc, Us_new, Us_current, jac=J)
+        adjoint, _, adj_err = self.pde_adjoint.adjoint_solve(self.pde_calc, Us_new, Us_current, jac=J)
 
         with self.timer:
             # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)
@@ -93,8 +91,8 @@ class NeuralPDEGraph:
         # print(f'{adj_f = }, {init_loss = }, {final_loss = }')
         logging.debug(f"Backprop time: {t_backward:.4f}s")
 
-        if adj_resid > 0.01 or fwd_resid > 0.01:
-            logging.warning(f'High residuals in single step: Forward resid: {fwd_resid:.3g}, Adjoint resid: {adj_resid:.3g}')
+        if adj_err > 0.01 or fwd_err > 0.01:
+            logging.warning(f'High residuals in single step: Forward resid: {fwd_err:.3g}, Adjoint resid: {adj_err:.3g}')
         return init_loss, final_loss, old_resid
 
     def plot_interp(self, U_values, Xlims=None, title="Interpolated solution"):
