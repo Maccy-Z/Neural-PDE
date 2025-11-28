@@ -130,7 +130,7 @@ class UGraph:
                 neum_mask.append(True)
             else:
                 neum_mask.append(False)
-        #self.neumann_mask = torch.tensor(neum_mask)
+
         # 1.3) Set up initial node values
         Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
         Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)

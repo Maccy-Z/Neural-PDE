@@ -95,14 +95,19 @@ class FinDerivCalcSPMV:
 class BCCalc:
     def __init__(self, bc_specs: dict[int, list[Deriv]], dirich_bc_mask, N_comp: int, N_Us: int, dif_degrees: list[tuple],
                  device="cpu"):
-        """ Boundary condition specified as sum_n w_n * dU_i/dX_{j} - C = r -> 0"""
+        """ Boundary condition specified as sum_n w_n * dU_i/dX_{j} - C = r -> 0
+            bc_specs: {U_idx: [Deriv(orders, comp, weights, value), ...], ...}. Dict of point idx to bc on that point.
+            dirich_bc_mask: Mask of Dirichlet BCs in the flattened bc list. shape = [N_bc * N_comp]
+            N_comp: Number of components in U.
+            N_Us: Total number of U points.
+            dif_degrees: List of derivative orders used in the PDE.
+        """
         self.device = device
         self.dirich_bc_mask = dirich_bc_mask.flatten()      # shape = [N_bc * N_comp]
         self.N_comp = N_comp
         self.N_bc = len(bc_specs)
         self.N_Us = N_Us
         N_derivs = len(dif_degrees)
-
 
         C = []
         for p in bc_specs.values():
