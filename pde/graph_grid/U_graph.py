@@ -68,6 +68,10 @@ class UValues:
         self.Us = self.Us.cuda(non_blocking=True)
         self.Xs = self.Xs.cuda(non_blocking=True)
 
+    def clone(self):
+        return UValues(self.Xs.clone(), self.Us.clone())
+
+
 class UGraph:
     """ Holder for graph structure. """
     device: torch.device | str
@@ -103,16 +107,22 @@ class UGraph:
             if p.derivatives is not None:
                 assert p.n_deriv == self.N_comp, "Number of BC components must match number of components."
 
-    def __init__(self, setup_dict: dict[int, Point], N_component, grad_neigh, max_degree:int = 2, tri=None, device="cpu"):
+    def __init__(self, setup_dict: dict[int, Point], N_comp, grad_neigh, max_degree:int = 2, tri=None, device="cpu"):
         """ Initialize the graph with a set of points.
+        Args:
             setup_dict: dict[node_id, Point]. Dictionary of each type of point
+            N_comp: Number of components in U
+            grad_neigh: Number of neighbors to use for gradient calculations
+            max_degree: Maximum derivative degree to compute
+            tri: Triangle mesh for the domain, for plotting
+            device: Device to use
          """
         self.tri = tri
         self.device = device
         self.N_Us_tot = len(setup_dict)
         self.N_us_grad = sum(T.UPDATE in P.point_type for P in setup_dict.values())
         self.N_pdes = sum(T.PDE in P.point_type for P in setup_dict.values())
-        self.N_comp = N_component
+        self.N_comp = N_comp
         self._check(setup_dict)
 
         # 1) Node properties and masks
@@ -131,12 +141,11 @@ class UGraph:
             else:
                 neum_mask.append(False)
 
-        # 1.3) Set up initial node values
+        # 1.3) Set up node positions
         Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32)
-        Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32)
         self._Xs = Xs
-        self.U_values = UValues(Xs, Us)
 
+        # Compute finite difference stencils. Make sure to respect connectivity of graph.
         # 2.1) Get the neighborhood graph
         stencils = nearest_neighbors(self.tri, self._Xs, grad_neigh)
         # 2.2) Compute finite difference stencils / graphs.
@@ -145,13 +154,10 @@ class UGraph:
         for degree in diff_degrees[1:]:  # 0th order is just itself.
             with Timer(text=f"Degree {degree}: Time to solve: : {{:.4f}}", logger=print_fn):
                 edge_idx, fd_weights = calc_coeff(self._Xs, stencils, grad_neigh, degree)
-                graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_Us_tot, self.N_Us_tot))
+                graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_Us_tot, self.N_Us_tot), device=self.device)
                             # edge_index: torch.Tensor   # [2, num_edges]      # Edges between nodes
                             # edge_coeff: torch.Tensor  # [num_edges]       # Finite diff coefficients for each edge
                             # neighbors: list[Tensor]     # [N_us_tot, N_neigh]           # Neighborhood for each node
-        if device == "cuda":
-            self._cuda()
-            [graph.cuda() for graph in graphs.values()]
 
         self.deriv_calc = FinDerivCalcSPMV(graphs, N_comp=self.N_comp, device=self.device)
         self.N_deriv = len(diff_degrees) - 1        # Exclude zeroth order
@@ -187,19 +193,13 @@ class UGraph:
         self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
 
     def get_Us_dUs(self, U_values: UValues):
-        # Xs = self._Xs  # Shape = [N_total, 2].
-        Us, Xs = U_values.Us, self._Xs
+        """ Get U values and their derivatives at each point. """
+        Us, Xs = U_values.Us, U_values.Xs
 
         # Finite differences D. shape = [N_pde, N_derivs, N_components]
         grads_dict = self.deriv_calc.derivative(Us)  # shape = [N_pde, N_comp]. Derivative removes boundary points.
         U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
         return U_dUs, Xs
-
-    def _cuda(self):
-        """ Move graph data to CUDA. """
-        self.U_values.cuda()
-        self._Xs = self._Xs.cuda()
-        self.pde_mask = self.pde_mask.cuda(non_blocking=True)
 
     def set_grid(self, new_Us, U_values: UValues):
         """
@@ -219,21 +219,28 @@ class UGraph:
         self.set_grid(U_values.Us - deltas, U_values)
 
     def new_Us(self, Us: torch.Tensor) -> UValues:
-        """ Create new UValues object with given Us, respecting boundary conditions. """
+        """ Create new UValues object from Us tensor, respecting boundary conditions. """
         Us_values = UValues(self._Xs, Us)
         self.set_grid(Us, Us_values)
         return Us_values
 
-    def get_test_update(self, deltas, U_values_old: UValues) -> UValues:
+    def get_test_update(self, deltas, Us_old: UValues) -> UValues:
         """
         Get test update for grid with changes, without applying them.
         deltas.shape = [N*N_comp]
         us -> us - deltas
         """
         deltas = deltas.view(-1, self.N_comp)
-        Us_test = torch.clone(U_values_old.Us) - deltas
+        Us_test = torch.clone(Us_old.Us) - deltas
         Us_test[self.dirich_mask] = self.bc_calc.dirich_bc_vals()
-        return UValues(self._Xs, Us_test)
+        return UValues(Us_old.Xs, Us_test)
+
+    def get_zero_U_values(self, Us_old) -> UValues:
+        """ Get UValues object with all zeros (except BCs). """
+        zeros = torch.zeros_like(Us_old.Us)
+        Us_zeros = UValues(Us_old.Xs, zeros)
+        self.set_grid(zeros, Us_zeros)
+        return Us_zeros
 
     def get_us_mask(self, U_values: UValues):
         """
@@ -244,3 +251,30 @@ class UGraph:
     def get_all_us_Xs(self, U_values: UValues):
         """ Return all grid points, including fake boundaries. """
         return U_values.Us, self._Xs
+
+    # --------------- Plotting functions ---------------
+    def plot_interp(self, Us_values: UValues, Xlims=None, title="Interpolated solution"):
+        """ Plot the interpolated solution. """
+        Us, Xs = Us_values.Us, Us_values.Xs
+        plot_interp(Xs, Us.T, Xlims=Xlims, title=title, triangles=self.tri)
+
+    def plot_derivs(self, Us_values: UValues, order):
+        us_all, Xs = Us_values.Us, Us_values.Xs
+
+        deriv_dict = self.deriv_calc.derivative(us_all)
+        derivs = deriv_dict[order]
+        plot_interp(Xs, derivs.T, title=str(order), triangles=self.tri)
+
+    def plot_points(self, Us_values: UValues, Xlims=None, show_index=False, title=""):
+        Us, Xs = Us_values.Us, Us_values.Xs
+        plot_points(Xs, Us.T, Xlims=Xlims, show_index=show_index, title=title)
+
+def setup_graph(setup_dict: dict[int, Point], N_comp, grad_neigh, max_degree:int = 2, tri=None, device="cpu") -> tuple[UGraph, UValues]:
+    """ Create UGraph and UValues. """
+    U_graph = UGraph(setup_dict, N_comp, grad_neigh, max_degree=max_degree, tri=tri, device=device)
+
+    Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32).to(device)
+    Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32, device=device)
+
+    Us_values = UValues(Xs, Us)
+    return U_graph, Us_values

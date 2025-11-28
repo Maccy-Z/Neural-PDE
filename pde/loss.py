@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from abc import abstractmethod
 
+from pde.graph_grid.U_graph import UValues
+
 class Loss(nn.Module):
     Us_pred: torch.Tensor = None
     loss_out: torch.Tensor = None
@@ -68,10 +70,10 @@ class MSELoss2(Loss):
         return loss
 
 class MSELossNorm(Loss):
-    def __init__(self, Us_true):
+    def __init__(self, Us_true_values: UValues):
         super().__init__()
-        self.Us_true = Us_true
-        self.stds = Us_true.std(dim=0, keepdim=True) + 0.01  # Avoid division by zero
+        self.Us_true = Us_true_values.Us
+        self.stds = self.Us_true.std(dim=0, keepdim=True) + 0.01  # Avoid division by zero
 
     def forward(self, Us_pred: torch.Tensor, requires_grad=True):
         self.save_for_backward(Us_pred, requires_grad=requires_grad)

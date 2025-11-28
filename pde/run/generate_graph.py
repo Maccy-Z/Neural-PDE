@@ -5,7 +5,7 @@ from cprint import c_print
 
 from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
-from pde.graph_grid.U_graph import UGraph
+from pde.graph_grid.U_graph import UGraph, setup_graph
 from pde.graph_grid.graph_utils import plot_edges
 from mesh_gen.generate_mesh import gen_points_full
 from pde.config import Config
@@ -137,7 +137,7 @@ def mesh_heat(cfg, max_degree=2, grad_neigh=25):
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
+    U_graph = UGraph(Xs_all, N_comp=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
 
     with open("../artefacts/save_u_graph.pth", "wb") as f:
         torch.save((U_graph, triangles), f)
@@ -227,13 +227,12 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
-    U_graph = UGraph(Xs_all, N_component=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
-
+    # U_graph = UGraph(Xs_all, N_comp=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
+    U_graph, Us_values = setup_graph(Xs_all, N_comp=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
     # with open("save_u_graph.pth", "wb") as f:
     #     torch.save((U_graph, triangles), f)
 
-    # exit("Done")
-    return U_graph, triangles
+    return U_graph, Us_values
 
 
 def load_graph(cfg)-> tuple[UGraph, torch.Tensor]:

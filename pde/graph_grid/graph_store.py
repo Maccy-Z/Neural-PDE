@@ -96,16 +96,14 @@ class DerivGraph:
         self.shape = shape
         self.device = device
 
-    def cuda(self):
-        self.edge_idx = self.edge_idx.cuda(non_blocking=True)
-        self.weights = self.weights.cuda(non_blocking=True)
-        self.device = "cuda"
-        return self
+        if device == "cuda":
+            self.edge_idx = self.edge_idx.cuda(non_blocking=True)
+            self.weights = self.weights.cuda(non_blocking=True)
+
 
     def coo(self):
         coo = torch.sparse_coo_tensor(self.edge_idx, self.weights, size=self.shape, device=self.device)
         return coo
-
 
     @staticmethod
     def add(D1, D2):

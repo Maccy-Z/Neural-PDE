@@ -9,11 +9,11 @@ from pde.pdes.PDEs import PDEFunc
 class GraphPDECalc:
     """ Computes PDE Jacobian and residuals for graph-based PDEs, including Neumann BCs."""
 
-    def __init__(self, U_graph: UGraph, pde_func: PDEFunc):
+    def __init__(self, U_graph: UGraph, pde_func: PDEFunc, device="cpu"):
         self.pde_func = pde_func
         self.U_graph = U_graph
 
-        self.device = U_graph.device
+        self.device = device
 
         self.N_Us_tot = U_graph.N_Us_tot
         self.N_pde = U_graph.N_pdes
@@ -51,7 +51,6 @@ class GraphPDECalc:
         else:
             return vmap_jacrev(U_dUs_pde, Xs_pde, pde_aux_input)
 
-    # @torch.compile()
     def jacobian(self, U_values: UValues, pde_aux_input=None):
         """
             Compute jacobian dR/dU = dR/dD * dD/dU.
@@ -67,6 +66,8 @@ class GraphPDECalc:
             Components are grouped together.
         """
         U_graph = self.U_graph
+        N_comp, N_pde, N_deriv, N_Us_tot = self.N_comp, self.N_pde, self.N_deriv, self.N_Us_tot
+        pde_perm, bc_perm = self.pde_perm, self.bc_perm
 
         # 1) Finite difference gradients
         U_dUs, Xs = U_graph.get_Us_dUs(U_values)  # U_dUs.shape = [N_Us, N_derivs, N_comp]
@@ -78,26 +79,25 @@ class GraphPDECalc:
         # 3) Compute dR/dD on equation points.
         dRdD_pde, resid_main = self._compute_resid_jac(U_dUs_pde, Xs_pde, pde_aux_input)    # dRdD_pde.shape = [N_pde, N_comp, N_deriv, N_comp]
         # residuals.shape = [N_pde, N_comp]
-        dRdD_pde = dRdD_pde.reshape(self.N_pde * self.N_comp, (self.N_deriv + 1) * self.N_comp)  # [N_pde_, N_deriv_]
-        resid_main = resid_main.reshape(self.N_pde * self.N_comp)  # [N_pde_]
+        dRdD_pde = dRdD_pde.reshape(N_pde * N_comp, (N_deriv + 1) * N_comp)  # [N_pde_, N_deriv_]
+        resid_main = resid_main.reshape(N_pde * N_comp)  # [N_pde_]
 
         # 4) Compute dRdD on BC points.
         dRdD_bc, resid_bc = self.bc_calc.resid_jac(U_dUs)
 
         # 5) Reshape to cannonical ordering
-        dRdD = torch.zeros(((self.N_Us_tot * self.N_comp), (self.N_deriv + 1) * self.N_comp),
-                           device=self.device)  # [N_Us_, N_deriv_]
-        dRdD[self.pde_perm] = dRdD_pde
-        dRdD[self.bc_perm] = dRdD_bc
+        dRdD = torch.zeros(((N_Us_tot * N_comp), (N_deriv + 1) * N_comp), device=self.device)  # [N_Us_, N_deriv_]
+        dRdD[pde_perm] = dRdD_pde
+        dRdD[bc_perm] = dRdD_bc
 
-        residuals = torch.zeros((self.N_Us_tot * self.N_comp), device=self.device) # [N_Us_]
-        residuals[self.pde_perm] = resid_main
-        residuals[self.bc_perm] = resid_bc
+        residuals = torch.zeros((N_Us_tot * N_comp), device=self.device) # [N_Us_]
+        residuals[pde_perm] = resid_main
+        residuals[bc_perm] = resid_bc
 
         # 6) Take product over j: dR_i/dD_jk * dD_jk/dU_j . shape = [N_deriv_][N_pde_, N_u_grad_]
         dDdU = self.deriv_calc.jacobian()           # shape = [N_derivs][N_Us_, N_Us_]
         partials = []
-        for d in range(self.N_comp * (self.N_deriv + 1)):
+        for d in range(N_comp * (N_deriv + 1)):
             prod = self.row_multipliers[d].mul_simple(dDdU[d], dRdD[:, d])  # shape = [N_pde_, N_u_grad_]
             partials.append(prod)
 
