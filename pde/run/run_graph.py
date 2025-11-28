@@ -148,11 +148,8 @@ def train_new():
         if i % 50 == 0:
             dt = time.time() - st
             st = time.time()
-            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}, T = {dt:.3g}' # , {loss.detach().cpu().item():.2g}'
+            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}, T = {dt:.3g}'
                     , color="bright_green")
-            # for n, p in pde_fn.other_params.named_parameters():
-            #     print(f'{n = }, {p.cpu().detach() }')
-                # print(n, f' parameter: {p.cpu().detach()}', "gradient:", p.grad.cpu())
 
         if i == 1000 or i == 1500:
             resid_factor *= 2
@@ -160,7 +157,7 @@ def train_new():
                 pg['lr'] *= 0.5
 
         if i % 100 == 0:
-            Us_test = U_graph.new_Us(torch.zeros_like(Us_true.Us)) #UValues(Xs=U_values.Xs, Us=torch.zeros_like(Us_true.Us))
+            Us_test = U_graph.new_Us(torch.zeros_like(Us_true.Us))
             pde_adj.forward_solve(Us_test)
             Us_pred = Us_test.Us
             pred_loss = loss_fn(Us_pred, requires_grad=False)

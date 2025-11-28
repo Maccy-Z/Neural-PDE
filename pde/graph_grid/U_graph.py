@@ -80,12 +80,11 @@ class UGraph:
     pde_idx: Tensor  # [N_pde * N_component]        # Indices for PDE nodes in flattened Us
     bc_idx: Tensor   # [N_bc * N_component]         # Indices for
 
-    N_us_tot: int           # Total number of points
+    N_Us_tot: int           # Total number of points
     N_us_grad: int          # Number of points that need fitting
     N_pdes: int             # Number of points to enforce PDEs (excl BC)
     N_comp: int           # Number of vector components
     N_deriv: int         # Number of derivatives used
-    #N_dirich: int         # Number of Dirichlet BCs
 
     deriv_calc: FinDerivCalcSPMV
     bc_calc: BCCalc
@@ -110,7 +109,7 @@ class UGraph:
          """
         self.tri = tri
         self.device = device
-        self.N_us_tot = len(setup_dict)
+        self.N_Us_tot = len(setup_dict)
         self.N_us_grad = sum(T.UPDATE in P.point_type for P in setup_dict.values())
         self.N_pdes = sum(T.PDE in P.point_type for P in setup_dict.values())
         self.N_comp = N_component
@@ -146,7 +145,7 @@ class UGraph:
         for degree in diff_degrees[1:]:  # 0th order is just itself.
             with Timer(text=f"Degree {degree}: Time to solve: : {{:.4f}}", logger=print_fn):
                 edge_idx, fd_weights = calc_coeff(self._Xs, stencils, grad_neigh, degree)
-                graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_us_tot, self.N_us_tot))
+                graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_Us_tot, self.N_Us_tot))
                             # edge_index: torch.Tensor   # [2, num_edges]      # Edges between nodes
                             # edge_coeff: torch.Tensor  # [num_edges]       # Finite diff coefficients for each edge
                             # neighbors: list[Tensor]     # [N_us_tot, N_neigh]           # Neighborhood for each node
@@ -170,12 +169,12 @@ class UGraph:
                     jacob_main_pos.append(i)
         pde_idx, bc_idx = torch.tensor(jacob_main_pos), torch.tensor(jacob_neum_pos)
         dirich_bc = torch.tensor(dirich_bc, dtype=torch.bool)
-        self.dirich_mask = torch.zeros((self.N_us_tot, self.N_comp), dtype=torch.bool)
+        self.dirich_mask = torch.zeros((self.N_Us_tot, self.N_comp), dtype=torch.bool)
         self.dirich_mask[bc_idx] = dirich_bc
         # 3.1) Repeat for each component. Ordering as Us.flatten()
         self.pde_idx = torch.stack([self.N_comp * pde_idx + i for i in range(self.N_comp)], dim=-1).flatten()       # shape = [N_pde * N_comp]
         self.bc_idx = torch.stack([self.N_comp * bc_idx + i for i in range(self.N_comp)], dim=-1).flatten()         # shape = [N_bc * N_comp]
-        self.bc_calc = BCCalc(deriv_orders, dirich_bc, self.N_comp, self.N_us_tot, diff_degrees, device=self.device)
+        self.bc_calc = BCCalc(deriv_orders, dirich_bc, self.N_comp, self.N_Us_tot, diff_degrees, device=self.device)
 
         # 4) Helper for efficient sparse operations
         deriv_jac_pde = self.deriv_calc.jacobian()

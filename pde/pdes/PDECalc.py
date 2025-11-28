@@ -15,7 +15,7 @@ class GraphPDECalc:
 
         self.device = U_graph.device
 
-        self.N_Us_tot = U_graph.N_us_tot
+        self.N_Us_tot = U_graph.N_Us_tot
         self.N_pde = U_graph.N_pdes
         self.N_comp = U_graph.N_comp
         self.N_deriv = U_graph.N_deriv

@@ -132,7 +132,7 @@ class BCCalc:
         # concat ragged lists
         self.orders_cat = torch.as_tensor([x for r in orders for x in r], device=device, dtype=torch.long)      # shape = [N_idx]
         self.comps_cat = torch.as_tensor([x for r in comps for x in r], device=device, dtype=torch.long)        # shape = [N_idx]
-        self.weights_cat = torch.as_tensor([x for r in weights for x in r], device=device)
+        self.weights_cat = torch.as_tensor([x for r in weights for x in r], device=device)                      # shape = [N_idx]
         # which batch item each concatenated element belongs to
         self.batch_ids = torch.repeat_interleave(torch.arange(self.N_bc_, device=device), lens)  # shape = [N_idx]
         # map to the first dimension indices
