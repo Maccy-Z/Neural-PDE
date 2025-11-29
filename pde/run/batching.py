@@ -13,7 +13,7 @@ class GraphSample:
         self.Us_saved = [U_graph.get_zero_U_values(Us_true) for _ in range(N_steps)]
 
 
-    def update_Us_single(self, Us_pred: UValues):
+    def update_Us_last(self, Us_pred: UValues):
         """ Update the last saved Us. """
         self.Us_saved[-1] = Us_pred
 
@@ -22,18 +22,18 @@ class GraphSample:
         assert len(Us_preds) == len(self.Us_saved), "Number of predicted Us must match number of saved Us."
         self.Us_saved = Us_preds
 
-    def get_Us_sample(self, i) -> UValues:
+    def get_Us_sample(self, i) -> tuple[UGraph, UValues, UValues]:
         """ Return a single sample to train on.
         """
         # TODO: implement sampling strategy
         if i % 51 == 0:
-            Us_step = self.U_graph.get_zero_U_values()  # U_graph.set_grid(torch.zeros_like(Us_true), U_values)
+            Us_step = self.U_graph.get_zero_U_values(self.Us_true)  # U_graph.set_grid(torch.zeros_like(Us_true), U_values)
         elif i % 11 == 0:
             Us_step = self.Us_true  # U_graph.set_grid(Us_true, U_values)
         else:
             Us_step = self.Us_saved[-1]  # U_graph.set_grid(Us_init, U_values)
 
-        return Us_step
+        return self.U_graph, self.Us_true, Us_step
 
 class GraphBatch:
     samples: list[GraphSample]
@@ -45,6 +45,10 @@ class GraphBatch:
             samples.append(GraphSample(g, u, N_steps))
         self.samples = samples
 
+    # def __iter__(self):
+    #     return self
+
     def __iter__(self):
-        for sample in self.samples:
-            yield sample
+        while True:
+            for sample in self.samples:
+                yield sample

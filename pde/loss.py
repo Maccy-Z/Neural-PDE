@@ -70,14 +70,17 @@ class MSELoss2(Loss):
         return loss
 
 class MSELossNorm(Loss):
-    def __init__(self, Us_true_values: UValues):
+    def __init__(self):
         super().__init__()
-        self.Us_true = Us_true_values.Us
-        self.stds = self.Us_true.std(dim=0, keepdim=True) + 0.01  # Avoid division by zero
+        # self.Us_true = Us_true_values.Us
+        # self.stds = self.Us_true.std(dim=0, keepdim=True) + 0.01  # Avoid division by zero
 
-    def forward(self, Us_pred: torch.Tensor, requires_grad=True):
+    def forward(self, Us_pred: UValues, Us_true: UValues, requires_grad=True):
+        Us_pred, Us_true = Us_pred.Us, Us_true.Us
         self.save_for_backward(Us_pred, requires_grad=requires_grad)
-        error = (Us_pred - self.Us_true) / self.stds
+
+        stds = Us_true.std(dim=0, keepdim=True) + 0.01
+        error = (Us_pred - Us_true) / stds
         loss = (error ** 2).mean()
         self.loss_out = loss
         return loss
