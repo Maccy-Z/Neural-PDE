@@ -1,6 +1,7 @@
 import torch
 from torch import Tensor
 from cprint import c_print
+import logging
 from codetiming import Timer
 
 from pde.graph_grid.graph_store import DerivGraph, Point, Deriv
@@ -10,7 +11,7 @@ from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, BCCalc
 from pde.graph_grid.graph_utils import plot_interp, plot_points
 from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSystemSimplifier, plot_sparsity
 
-print_fn = lambda s: c_print(f"{s}", color="bright_black")
+# print_fn = lambda s: c_print(f"{s}", color="bright_black")
 
 
 def tri_to_n_hop(tris, hops=6):
@@ -64,6 +65,7 @@ class UValues:
         self.Xs = Xs
         self.Us = Us
 
+    @torch.no_grad()
     def cuda(self):
         self.Us = self.Us.cuda(non_blocking=True)
         self.Xs = self.Xs.cuda(non_blocking=True)
@@ -153,7 +155,7 @@ class UGraph:
         diff_degrees = gen_multi_idx_tuple(max_degree)
         graphs = {}
         for degree in diff_degrees[1:]:  # 0th order is just itself.
-            with Timer(text=f"Degree {degree}: Time to solve: : {{:.4f}}", logger=print_fn):
+            with Timer(text=f"Degree {degree}: Time to solve: : {{:.4f}}", logger=logging.debug):
                 edge_idx, fd_weights = calc_coeff(self._Xs, stencils, grad_neigh, degree)
                 graphs[degree] = DerivGraph(edge_idx, fd_weights, shape=(self.N_Us_tot, self.N_Us_tot), device=self.device)
                             # edge_index: torch.Tensor   # [2, num_edges]      # Edges between nodes

@@ -108,12 +108,13 @@ def gen_points_full():
 def gen_mesh_random():
     min_area = 0.5e-3
     max_area = 2e-3
+    area_lnscale = 0.4
     xmin, xmax = 0, 2
     ymin, ymax = 0.0, 1.5
 
     lengthscale = np.sqrt(2*min_area)
 
-    mesh_props = MeshProps(min_area, max_area, lengthscale=0.4)
+    mesh_props = MeshProps(min_area, max_area, lengthscale=area_lnscale)
 
     coords = [
               Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
@@ -125,7 +126,8 @@ def gen_mesh_random():
               #         lengthscale=lengthscale, hole=True, dist_req=True, name="circle"),
               ]
 
-    _, rand_ellipses = gen_rand_ellipses(3, (xmax-xmin, ymax-ymin), 0.1, 0.2, 0.5, 0.9, min_gap=0.05)
+    _, rand_ellipses = gen_rand_ellipses(3, (xmax-xmin, ymax-ymin),
+                                         min_major=0.15, max_major=0.2, min_ecc=0.1, max_ecc=0.8, min_gap=0.1)
 
     for spec in rand_ellipses:
         e = Ellipse(center=spec['center'], semi_major_axis=spec['semi_major'], eccentricity=spec['eccentricity'], angle=spec['angle'],

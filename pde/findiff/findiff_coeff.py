@@ -87,16 +87,16 @@ def disk_cache(func):
                 with open(cache_file, 'rb') as f:
                     return pickle.load(f)
             except Exception as e: # Handle potential unpickling errors
-                print(f"Error loading from cache: {e}. Recalculating.")
+                logging.warning(f"Error loading graph from cache: {e}. Recalculating.")
                 os.remove(cache_file) # Remove corrupted cache file
 
-        print(f"Calculating and caching: {func.__name__} (key: {cache_key})")
+        logging.debug(f"Calculating and caching: {func.__name__} (key: {cache_key})")
         result = func(*args, **kwargs)
         try:
             with open(cache_file, 'wb') as f:
                 pickle.dump(result, f)
         except Exception as e: # Handle potential pickling errors
-            print(f"Error saving to cache: {e}")
+            logging.warning(f"Error saving graph to cache: {e}")
             if os.path.exists(cache_file):
                 os.remove(cache_file) # Clean up if saving failed
 

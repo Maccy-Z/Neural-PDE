@@ -172,12 +172,9 @@ class SolverNewton:
 
             # Find best alpha using line search
             with self.timer:
-                # print(f'{i = }')
                 zero_alpha_norm = old_resid.norm()
-                # print(f'{zero_alpha_norm = }, {pde_calc.residuals(U_values, aux_input).norm()}')
                 resid_fn = lambda alpha: self._test_residual(pde_calc, U_graph, U_values, alpha, deltas, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, f_zero=zero_alpha_norm)
-                # print(f'{best_alpha = :.5g}')
                 dUs = deltas * best_alpha #self.lr
                 U_graph.update_grid(dUs, U_values)
 
@@ -189,7 +186,6 @@ class SolverNewton:
                 new_resid = pde_calc.residuals(U_values, aux_input)
                 new_resid_norm = new_resid.norm()
                 max_abs_residual = torch.max(new_resid.abs())
-                # print(f'New residual: {new_resid_norm}')
 
             t_line = self.timer.last
 
@@ -201,7 +197,8 @@ class SolverNewton:
                 logging.debug(f"Newton solver converged early at iteration {i+1}.")
                 converged = True
                 last_i = i
-                return {"converged": converged, "iter": last_i}
-        # exit(5)
-        logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
-        return {"converged": converged, "iter": last_i}
+                break
+        else:
+            logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
+
+        return {"converged": converged, "iter": last_i, "residual_norm": new_resid_norm, "max_residual": max_abs_residual}

@@ -37,7 +37,7 @@ class GraphSample:
 
         return self.U_graph, self.Us_true, Us_step
 
-class GraphBatch:
+class GraphDataset:
     samples: list[GraphSample]
     """ Class to handle batching of UGraphs for PDE solving.  """
 

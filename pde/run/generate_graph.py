@@ -200,7 +200,7 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
                         Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
 
                         # Pressure
-                        Deriv(comp=[2], orders=[(0, 0)], value=1.),
+                        Deriv(comp=[2], orders=[(0, 0)], value=2.),
                      ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=[0, 0, 1], derivatives=deriv)
 

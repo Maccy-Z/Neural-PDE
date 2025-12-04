@@ -10,20 +10,19 @@ from pde.pdes.PDEs import Fluid, FluidLearned, NNFunc
 from pde.utils import setup_logging, ARTEFACT_DIR
 from pde.loss import DummyLoss, MSELoss2, MSELossNorm
 from pde.run.generate_graph import mesh_graph, load_graph
-from pde.run.batching import GraphBatch, GraphSample
+from pde.run.batching import GraphDataset, GraphSample
 
-def init_setup(cfg: Config):
+def setup(cfg: Config):
     # U_graph, _ = mesh_graph(cfg)
-    #
-    # Us_true = torch.load(ARTEFACT_DIR/"Us_solution.pth", weights_only=True)
+
     save_dict = torch.load(ARTEFACT_DIR / "Us_solution.pth", weights_only=False)
-    Us_true = save_dict["Us"]
+    Us_true = save_dict["Us_values"]
     U_graph = save_dict["U_graph"]
-    Us_true = U_graph.new_Us(Us_true.clone())
+    # Us_true = U_graph.new_Us(Us_true.clone())
     loss_fn = MSELossNorm()
 
-    batch = GraphBatch([U_graph], [Us_true], N_steps=cfg.fwd_cfg.N_iter, device=cfg.device)
-    norm_mean, norm_std = batch.get_norm_stats()
+    dataset = GraphDataset([U_graph], [Us_true], N_steps=cfg.fwd_cfg.N_iter, device=cfg.device)
+    norm_mean, norm_std = dataset.get_norm_stats()
 
     pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)
 
@@ -31,7 +30,7 @@ def init_setup(cfg: Config):
     optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.03, betas=(0.9, 0.99), weight_decay=1e-5)
     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)  # , betas=(0.95, 0.95))
 
-    return batch, pde_fn, loss_fn, optim, optim_other
+    return dataset, pde_fn, loss_fn, optim, optim_other
 
 def true_pde():
     """ Generate true solution using known PDE. """
@@ -47,10 +46,10 @@ def true_pde():
     pde_adj.forward_solve(U_graph, Us_values)
     U_graph.plot_interp(Us_values, title="Initial solution")
 
-    Us = Us_values.Us
+    # Us = Us_values.Us
 
     # Save the solution and graph
-    save_dict = {"Us": Us, "U_graph": U_graph}
+    save_dict = {"Us_values": Us_values, "U_graph": U_graph}
     with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
         torch.save(save_dict, f)
     return None
@@ -147,7 +146,7 @@ def train_new():
     cfg = Config()
     resid_factor = 0 # 0.0025
 
-    ds, pde_fn, loss_fn, optim, optim_other = init_setup(cfg)
+    ds, pde_fn, loss_fn, optim, optim_other = setup(cfg)
     pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
 
     U_g_plot, Us_plot = ds.samples[0].U_graph, ds.samples[0].Us_true
