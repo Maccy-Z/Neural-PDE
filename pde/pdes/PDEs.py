@@ -178,24 +178,26 @@ class FluidLearned(PDEFunc):
 
 
 class NNFunc(PDEFunc):
-    def __init__(self, cfg, device='cuda'):
+    def __init__(self, cfg, norm_mean, norm_std, device='cuda'):
         super().__init__(cfg=cfg, device=device)
 
         self.mlp: MLP_mup = get_MLP_mup(in_dim=8, out_dim=3, width=1024, n_hidden=1, activation=F.relu
                                         , zero_out=True)
         # self.mlp = MLP(in_dim=8, out_dim=3, width=32, n_hidden=0, activation=F.leaky_relu)
 
-        mu = torch.tensor(2, device=device, dtype=torch.float32)
+        mu = torch.tensor(1, device=device, dtype=torch.float32)
         self.other_params = nn.ParameterDict({"mu": torch.nn.Parameter(mu)})
 
 
         self.to(device)
-        self.rescaling = torch.tensor([ [1.2500e-02, 1.2500e-02, 4.7587e-01],
-                                        [3.3000e-02, 3.3000e-02, 6.8853e-01],
-                                        [3.3000e-02, 3.3000e-02, 4.9480e-01],
-                                        [2.7000e-01, 2.7000e-01, 6.0260e+01],
-                                        [2.7000e-01, 2.7000e-01, 1.6940e+01],
-                                        [2.7000e-01, 2.7000e-01, 6.0878e+01]], device=device)
+        # self.norm_std = torch.tensor([ [1.2500e-02, 1.2500e-02, 4.7587e-01],
+        #                                 [3.3000e-02, 3.3000e-02, 6.8853e-01],
+        #                                 [3.3000e-02, 3.3000e-02, 4.9480e-01],
+        #                                 [2.7000e-01, 2.7000e-01, 6.0260e+01],
+        #                                 [2.7000e-01, 2.7000e-01, 1.6940e+01],
+        #                                 [2.7000e-01, 2.7000e-01, 6.0878e+01]], device=device)
+        self.norm_mean = norm_mean
+        self.norm_std = norm_std
 
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):#
@@ -203,7 +205,7 @@ class NNFunc(PDEFunc):
         mu = self.other_params['mu']
 
         # Rescale input equations
-        u_dus = u_dus / self.rescaling
+        u_dus = (u_dus - self.norm_mean) / self.norm_std
 
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]

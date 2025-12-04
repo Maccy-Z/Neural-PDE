@@ -1,7 +1,7 @@
 import numpy as np
 from dataclasses import dataclass
 
-
+@dataclass
 class MeshFacet:
     points: np.ndarray
     segments: np.ndarray

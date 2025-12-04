@@ -15,5 +15,8 @@ nvmath-python[cu12,dx]
 # cupy-cuda12x
 
 mup
+
+# Graph utils
 treverhines-rbf
 meshpy
+shapely

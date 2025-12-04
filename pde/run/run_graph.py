@@ -13,19 +13,24 @@ from pde.run.generate_graph import mesh_graph, load_graph
 from pde.run.batching import GraphBatch, GraphSample
 
 def init_setup(cfg: Config):
-    U_graph, Us_values = mesh_graph(cfg)
-
-    Us_true = torch.load(ARTEFACT_DIR/"Us_solution.pth", weights_only=True)
+    # U_graph, _ = mesh_graph(cfg)
+    #
+    # Us_true = torch.load(ARTEFACT_DIR/"Us_solution.pth", weights_only=True)
+    save_dict = torch.load(ARTEFACT_DIR / "Us_solution.pth", weights_only=False)
+    Us_true = save_dict["Us"]
+    U_graph = save_dict["U_graph"]
     Us_true = U_graph.new_Us(Us_true.clone())
     loss_fn = MSELossNorm()
 
-    pde_fn = NNFunc(cfg, device=cfg.device)
+    batch = GraphBatch([U_graph], [Us_true], N_steps=cfg.fwd_cfg.N_iter, device=cfg.device)
+    norm_mean, norm_std = batch.get_norm_stats()
+
+    pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.05, betas=(0.9, 0.99), weight_decay=1e-4)
+    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.03, betas=(0.9, 0.99), weight_decay=1e-5)
     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)  # , betas=(0.95, 0.95))
 
-    batch = GraphBatch([U_graph], [Us_true], N_steps=cfg.fwd_cfg.N_iter)
     return batch, pde_fn, loss_fn, optim, optim_other
 
 def true_pde():
@@ -44,9 +49,10 @@ def true_pde():
 
     Us = Us_values.Us
 
-    # with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
-    #     torch.save(Us, f)
-    print(f'{Us.shape = }')
+    # Save the solution and graph
+    save_dict = {"Us": Us, "U_graph": U_graph}
+    with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
+        torch.save(save_dict, f)
     return None
 
 #
@@ -141,15 +147,15 @@ def train_new():
     cfg = Config()
     resid_factor = 0 # 0.0025
 
-    batch, pde_fn, loss_fn, optim, optim_other = init_setup(cfg)
+    ds, pde_fn, loss_fn, optim, optim_other = init_setup(cfg)
     pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
 
-    U_g_plot, Us_plot = batch.samples[0].U_graph, batch.samples[0].Us_true
+    U_g_plot, Us_plot = ds.samples[0].U_graph, ds.samples[0].Us_true
     U_g_plot.plot_interp(Us_plot, title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
 
     pred_loss_hist = []
     st = time.time()
-    batch = iter(batch)
+    batch = iter(ds)
     for i in range(2001):
         sample = next(batch)
         optim.zero_grad(), optim_other.zero_grad()
@@ -172,10 +178,8 @@ def train_new():
         if i % 50 == 0:
             dt = time.time() - st
             st = time.time()
-            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}, T = {dt:.3g}'
-                    , color="bright_green")
-
-            c_print(f'{Us_step.Us.mean():.4g}, {Us_true.Us.mean():.4g}', color="bright_blue")
+            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}, T = {dt:.3g}', color="bright_green")
+            # c_print(f'{Us_step.Us.mean():.4g}, {Us_true.Us.mean():.4g}', color="bright_blue")
 
         if i == 1000 or i == 1500:
             resid_factor *= 2
@@ -191,7 +195,7 @@ def train_new():
             pred_loss_hist.append(pred_loss.detach().cpu().item())
             print(f'{pred_loss = }')
 
-    U_g_plot, Us_plot = batch.samples[0].U_graph, batch.samples[0].Us_true
+    U_g_plot, Us_plot = ds.samples[0].U_graph, ds.samples[0].Us_true
     Us_test = U_g_plot.new_Us(torch.zeros_like(Us_plot.Us))
     pde_adj.forward_solve(U_g_plot, Us_test)
     U_g_plot.plot_interp(Us_test)
@@ -207,8 +211,8 @@ if __name__ == "__main__":
     # torch.autograd.set_detect_anomaly(True)
     # torch.use_deterministic_algorithms(True)
 
-    true_pde()
-    # train_new()
+    # true_pde()
+    train_new()
     # test_adjoint()
 
     # test2()

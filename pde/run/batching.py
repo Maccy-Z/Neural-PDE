@@ -1,3 +1,5 @@
+import torch
+
 from pde.graph_grid.U_graph import UValues, UGraph
 
 class GraphSample:
@@ -39,16 +41,46 @@ class GraphBatch:
     samples: list[GraphSample]
     """ Class to handle batching of UGraphs for PDE solving.  """
 
-    def __init__(self, graphs: list[UGraph], Us_trues: list[UValues], N_steps: int):
+    def __init__(self, graphs: list[UGraph], Us_trues: list[UValues], N_steps: int, device="cuda"):
+        self.device = device
+
         samples = []
         for g, u in zip(graphs, Us_trues, strict=True):
             samples.append(GraphSample(g, u, N_steps))
         self.samples = samples
 
-    # def __iter__(self):
-    #     return self
+    def get_norm_stats(self):
+        """ Return normalisation stats for dataset """
+        # Construct with symmetry in mind. Each variable has same mean/std across derivatives / components.
+        avg_regions = [ [(0, 0), (0, 1)],  # V
+                        [(0,), (2,)],         # p
+                        [(1, 1, 2, 2), (0, 1, 0, 1)],  # d_V
+                        [(1, 2), (2, 2)],  # d_p
+                        [(3, 3, 4, 4, 5, 5), (0, 1, 0, 1, 0, 1)],  # d2_V
+                        [(3, 4, 5), (2, 2, 2)]  # d2_p
+                         ]
+
+        batch_means, batch_stds = [], []
+        for s in self.samples:
+            Us_true = s.Us_true
+            U_dUs = s.U_graph.get_Us_dUs(Us_true)[0]
+
+            norm_mean, norm_std = torch.zeros((6, 3), device=self.device), torch.zeros((6, 3), device=self.device)
+            for i, region in enumerate(avg_regions):
+                std, mean = torch.std_mean(U_dUs[:, region[0], region[1]])
+                norm_std[region[0], region[1]] = std
+                norm_mean[region[0], region[1]] = mean
+
+            batch_stds.append(norm_std)
+            batch_means.append(norm_mean)
+
+        batch_mean = torch.stack(batch_means, dim=0).mean(dim=0)
+        batch_std = torch.stack(batch_stds, dim=0).mean(dim=0)
+
+        return batch_mean, batch_std
 
     def __iter__(self):
         while True:
             for sample in self.samples:
                 yield sample
+

@@ -76,9 +76,10 @@ class UGraph:
     """ Holder for graph structure. """
     device: torch.device | str
 
-    U_values: UValues
-
+    U_values: UValues                           # Current U values on the grid
     _Xs: Tensor  # [N_us_tot, 2]                # Coordinates of nodes
+    tri: Tensor | None                          # Triangle mesh for plotting
+
     pde_mask: Tensor  # [N_us_tot]                   # Mask for where to enforce PDE on. Bool
     dirich_mask: Tensor  # [N_us_tot * N_component]   # Mask for Dirichlet BCs
     pde_idx: Tensor  # [N_pde * N_component]        # Indices for PDE nodes in flattened Us

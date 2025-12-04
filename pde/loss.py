@@ -72,8 +72,6 @@ class MSELoss2(Loss):
 class MSELossNorm(Loss):
     def __init__(self):
         super().__init__()
-        # self.Us_true = Us_true_values.Us
-        # self.stds = self.Us_true.std(dim=0, keepdim=True) + 0.01  # Avoid division by zero
 
     def forward(self, Us_pred: UValues, Us_true: UValues, requires_grad=True):
         Us_pred, Us_true = Us_pred.Us, Us_true.Us

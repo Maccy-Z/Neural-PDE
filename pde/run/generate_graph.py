@@ -7,7 +7,7 @@ from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph, setup_graph
 from pde.graph_grid.graph_utils import plot_edges
-from mesh_gen.generate_mesh import gen_points_full
+from mesh_gen.generate_mesh import gen_points_full, gen_mesh_random
 from pde.config import Config
 
 
@@ -148,7 +148,9 @@ def mesh_heat(cfg, max_degree=2, grad_neigh=25):
 
 def mesh_graph(cfg, max_degree=2, grad_neigh=25):
     N_comp = 3
-    Xs, triangles, (int_edges, bc_edges), p_tags  = gen_points_full()
+    # Xs, triangles, (int_edges, bc_edges), p_tags = gen_points_full()
+    Xs, triangles, (int_edges, bc_edges), p_tags = gen_mesh_random()
+
     Xs = torch.from_numpy(Xs).float()
     triangles = torch.from_numpy(triangles).int()
 

@@ -3,8 +3,7 @@ from cprint import c_print
 import meshpy.triangle as tri
 import threading
 
-from mesh_gen.mesh_gen_utils import (MeshProps, min_dist_to_boundary,
-                                     extract_mesh_data)
+from mesh_gen.mesh_gen_utils import MeshProps, min_dist_to_boundary, extract_mesh_data, gen_rand_ellipses
 from mesh_gen.geometries import MeshFacet, Circle, Line, Ellipse, Nozzle
 
 # Custom function to control mesh refinement
@@ -27,7 +26,6 @@ def refine_fn(vertices, area, props: MeshProps, points, segments):
         print(e)
         raise e
     return area > threshold
-
 
 def _create_mesh_thread(holes, points, p_marks, segments, seg_marks, mesh_props, dist_p, dist_seg, return_val, min_angle):
     mesh_info = tri.MeshInfo()
@@ -52,7 +50,6 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps, min_angle=None):
 
     for i, facets in enumerate(coords):
         cur_p = len(points)
-
         if facets.real_face:
             points = np.concatenate((points, facets.points))
             segments = np.concatenate((segments, facets.segments + cur_p))
@@ -79,43 +76,25 @@ def create_mesh(coords: list[MeshFacet], mesh_props: MeshProps, min_angle=None):
     mesh = ret_list[0]
     return mesh, marker_names
 
-
 def gen_points_full():
     min_area = 1e-3
     max_area = 2e-3
     xmin, xmax = 0, 2
     ymin, ymax = 0.0, 1.5
-    circle_center = (0.5, 0.4)
-    circle_radius = 0.1
 
     lengthscale = np.sqrt(2*min_area)
 
     mesh_props = MeshProps(min_area, max_area, lengthscale=0.4)
 
-    coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
+    coords = [
               Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
               Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
               Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
               Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
 
-
-              # Circle((0.7, 0.75), 0.2, lengthscale, True, name="circle", lims=[[xmin, ymin], [xmax, ymax]]),
-              Ellipse((0.7, 0.75), 0.2, 0.75, angle=np.pi/3, lengthscale=lengthscale, hole=True, dist_req=True, name="circle"),
+              Ellipse(center=(0.7, 0.75), semi_major_axis=0.2, eccentricity=0.75, angle=np.pi/3,
+                      lengthscale=lengthscale, hole=True, dist_req=True, name="circle"),
               ]
-    #
-    # coords = [#Box(Xmin, Xmax, hole=False, name="farfield", remove_edge=2),
-    #             Line([[xmin, ymin], [1., ymin]], dist_req=True, name="wall_bottom"),
-    #             Line([[xmin, ymax], [1., ymax]], True, name="wall_top"),
-    #             Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
-    #             Line([[1., ymax], [1., ymin]], True, name="wall_right"),
-    #
-    #             Line([[1.025, ymin], [2., ymin]], dist_req=True, name="wall_bottom"),
-    #             Line([[1.025, ymax], [2, ymax]], True, name="wall_top"),
-    #             Line([[1.025, ymin], [1.025, ymax]], True, name="wall_left"),
-    #             Line([[2, ymax], [2, ymin]], True, name="wall_right"),
-    #
-    #           # Circle(circle_center, circle_radius, lengthscale, True, name=PT.DirichBC),
-    #           ]
 
     mesh, marker_tags = create_mesh(coords, mesh_props)
     point_props, markers, _edges = extract_mesh_data(mesh)
@@ -126,7 +105,42 @@ def gen_points_full():
     p_tags = [marker_tags[int(i)] for i in p_markers]
     return points, triangles, (int_edges, bound_edges), p_tags
 
+def gen_mesh_random():
+    min_area = 0.5e-3
+    max_area = 2e-3
+    xmin, xmax = 0, 2
+    ymin, ymax = 0.0, 1.5
 
+    lengthscale = np.sqrt(2*min_area)
+
+    mesh_props = MeshProps(min_area, max_area, lengthscale=0.4)
+
+    coords = [
+              Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
+              Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
+              Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
+              Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
+
+              # Ellipse(center=(0.7, 0.75), semi_major_axis=0.2, eccentricity=0.75, angle=np.pi/3,
+              #         lengthscale=lengthscale, hole=True, dist_req=True, name="circle"),
+              ]
+
+    _, rand_ellipses = gen_rand_ellipses(3, (xmax-xmin, ymax-ymin), 0.1, 0.2, 0.5, 0.9, min_gap=0.05)
+
+    for spec in rand_ellipses:
+        e = Ellipse(center=spec['center'], semi_major_axis=spec['semi_major'], eccentricity=spec['eccentricity'], angle=spec['angle'],
+                      lengthscale=lengthscale, hole=True, dist_req=True, name="circle")
+        coords.append(e)
+
+
+    mesh, marker_tags = create_mesh(coords, mesh_props)
+    point_props, markers, _edges = extract_mesh_data(mesh)
+    points, triangles = point_props
+    p_markers, _ = markers
+    int_edges, bound_edges = _edges
+
+    p_tags = [marker_tags[int(i)] for i in p_markers]
+    return points, triangles, (int_edges, bound_edges), p_tags
 
 
 def main():
