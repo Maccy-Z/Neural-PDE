@@ -67,7 +67,7 @@ class FwdConfig:
     solve_acc: float = 0.001
 
     # Forward linear solver settings
-    lin_mode: LinMode = LinMode.CUDSS
+    lin_mode: LinMode = LinMode.DENSE
     solver_cfg: dict = None
 
     norm_row: bool = True       # Normalize rows of A
@@ -88,7 +88,7 @@ class FwdConfig:
 @dataclass
 class AdjConfig:
     # Linear solver settings
-    lin_mode: LinMode = LinMode.CUDSS
+    lin_mode: LinMode = LinMode.DENSE
     solver_cfg: dict = None
 
     norm_row: bool = False      # Normalize rows of A

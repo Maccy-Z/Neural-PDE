@@ -153,7 +153,7 @@ def nearest_neighbors(tris, Xs, n_neigh):
     return idx
 
 @disk_cache
-def calc_coeff(Xs: torch.Tensor, stencils: np.array, n_neigh: int, diff_orders: tuple[int, int]):
+def calc_coeff(Xs: torch.Tensor, stencils: np.ndarray, n_neigh: int, diff_orders: tuple[int, int]):
 
     n_points = Xs.shape[0]
 
@@ -162,9 +162,9 @@ def calc_coeff(Xs: torch.Tensor, stencils: np.array, n_neigh: int, diff_orders: 
     data = fd.weights(
         Xs, Xs[stencils],
         diffs=diff_orders,
-        phi="phs3",
-        order=1,
-        eps=0.01,
+        phi="phs5",
+        order=2,
+        eps=0.1,
         sum_terms=False
     )
     rows = np.repeat(range(n_points), n_neigh)

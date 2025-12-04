@@ -72,7 +72,6 @@ class EfficientIntervalOptimizer:
         x_lower = low + self._INVPHI_COMPLEMENT * current_width
         f_lower = loss_func(x_lower)
 
-        # print(f'{f_upper = }, {f_lower = }, {low = }, {high = }')
         for i in range(self.max_iter):
             current_width = high - low  # Update current width
             if current_width <= self.tol:
@@ -88,7 +87,6 @@ class EfficientIntervalOptimizer:
                 # Calculate the new x_lower point
                 x_lower = low + self._INVPHI_COMPLEMENT * (high - low)
                 f_lower = loss_func(x_lower)  # Only one new function evaluation
-                # print(f'{(low + high) / 2}, {f_lower = }')
             else:  # Minimum is likely in the interval [x_lower, high]
                 low = x_lower  # Narrow the interval from the left
 
@@ -99,7 +97,6 @@ class EfficientIntervalOptimizer:
                 # Calculate the new x_upper point
                 x_upper = high - self._INVPHI_COMPLEMENT * (high - low)
                 f_upper = loss_func(x_upper)  # Only one new function evaluation
-                # print(f'{(low + high) / 2}, {f_upper = }')
 
         pred_alpha = (low + high) / 2
 
@@ -162,6 +159,8 @@ class SolverNewton:
         best_alpha = 1.0
 
         for i in range(self.N_iter):
+            last_i = i
+
             # Compute Jacobian, residuals and solve linear system
             with self.timer:
                 jacobian, old_resid = pde_calc.jacobian(U_values, aux_input)
@@ -175,7 +174,7 @@ class SolverNewton:
                 zero_alpha_norm = old_resid.norm()
                 resid_fn = lambda alpha: self._test_residual(pde_calc, U_graph, U_values, alpha, deltas, aux_input)
                 best_alpha = self.line_search_optim.optimize(resid_fn, high=best_alpha, f_zero=zero_alpha_norm)
-                dUs = deltas * best_alpha #self.lr
+                dUs = deltas * best_alpha
                 U_graph.update_grid(dUs, U_values)
 
                 # Evaluate residuals
@@ -196,8 +195,7 @@ class SolverNewton:
             if new_resid_norm < self.solve_acc:
                 logging.debug(f"Newton solver converged early at iteration {i+1}.")
                 converged = True
-                last_i = i
-                break
+                # break
         else:
             logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
 

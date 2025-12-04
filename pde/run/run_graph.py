@@ -2,6 +2,7 @@ import torch
 from cprint import c_print
 import mup
 import time
+import os
 
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
@@ -14,14 +15,19 @@ from pde.run.batching import GraphDataset, GraphSample
 
 def setup(cfg: Config):
     # U_graph, _ = mesh_graph(cfg)
+    save_files = os.listdir(ARTEFACT_DIR / "dataset")
+    save_files = sorted([f for f in save_files if f.endswith(".pth")])
+    graphs, Us_values = [], []
+    for f in save_files:
+        save_dict = torch.load(ARTEFACT_DIR / "dataset" / f, weights_only=False)
+        Us_true = save_dict["Us_values"]
+        U_graph = save_dict["U_graph"]
+        graphs.append(U_graph)
+        Us_values.append(Us_true)
 
-    save_dict = torch.load(ARTEFACT_DIR / "Us_solution.pth", weights_only=False)
-    Us_true = save_dict["Us_values"]
-    U_graph = save_dict["U_graph"]
-    # Us_true = U_graph.new_Us(Us_true.clone())
     loss_fn = MSELossNorm()
 
-    dataset = GraphDataset([U_graph], [Us_true], N_steps=cfg.fwd_cfg.N_iter, device=cfg.device)
+    dataset = GraphDataset(graphs, Us_values, N_steps=cfg.fwd_cfg.N_iter, device=cfg.device)
     norm_mean, norm_std = dataset.get_norm_stats()
 
     pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)

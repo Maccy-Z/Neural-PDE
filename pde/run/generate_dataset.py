@@ -21,7 +21,8 @@ def gen_graph():
     solve_info = pde_adj.forward_solve(U_graph, Us_values)
 
     print(f'{solve_info = }')
-    U_graph.plot_interp(Us_values, title="Initial solution")
+    # print(f'{solve_info['converged'] = }')
+    U_graph.plot_interp(Us_values, title=f'{"Converged" if solve_info["converged"] else "Not Converged"} solution')
 
     return solve_info, Us_values, U_graph
 
@@ -40,7 +41,8 @@ def gen_dataset():
                 torch.save(save_dict, f)
 
 if __name__ == "__main__":
+    import numpy as np
+    np.random.seed(1)
     setup_logging(debug=2)
-
     gen_dataset()
 

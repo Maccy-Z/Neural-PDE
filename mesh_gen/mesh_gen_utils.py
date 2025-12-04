@@ -13,35 +13,6 @@ class MeshProps:
     lengthscale: float
 
 
-def min_dist_to_boundary(point, seg_points, segment_indices):
-    """
-    Calculate the minimum distance from a point to a list of segments defined by indices.
-    :param point: The point (x, y) as a 1D NumPy array.
-    :param seg_points: A 2D NumPy array of shape (n, 2) representing all points.
-    :param segment_indices: A 2D NumPy array of shape (m, 2), each row containing two indices
-                            into the `points` array, representing the start and end of a segment.
-    :return: The minimum distance from the point to the segments.
-    """
-    # Extract segment start and end points from the points array
-    segment_starts = seg_points[segment_indices[:, 0]]
-    segment_ends = seg_points[segment_indices[:, 1]]
-
-    # Vector from start to end of each segment
-    segment_vectors = segment_ends - segment_starts
-    # Vector from start of each segment to the point
-    point_vectors = point - segment_starts
-
-    # Project point_vectors onto segment_vectors
-    projection_lengths = np.einsum('ij,ij->i', point_vectors, segment_vectors) / (np.einsum('ij,ij->i', segment_vectors, segment_vectors)+1e-8)
-    projection_lengths = np.clip(projection_lengths, 0, 1)
-
-    # Closest points on each segment to the point
-    closest_points = segment_starts + (projection_lengths[:, np.newaxis] * segment_vectors)
-
-    # Distances from the point to each closest point on the segments
-    distances = np.linalg.norm(point - closest_points, axis=1)
-
-    return np.min(distances)
 
 
 def extract_interor_edges(triangles):
