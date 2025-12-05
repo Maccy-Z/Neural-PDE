@@ -116,14 +116,11 @@ class SolverNewton:
         pde_calc can be replaced for loading different PDEs.
     """
     def __init__(self, lin_solver: LinearSolver, cfg: FwdConfig):
-        # self.device = cfg.DEVICE
         self.cfg = cfg
 
         self.lin_solver = lin_solver
-
         self.N_iter = cfg.N_iter
         self.solve_acc = cfg.solve_acc
-
 
         self.line_search_optim = EfficientIntervalOptimizer(max_iter=5)
         self.timer = Timer(name="timer", logger=None)

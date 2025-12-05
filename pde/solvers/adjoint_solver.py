@@ -20,6 +20,7 @@ class PDEAdjoint:
                 pde_calc: GraphPDECalc object to compute Jacobian and residuals
                 Us_new: UValues at which to compute loss gradient, after forward solve
                 Us_old: UValues at which to compute Jacobian
+                Us_true: UValues at true solution.
                 jac: Cached Jacobian J(Us_old, theta), for efficiency. If None, it will be recomputed.
          """
         with torch.no_grad():

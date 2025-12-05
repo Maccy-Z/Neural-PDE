@@ -128,7 +128,7 @@ class Config:
     mup_lr = 0.02
     mup_betas = (0.9, 0.99)
     mup_wd = 1e-4
-    scalar_lr = 0.005
+    scalar_lr = 0.001
 
     clip_norm = 0.5
 

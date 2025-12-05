@@ -57,14 +57,12 @@ class LinearSolver:
         x = self.postproc(x)
         return x
 
-    def cuda_sparse(self, A_cp: cp.ndarray, b: torch.Tensor):
-        # st = time.time()
+    def cuda_sparse(self, A_cp: cp.spmatrix, b: torch.Tensor):
         #A_cupy = cp.from_dlpack(A)
         b_cupy = cp.from_dlpack(b)
 
         x = sp_linalg.spsolve(A_cp, b_cupy)
         x = torch.from_dlpack(x)
-        # print(f'{time.time() - st :.4f}s cuda sparse solve')
         return x
 
     def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
@@ -105,11 +103,6 @@ class LinearSolver:
         """ Default preprocessing. """
         return A, b
 
-    def postproc_sparse(self, x: torch.Tensor):
-        if self.col_norms is not None:
-            x = x / self.col_norms
-        return x
-
     def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """ Normalise and simplify sparse matrix A before solving. """
         # Compress CSR matrix
@@ -119,6 +112,11 @@ class LinearSolver:
         # Normalize rows and columns
         A, b, self.col_norms = csr_normalise(A, b, norm_row=self.cfg.norm_row, norm_col=self.cfg.norm_col)
         return A, b
+
+    def postproc_sparse(self, x: torch.Tensor):
+        if self.col_norms is not None:
+            x = x / self.col_norms
+        return x
 
     def cuda_amgx(self, A_cp: cp.ndarray, b: torch.Tensor):
         # Cupy to sparse is faster than torch to sparse
