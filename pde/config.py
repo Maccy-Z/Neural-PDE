@@ -67,13 +67,13 @@ class FwdConfig:
     solve_acc: float = 0.001
 
     # Forward linear solver settings
-    lin_mode: LinMode = LinMode.DENSE
+    lin_mode: LinMode = LinMode.CUDSS
     solver_cfg: dict = None
+    gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
     norm_row: bool = True       # Normalize rows of A
     norm_col: bool = False      # Normalize columns of A
     csr_compress: bool = False   # Remove zero entries before solving
-
 
     def __post_init__(self):
         if self.lin_mode == LinMode.AMGX:
@@ -82,7 +82,6 @@ class FwdConfig:
             self.solver_cfg = {"maxiter": 3000, "restart": 3000, "rtol": 1e-9}
         elif self.lin_mode == LinMode.CUDSS:
             self.solver_cfg = {'ir_n_steps': 1, 'max_n_uses': 300}
-            self.gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
 
 @dataclass
@@ -90,6 +89,7 @@ class AdjConfig:
     # Linear solver settings
     lin_mode: LinMode = LinMode.DENSE
     solver_cfg: dict = None
+    gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
     norm_row: bool = False      # Normalize rows of A
     norm_col: bool = True       # Normalize columns of A
@@ -122,3 +122,15 @@ class Config:
 
     # Adjoint config
     adj_cfg: AdjConfig = field(default_factory=AdjConfig)
+
+    # Training settings
+    N_steps = 2001
+    mup_lr = 0.02
+    mup_betas = (0.9, 0.99)
+    mup_wd = 1e-4
+    scalar_lr = 0.005
+
+    clip_norm = 0.5
+
+    N_print = 50
+    N_valid = 100

@@ -104,7 +104,7 @@ class EfficientIntervalOptimizer:
         if f_zero is not None:
             f_alpha = loss_func(pred_alpha)
             if f_alpha > f_zero*1.01:
-                logging.warning(f"When doing interval optimisation, {pred_alpha = } is still too high. {f_alpha = }, {f_zero = }.")
+                logging.info(f"When doing interval optimisation, {pred_alpha = } is still too high. {f_alpha = }, {f_zero = }.")
                 pred_alpha = pred_alpha / 2
                 # print(loss_func(0.))
                 # exit(5)

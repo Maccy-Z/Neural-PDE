@@ -26,7 +26,6 @@ class PDEAdjoint:
             jac_T = pde_calc.jacob_transpose(Us_old, jac)    # Shape = [N_eq, N_Us]
 
         # One adjoint value for each trained u value, including boundary points.
-        # Us_grad = Us_new.Us
         loss = self.loss_fn(Us_new, Us_true)
         loss_u = self.loss_fn.gradient().flatten()
 

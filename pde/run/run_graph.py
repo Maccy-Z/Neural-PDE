@@ -13,6 +13,43 @@ from pde.loss import DummyLoss, MSELoss2, MSELossNorm
 from pde.run.generate_graph import mesh_graph, load_graph
 from pde.run.batching import GraphDataset, GraphSample
 
+class MetricTracker:
+    tracking_dict: dict[str, list[torch.Tensor]]
+    def __init__(self, cfg: Config):
+        self.tracking_dict = {}
+
+    def add_metric(self, new_vals: dict[str, torch.Tensor]):
+        for key in new_vals.keys():
+            if key not in self.tracking_dict:
+                self.tracking_dict[key] = []
+
+        for key, val in new_vals.items():
+                self.tracking_dict[key].append(val)
+
+    def get_mean_metrics(self, keys: list[str]) -> dict[str, torch.Tensor]:
+        """ Return average metrics, and reset. """
+        return_dict = {}
+        for key in keys:
+            if key not in self.tracking_dict:
+                raise ValueError(f"Key {key} not found in tracking_dict")
+            all_metrics = torch.stack(self.tracking_dict[key])
+            mean_metric = all_metrics.mean()
+            return_dict[key] = mean_metric
+            # Reset
+            self.tracking_dict[key] = []
+
+        return return_dict
+
+    def get_metrics(self, key: str) -> torch.Tensor:
+        """ Return metrics, and reset. """
+        if key not in self.tracking_dict:
+            raise ValueError(f"Key {key} not found in tracking_dict")
+        all_metrics = torch.stack(self.tracking_dict[key])
+        # Reset
+        self.tracking_dict[key] = []
+
+        return all_metrics
+
 def setup(cfg: Config):
     # U_graph, _ = mesh_graph(cfg)
     save_files = os.listdir(ARTEFACT_DIR / "dataset")
@@ -33,8 +70,8 @@ def setup(cfg: Config):
     pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.03, betas=(0.9, 0.99), weight_decay=1e-5)
-    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)  # , betas=(0.95, 0.95))
+    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=cfg.mup_lr, betas=cfg.mup_betas, weight_decay=1e-4)
+    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=cfg.scalar_lr)  # , betas=(0.95, 0.95))
 
     return dataset, pde_fn, loss_fn, optim, optim_other
 
@@ -146,11 +183,87 @@ def true_pde():
 #     pde_adj.forward_solve()
 #     pde_adj.plot_interp(title="Predicted solution")
 
+class Trainer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        cfg = Config()
+        self.metric_tracker = MetricTracker(cfg)
+
+        ds, self.pde_fn, self.loss_fn, self.optim, self.optim_other = setup(cfg)
+        self.ds_train, self.ds_valid = ds, ds
+        self.pde_adj = NeuralPDEGraph(self.pde_fn, cfg, self.loss_fn)
+
+        U_g_plot, Us_plot = self.ds_valid.samples[0].U_graph, self.ds_valid.samples[0].Us_true
+        U_g_plot.plot_interp(Us_plot, title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
+
+        self.cfg = cfg
+
+    def train_model(self):
+        cfg = self.cfg
+
+        st = time.time()
+        ds_train_iter = iter(self.ds_train)
+        for i in range(self.cfg.N_steps):
+            # LR schedule
+            if i == 1000 or i == 1500:
+                for pg in self.optim.param_groups:
+                    pg['lr'] *= 0.5
+
+            sample = next(ds_train_iter)
+            self.optim.zero_grad(), self.optim_other.zero_grad()
+
+            U_graph, Us_true, Us_step = sample.get_Us_sample(i)
+
+            # Adjoint gradient
+            init_loss, final_loss, resid = self.pde_adj.single_step(U_graph, Us_step, Us_true)
+
+            # torch.nn.utils.clip_grad_value_(self.pde_fn.parameters(), clip_value=0.5)
+            torch.nn.utils.clip_grad_norm_(self.pde_fn.parameters(), max_norm=cfg.clip_norm)
+            self.optim.step(), self.optim_other.step()
+
+            self.metric_tracker.add_metric({"loss": final_loss})
+
+            if i % cfg.N_print == 0:
+                dt = time.time() - st
+                st = time.time()
+                avg_loss = self.metric_tracker.get_mean_metrics(["loss"])["loss"].item()
+                c_print(f'{i}/2000 loss: {avg_loss:.3g}, T = {dt:.3g}', color="bright_green")
+                # c_print(f'{Us_step.Us.mean():.4g}, {Us_true.Us.mean():.4g}', color="bright_blue")
+
+            if i % cfg.N_valid == 0:
+                self._valid_step()
+
+    @torch.no_grad()
+    def _valid_step(self):
+        """ Run validation. Initialise with zero field and update last prediction. """
+
+        valid_losses = []
+        for sample in self.ds_valid.samples:
+            U_graph, Us_true = sample.U_graph, sample.Us_true
+            Us_test = U_graph.get_zero_U_values(Us_true)
+            self.pde_adj.forward_solve(U_graph, Us_test)
+
+            sample.update_Us_last(Us_test)
+            valid_loss = self.loss_fn(Us_test, Us_true, requires_grad=False)
+            valid_losses.append(valid_loss)
+
+        valid_loss_mean = torch.stack(valid_losses).mean()
+        self.metric_tracker.add_metric({"valid_loss": valid_loss_mean})
+        print(f'{valid_loss_mean = }')
+
+    def plot_final_results(self):
+        U_g_plot, Us_plot = self.ds_valid.samples[0].U_graph, self.ds_valid.samples[0].Us_true
+        Us_test = U_g_plot.new_Us(torch.zeros_like(Us_plot.Us))
+        self.pde_adj.forward_solve(U_g_plot, Us_test)
+        U_g_plot.plot_interp(Us_test)
+
+        print(self.metric_tracker.get_metrics("valid_loss"))
+
 
 def train_new():
     """ Train PDE using exact newton gradient + residuals. """
     cfg = Config()
-    resid_factor = 0 # 0.0025
 
     ds, pde_fn, loss_fn, optim, optim_other = setup(cfg)
     pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
@@ -158,10 +271,16 @@ def train_new():
     U_g_plot, Us_plot = ds.samples[0].U_graph, ds.samples[0].Us_true
     U_g_plot.plot_interp(Us_plot, title=["Exact Velocity x", "Exact Velocity y", "Exact Pressure"])
 
+    metric_tracker = MetricTracker(cfg)
     pred_loss_hist = []
     st = time.time()
     batch = iter(ds)
     for i in range(2001):
+        # LR schedule
+        if i == 1000 or i == 1500:
+            for pg in optim.param_groups:
+                pg['lr'] *= 0.5
+
         sample = next(batch)
         optim.zero_grad(), optim_other.zero_grad()
 
@@ -179,17 +298,14 @@ def train_new():
         torch.nn.utils.clip_grad_norm_(pde_fn.parameters(), max_norm=1)
         optim.step(), optim_other.step()
 
+        metric_tracker.add_metric({"loss": final_loss})
         # Printing
         if i % 50 == 0:
             dt = time.time() - st
             st = time.time()
-            c_print(f'{i}/2000 loss: {final_loss.detach().cpu().item():.3g}, T = {dt:.3g}', color="bright_green")
+            avg_loss = metric_tracker.get_metrics(["loss"])["loss"].item()
+            c_print(f'{i}/2000 loss: {avg_loss:.3g}, T = {dt:.3g}', color="bright_green")
             # c_print(f'{Us_step.Us.mean():.4g}, {Us_true.Us.mean():.4g}', color="bright_blue")
-
-        if i == 1000 or i == 1500:
-            resid_factor *= 2
-            for pg in optim.param_groups:
-                pg['lr'] *= 0.5
 
         if i % 100 == 0:
             Us_test = U_graph.get_zero_U_values(Us_true)
@@ -217,11 +333,10 @@ if __name__ == "__main__":
     # torch.use_deterministic_algorithms(True)
 
     # true_pde()
-    train_new()
+    # train_new()
     # test_adjoint()
 
-    # test2()
 
-    # optim_pde()
-    # plot_grads()
-
+    trainer = Trainer()
+    trainer.train_model()
+    trainer.plot_final_results()
