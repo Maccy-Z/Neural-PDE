@@ -14,7 +14,6 @@ class GraphSample:
         # Initialise saved Us as zeros
         self.Us_saved = [U_graph.get_zero_U_values(Us_true) for _ in range(N_steps)]
 
-
     def update_Us_last(self, Us_pred: UValues):
         """ Update the last saved Us. """
         self.Us_saved[-1] = Us_pred

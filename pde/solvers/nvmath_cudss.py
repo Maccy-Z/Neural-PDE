@@ -4,9 +4,6 @@ import cupyx.scipy.sparse as sp
 import cupy as cp
 import logging
 
-from pde.utils_sparse import csr_compress
-from pde.utils import ARTEFACT_DIR
-
 class CUDSSSolver:
     crow_indices: torch.Tensor
     col_indices: torch.Tensor
@@ -62,9 +59,6 @@ class CUDSSSolver:
         x_cp = self.solver.solve()
         x = torch.from_dlpack(x_cp)
 
-        # if self.norm_col:
-        #     return x / col_norms.squeeze(0)
-        # else:
         return x
 
     def _init_solver(self, A_cp: sp.csr_matrix, b_cp: cp.ndarray):
@@ -73,6 +67,7 @@ class CUDSSSolver:
             self.solver.free()
 
         self.solver = nvmath_advanced.DirectSolver(A_cp, b_cp, options=self.options)
+
         self.solver.plan_config.use_matching = 1
         self.solver.plan_config.matching_algorithm = 0
         plan = self.solver.plan()

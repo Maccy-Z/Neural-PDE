@@ -73,7 +73,6 @@ class LinearSolver:
             x, info = gmres_cust(A, b, x0=x, **self.gmres_cfg)
             # rel_err2 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
             # print(f'GMRES rel err: {rel_err:.3g} -> {rel_err2:.3g}')
-
         return x
 
     def cudss(self, A: torch.Tensor, b: torch.Tensor):
