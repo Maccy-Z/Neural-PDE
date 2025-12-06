@@ -58,7 +58,6 @@ class LinearSolver:
         return x
 
     def cuda_sparse(self, A_cp: cp.spmatrix, b: torch.Tensor):
-        #A_cupy = cp.from_dlpack(A)
         b_cupy = cp.from_dlpack(b)
 
         x = sp_linalg.spsolve(A_cp, b_cupy)
