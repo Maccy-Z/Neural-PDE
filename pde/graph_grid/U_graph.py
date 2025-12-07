@@ -236,7 +236,7 @@ class UGraph:
 
     def new_Us(self, Us: torch.Tensor) -> UValues:
         """ Create new UValues object from Us tensor, respecting boundary conditions. """
-        Us_values = UValues(self._Xs, Us)
+        Us_values = UValues(self._Xs, Us.clone())
         self.set_grid(Us, Us_values)
         return Us_values
 
@@ -257,12 +257,6 @@ class UGraph:
         Us_zeros = UValues(Us_old.Xs, zeros)
         self.set_grid(zeros, Us_zeros)
         return Us_zeros
-
-    def get_us_mask(self, U_values: UValues):
-        """
-        Return us, and mask of which elements are trainable. Used for masking Jacobian equations.
-        """
-        return U_values.Us, None, self.pde_mask
 
     def get_all_us_Xs(self, U_values: UValues):
         """ Return all grid points, including fake boundaries. """

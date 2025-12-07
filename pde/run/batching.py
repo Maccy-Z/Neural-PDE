@@ -13,7 +13,7 @@ class GraphSample:
         self.Us_true = Us_true
 
         # Initialise saved Us as zeros
-        self.Us_saved = [U_graph.get_zero_U_values(Us_true) for _ in range(N_steps)]
+        self.Us_saved = [U_graph.get_zero_U_values(Us_true) for _ in range(N_steps+1)]
 
         # Initialise solver
         self.U_graph.init_lin_solver(cfg)
@@ -24,7 +24,7 @@ class GraphSample:
 
     def update_Us_all(self, Us_preds: list[UValues]):
         """ Update all saved Us. """
-        assert len(Us_preds) == len(self.Us_saved), "Number of predicted Us must match number of saved Us."
+        assert len(Us_preds) == len(self.Us_saved), f"Number of predicted Us must match number of saved Us, {len(Us_preds)} != {len(self.Us_saved)}"
         self.Us_saved = Us_preds
 
     def get_Us_sample(self, i) -> tuple[UGraph, UValues, UValues]:

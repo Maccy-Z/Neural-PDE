@@ -152,11 +152,10 @@ class SolverNewton:
 
         aux_input: Additional conditioning for the PDE
         """
-        converged, last_i = False, 0
+        converged = False
         best_alpha = 1.0
-
+        Us_history: list[UValues] = [U_graph.new_Us(U_values.Us)]
         for i in range(self.N_iter):
-            last_i = i
 
             # Compute Jacobian, residuals and solve linear system
             with self.timer:
@@ -182,8 +181,9 @@ class SolverNewton:
                 new_resid = pde_calc.residuals(U_values, aux_input)
                 new_resid_norm = new_resid.norm()
                 max_abs_residual = torch.max(new_resid.abs())
-
             t_line = self.timer.last
+
+            Us_history.append(U_graph.new_Us(U_values.Us))
 
             logging.info(f'NR Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
             logging.debug(f'jacob time: {t_jacob:.4f}, solve time: {t_solve:.4g}, Line+postproc time: {t_line:.4f}s')
@@ -196,4 +196,4 @@ class SolverNewton:
         else:
             logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
 
-        return {"converged": converged, "iter": last_i, "residual_norm": new_resid_norm, "max_residual": max_abs_residual}
+        return Us_history, {"converged": converged, "iter": i, "residual_norm": new_resid_norm, "max_residual": max_abs_residual}

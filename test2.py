@@ -28,7 +28,7 @@ print(f'{a.data.std() = }')
 print(f'{a2.data.std() = }')
 print()
 # Solve a @ x = b for x.
-config = nvmath.sparse.advanced.DirectSolverOptions(multithreading_lib="/home/maccyz/miniforge3/envs/test/lib/python3.13/site-packages/nvidia/cu12/lib/libcudss_mtlayer_gomp.so.0")
+config = nvmath.sparse.advanced.DirectSolverOptions() # (multithreading_lib="/home/maccyz/miniforge3/envs/test/lib/python3.13/site-packages/nvidia/cu12/lib/libcudss_mtlayer_gomp.so.0")
 
 
 # Use the stateful object as a context manager to automatically release resources.
@@ -43,35 +43,35 @@ x = solver.solve()
 cp.cuda.get_current_stream().synchronize()
 print(f'Full solve time: {time.time() - st:.4f} seconds')
 
-# 2) Now let's modify the LHS. For small changes, the LHS can be modified and iterative refinement
-# # Update A in place.
-# a.data *= 1.1
-solution_config = solver.solution_config
-solution_config.ir_num_steps = 100
+# # 2) Now let's modify the LHS. For small changes, the LHS can be modified and iterative refinement
+# # # Update A in place.
+# # a.data *= 1.1
+# solution_config = solver.solution_config
+# solution_config.ir_num_steps = 100
+# # cp.cuda.get_current_stream().synchronize()
+# # st = time.time()
+# # x = solver.solve()
+# # cp.cuda.get_current_stream().synchronize()
+# # print(f"Just solve time: {time.time() - st:.4f} seconds")
+# # y = (a @ x) - b
+# # print(f"Residual norm after refactorization: {cp.linalg.norm(y):.4e}")
+# # print(x)
+# # print(solver.solution_config.solution_algorithm)
+# # print()
+#
+#
+# # 3) For larger changes to A, it's better to refactorize.
+# solution_config.ir_num_steps = 0
+#
+# a.data[...] = a2.data
+#
 # cp.cuda.get_current_stream().synchronize()
 # st = time.time()
+# solver.factorize()
 # x = solver.solve()
 # cp.cuda.get_current_stream().synchronize()
-# print(f"Just solve time: {time.time() - st:.4f} seconds")
+# print(f"Refactorize time: {time.time() - st:.4f} seconds")
+#
 # y = (a @ x) - b
 # print(f"Residual norm after refactorization: {cp.linalg.norm(y):.4e}")
 # print(x)
-# print(solver.solution_config.solution_algorithm)
-# print()
-
-
-# 3) For larger changes to A, it's better to refactorize.
-solution_config.ir_num_steps = 0
-
-a.data[...] = a2.data
-
-cp.cuda.get_current_stream().synchronize()
-st = time.time()
-solver.factorize()
-x = solver.solve()
-cp.cuda.get_current_stream().synchronize()
-print(f"Refactorize time: {time.time() - st:.4f} seconds")
-
-y = (a @ x) - b
-print(f"Residual norm after refactorization: {cp.linalg.norm(y):.4e}")
-print(x)

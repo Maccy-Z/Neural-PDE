@@ -77,3 +77,9 @@ class CUDSSSolver:
         self.solver.factorization_config.pivot_eps_algorithm = 0
 
         self.solver.solution_config.ir_num_steps = self.ir_n_steps
+
+    # def exit(self):
+    #     if self.solver is not None:
+    #         print("Freeing CUDSS solver.")
+    #         self.solver.free()
+    #     print("Freed CUDSS solver.")

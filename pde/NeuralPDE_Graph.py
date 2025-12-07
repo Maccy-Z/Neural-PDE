@@ -43,8 +43,8 @@ class NeuralPDEGraph:
         """ Solve PDE forward problem. """
         pde_calc = GraphPDECalc(U_graph, self.pde_fn, device=self.device)
 
-        converged = self.newton_solver.find_pde_root(pde_calc, U_graph, Us, aux_input, U_graph.solver_opts['fwd'])
-        return converged
+        Us_history, converged = self.newton_solver.find_pde_root(pde_calc, U_graph, Us, aux_input, U_graph.solver_opts['fwd'])
+        return Us_history, converged
 
     def adjoint_solve(self, Us: UValues):
         """ Solve for adjoint. Call self.backward to get gradients, using adjoints. """

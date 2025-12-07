@@ -18,7 +18,7 @@ def gen_graph():
 
     pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
 
-    solve_info = pde_adj.forward_solve(U_graph, Us_values)
+    _, solve_info = pde_adj.forward_solve(U_graph, Us_values)
 
     print(f'{solve_info = }')
     # print(f'{solve_info['converged'] = }')
