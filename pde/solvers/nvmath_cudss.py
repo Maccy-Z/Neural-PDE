@@ -29,6 +29,7 @@ class CUDSSSolver:
             b: dense RHS
         """
         crow_indices, col_indices, values = A.crow_indices(), A.col_indices(), A.values()
+        crow_indices, col_indices = crow_indices.to(dtype=torch.int32), col_indices.to(dtype=torch.int32)
         values = cp.from_dlpack(values)
         b_cp = cp.from_dlpack(b)
 

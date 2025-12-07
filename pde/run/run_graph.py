@@ -64,7 +64,7 @@ def setup(cfg: Config):
 
     loss_fn = MSELossNorm()
 
-    dataset = GraphDataset(graphs, Us_values, N_steps=cfg.fwd_cfg.N_iter, device=cfg.device)
+    dataset = GraphDataset(graphs, Us_values, N_steps=cfg.fwd_cfg.N_iter, cfg=cfg)
     norm_mean, norm_std = dataset.get_norm_stats()
 
     pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)

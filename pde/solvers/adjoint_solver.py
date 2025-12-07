@@ -13,7 +13,7 @@ class PDEAdjoint:
         self.adj_lin_solver = adj_lin_solver
         self.loss_fn = loss_fn
 
-    def adjoint_solve(self, pde_calc: GraphPDECalc, Us_new: UValues, Us_old: UValues, Us_true: UValues, jac=None):
+    def adjoint_solve(self, pde_calc: GraphPDECalc, Us_new: UValues, Us_old: UValues, Us_true: UValues, jac, solver_opts=None):
         """ Solve for adjoint.
             dgdU = J^T * adjoint
             Args:
@@ -21,7 +21,8 @@ class PDEAdjoint:
                 Us_new: UValues at which to compute loss gradient, after forward solve
                 Us_old: UValues at which to compute Jacobian
                 Us_true: UValues at true solution.
-                jac: Cached Jacobian J(Us_old, theta), for efficiency. If None, it will be recomputed.
+                jac: Cached Jacobian J(Us_old, theta), for efficiency.
+                solver_opts: Options for linear solver.
          """
         with torch.no_grad():
             jac_T = pde_calc.jacob_transpose(Us_old, jac)    # Shape = [N_eq, N_Us]
@@ -30,7 +31,7 @@ class PDEAdjoint:
         loss = self.loss_fn(Us_new, Us_true)
         loss_u = self.loss_fn.gradient().flatten()
 
-        adjoint = self.adj_lin_solver.solve(jac_T, loss_u)
+        adjoint = self.adj_lin_solver.solve(jac_T, loss_u, solver_opts)
 
         frac_err = (jac_T @ adjoint - loss_u).norm() / loss_u.norm()
         return adjoint, loss, frac_err

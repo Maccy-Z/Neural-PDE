@@ -21,9 +21,9 @@ class LinearSolver:
     solver_cfg: dict = None
     col_norms: torch.Tensor | None = None
 
-    def __init__(self, mode: LinMode, device: str, cfg: FwdConfig|AdjConfig=None):
+    def __init__(self,device: str, cfg: FwdConfig|AdjConfig):
         self.cfg = cfg
-
+        mode = cfg.lin_mode
         if device == "cuda":
             self.preproc = self.preproc_sparse
             self.postproc = self.postproc_sparse
@@ -51,20 +51,20 @@ class LinearSolver:
             elif mode == LinMode.SPARSE:
                 self.solver = self.cpu_sparse
 
-    def solve(self, A, b) -> torch.Tensor:
+    def solve(self, A, b, solver_opts=None) -> torch.Tensor:
         A_proc, b_proc = self.preproc(A, b)
-        x = self.solver(A_proc, b_proc)
+        x = self.solver(A_proc, b_proc, solver_opts)
         x = self.postproc(x)
         return x
 
-    def cuda_sparse(self, A_cp: cp.spmatrix, b: torch.Tensor):
+    def cuda_sparse(self, A_cp: cp.ndarray, b: torch.Tensor, solver_opts=None):
         b_cupy = cp.from_dlpack(b)
 
         x = sp_linalg.spsolve(A_cp, b_cupy)
         x = torch.from_dlpack(x)
         return x
 
-    def cuda_dense(self, A: torch.Tensor, b: torch.Tensor):
+    def cuda_dense(self, A: torch.Tensor, b: torch.Tensor, solver_opts=None):
         A_dense = A.to_dense()
         x = torch.linalg.solve(A_dense, b)
         rel_err = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
@@ -74,10 +74,16 @@ class LinearSolver:
             # print(f'GMRES rel err: {rel_err:.3g} -> {rel_err2:.3g}')
         return x
 
-    def cudss(self, A: torch.Tensor, b: torch.Tensor):
+    def cudss(self, A: torch.Tensor, b: torch.Tensor, solver_opts: CUDSSSolver=None):
         """ Solve using CUDSS.
             Optional GMRES refinement, then dense solve if not converged.  """
-        x = self.cudss_solver.forward(A, b)
+        if solver_opts is not None:
+            # print("Using custom CUDSS solver options.")
+            cudss_solver = solver_opts
+        else:
+            cudss_solver = self.cudss_solver
+
+        x = cudss_solver.forward(A, b)
         rel_err = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
         if rel_err > 1e-3:
             x, info = gmres_cust(A, b, x0=x, **self.gmres_cfg)
@@ -91,7 +97,7 @@ class LinearSolver:
                 # rel_err3 = torch.norm(A @ x - b) / (torch.norm(b) + 1e-7)
                 # logging.info(f'Remaining error: {rel_err2:.3g}', color="yellow")
 
-                self.cudss_solver.n_uses = self.cudss_solver.max_n_uses + 1  # Force replan next solve.
+                cudss_solver.n_uses = cudss_solver.max_n_uses + 1  # Force replan next solve.
         return x
 
     def postproc(self, x: torch.Tensor):
@@ -116,14 +122,14 @@ class LinearSolver:
             x = x / self.col_norms
         return x
 
-    def cuda_amgx(self, A_cp: cp.ndarray, b: torch.Tensor):
+    def cuda_amgx(self, A_cp: cp.ndarray, b: torch.Tensor, solver_opts=None):
         # Cupy to sparse is faster than torch to sparse
         self.amgx_solver.init_solver_cp(A_cp)
         x = torch.zeros_like(b)
         x, resid = self.amgx_solver.solve(b, x)
         return x
 
-    def cuda_iterative(self, A_cp: cp.ndarray, b: torch.Tensor):
+    def cuda_iterative(self, A_cp: cp.ndarray, b: torch.Tensor, solver_opts=None):
         b_cp = cp.from_dlpack(b)
 
         # Convert the dense matrix A_cupy to a sparse CSR matrix
@@ -135,14 +141,14 @@ class LinearSolver:
 
         return x
 
-    def cpu_sparse(self, A: torch.Tensor, b: torch.Tensor):
+    def cpu_sparse(self, A: torch.Tensor, b: torch.Tensor, solver_opts=None):
         A = A.numpy()
         b = b.numpy()
         deltas = linalg.spsolve(A, b, use_umfpack=True)
         deltas = torch.from_numpy(deltas)
         return deltas
 
-    def cpu_dense(self, A: torch.Tensor, b: torch.Tensor):
+    def cpu_dense(self, A: torch.Tensor, b: torch.Tensor, solver_opts=None):
         deltas = torch.linalg.solve(A, b)
         return deltas
 

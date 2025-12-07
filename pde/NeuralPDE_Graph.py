@@ -30,11 +30,11 @@ class NeuralPDEGraph:
         # self.pde_calc = GraphPDECalc(self.U_graph, pde_fn, device=cfg.device)
 
         # Forward solver
-        fwd_lin_solver = LinearSolver(fwd_cfg.lin_mode, cfg.device, cfg=fwd_cfg)
+        fwd_lin_solver = LinearSolver(cfg.device, cfg=fwd_cfg)
         self.newton_solver = SolverNewton(fwd_lin_solver, cfg=fwd_cfg)
 
         # Adjoint solver
-        adj_lin_solver = LinearSolver(adj_cfg.lin_mode, self.device, cfg=adj_cfg)
+        adj_lin_solver = LinearSolver(self.device, cfg=adj_cfg)
         self.pde_adjoint = PDEAdjoint(adj_lin_solver, loss_fn)
 
         self.timer = Timer(name="timer", logger=None)
@@ -43,7 +43,7 @@ class NeuralPDEGraph:
         """ Solve PDE forward problem. """
         pde_calc = GraphPDECalc(U_graph, self.pde_fn, device=self.device)
 
-        converged = self.newton_solver.find_pde_root(pde_calc, U_graph, Us, aux_input)
+        converged = self.newton_solver.find_pde_root(pde_calc, U_graph, Us, aux_input, U_graph.solver_opts['fwd'])
         return converged
 
     def adjoint_solve(self, Us: UValues):
@@ -73,12 +73,12 @@ class NeuralPDEGraph:
 
         # Compute forward step form Us_old
         J, old_resid = pde_calc.jacobian(Us_current)
-        deltas = self.newton_solver.newton_step(pde_calc, J, old_resid)
+        deltas = self.newton_solver.newton_step(pde_calc, J, old_resid, U_graph.solver_opts['fwd'])
         fwd_err = (J @ deltas - old_resid).norm() / old_resid.norm()
 
         # Compute loss derivative at Us_new, Jacobian at Us_old
         Us_new: UValues = U_graph.get_test_update(deltas, Us_old=Us_current)
-        adjoint, _, adj_err = self.pde_adjoint.adjoint_solve(pde_calc, Us_new, Us_current, Us_true, jac=J)
+        adjoint, _, adj_err = self.pde_adjoint.adjoint_solve(pde_calc, Us_new, Us_current, Us_true, jac=J, solver_opts=U_graph.solver_opts['adj'])
 
         with self.timer:
             # dL/dtheta = lambda.T @ (dj/dtheta @ dU - df/dtheta)

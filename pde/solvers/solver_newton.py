@@ -135,17 +135,17 @@ class SolverNewton:
         return pde_resid_norm
 
     @torch.no_grad()
-    def newton_step(self, pde_calc: GraphPDECalc, jacobian, resid):
+    def newton_step(self, pde_calc: GraphPDECalc, jacobian, resid, solver_opts=None):
         """ Run a single Newton-Raphson step.
             Include pre and postprocessing for efficiency.
         """
         jacobian, resid = pde_calc.preproc_solve(jacobian, resid)
-        deltas = self.lin_solver.solve(jacobian, resid)
+        deltas = self.lin_solver.solve(jacobian, resid, solver_opts)
         deltas = pde_calc.postproc_solve(deltas)
         return deltas
 
     @torch.no_grad()
-    def find_pde_root(self, pde_calc: GraphPDECalc, U_graph: UGraph, U_values: UValues, aux_input=None):
+    def find_pde_root(self, pde_calc: GraphPDECalc, U_graph: UGraph, U_values: UValues, aux_input=None, solver_opts=None):
         """
         Find the root of the PDE using Newton Raphson:
             grad(F(x_n)) * (x_{n+1} - x_n) = -F(x_n)
@@ -163,7 +163,7 @@ class SolverNewton:
                 jacobian, old_resid = pde_calc.jacobian(U_values, aux_input)
             t_jacob = self.timer.last
             with self.timer:
-                deltas = self.newton_step(pde_calc, jacobian, old_resid)
+                deltas = self.newton_step(pde_calc, jacobian, old_resid, solver_opts)
             t_solve = self.timer.last
 
             # Find best alpha using line search

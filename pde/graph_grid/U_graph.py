@@ -10,8 +10,9 @@ from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff, nearest_n
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, BCCalc
 from pde.graph_grid.graph_utils import plot_interp, plot_points
 from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSystemSimplifier, plot_sparsity
-
-# print_fn = lambda s: c_print(f"{s}", color="bright_black")
+from pde.solvers.nvmath_cudss import CUDSSSolver
+from pde.solvers.linear_solvers import LinMode
+from pde.config import Config
 
 
 def tri_to_n_hop(tris, hops=6):
@@ -99,6 +100,7 @@ class UGraph:
     csr_summer: CSRSummer
     transposer: CSRTransposer
     simplifier: CSRSystemSimplifier
+    solver_opts: dict[str, CUDSSSolver | None]
 
     def _check(self, setup_dict):
         """ Check problem is well specified """
@@ -194,6 +196,17 @@ class UGraph:
         # Simplify trivial rows for linear solver
         trivial_rows = torch.where(self.dirich_mask.flatten())[0]
         self.simplifier = CSRSystemSimplifier(dummy_jac, trivial_rows, trivial_rows)
+
+    def init_lin_solver(self, cfg: Config):
+        """ Initialise CUDSS solver individual to graph """
+        self.solver_opts = {"fwd": None, "adj": None}
+        if cfg.fwd_cfg.lin_mode == LinMode.CUDSS:
+            self.solver_opts['fwd'] = CUDSSSolver(cfg.fwd_cfg.solver_cfg)
+        if cfg.adj_cfg.lin_mode == LinMode.CUDSS:
+            self.solver_opts['adj'] = CUDSSSolver(cfg.adj_cfg.solver_cfg)
+        #
+        # print(f'{self.solver_opts = }')
+        # exit(5)
 
     def get_Us_dUs(self, U_values: UValues):
         """ Get U values and their derivatives at each point. """
