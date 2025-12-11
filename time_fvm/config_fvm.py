@@ -36,6 +36,7 @@ class ConfigFVM:
     lnscale: float = 2
 
     # Physical parameters
+    T_0: float = 100        # Reference temperature
     viscosity: float = 200e-5     # At room temp
     visc_bulk: float = 200e-5
     thermal_cond: float = 1e-6
@@ -57,7 +58,8 @@ class ConfigFVM:
     plot_t: float = 0.1   # Time interval between plots
     save_t: float = 0.1    # Time interval between saves
     print_i: int = 500   # Iterations between print statements
-    n_iter: int = 50000
+    n_iter: int = 50000     # Max number of iterations
+    end_t: float = 20       # Max simulation time.
 
     def __post_init__(self):
         self.exit_cfg = ConfigFarfield()

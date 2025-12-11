@@ -2,20 +2,23 @@ import numpy as np
 from datetime import datetime
 import os
 import torch
+from cprint import c_print
 
-from fvm_mesh import FVMMesh
-from sparse_utils import plot_interp
+from time_fvm.fvm_mesh import FVMMesh
+from time_fvm.sparse_utils import plot_interp
+from time_fvm.edge_process import FVMEdgeInfo
+
 
 class Saver:
-    def __init__(self, mesh: FVMMesh, save_dir=None):
+    def __init__(self, E_props: FVMEdgeInfo, save_dir=None):
         if save_dir is None:
             timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
-            self.save_dir = f'saves/{timestamp}'
+            self.save_dir = f'artefacts/saves/{timestamp}'
         else:
             self.save_dir = save_dir
-
         os.makedirs(self.save_dir, exist_ok=True)
 
+        mesh = E_props.mesh
         # Mesh property: main
         centroids = mesh.centroids  # shape = [n_cells, comp=2]
         triangles = mesh.triangles  # shape = [n_cells, comp=3]
@@ -24,12 +27,13 @@ class Saver:
         bc_edge_mask = mesh.bc_edge_mask
         bc_midpoints = mesh.midpoints[bc_edge_mask]  # shape = [n_bc_edge, comp=2]
         bc_normals = mesh.normals[bc_edge_mask]  # shape = [n_bc_edge, comp=2]
+        bc_type_str = E_props.bc_type_str           # shape = [n_bc_edge]
         mesh_props = {"triangles": triangles.cpu().numpy(), "vertices": vertices.cpu().numpy(), "centroids": centroids.cpu().numpy(),
-                      "bc_midpoints": bc_midpoints.numpy(), "bc_normals": bc_normals.numpy()}
+                      "bc_midpoints": bc_midpoints.numpy(), "bc_normals": bc_normals.numpy(), "bc_type_str": bc_type_str}
         np.savez_compressed(f'{self.save_dir}/mesh_props.npz', **mesh_props)
+        c_print(f"Saved mesh properties to '{self.save_dir}/mesh_props.npz'", color="green")
 
-
-    def save(self, t, E_props, primatives):
+    def save(self, t, E_props: FVMEdgeInfo, primatives):
         bc_edge_mask = E_props.mesh.bc_edge_mask
         # Save centroid values
         primatives = primatives  # shape = [n_cells, comp=4]
@@ -69,21 +73,18 @@ def load_step(file_path):
     return data['t'], torch.from_numpy(cell_primatives).float(), torch.from_numpy(bc_primatives).float()
 
 
-def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/saves/12-11_19-10-46'):
+def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/saves/12-11_20-42-30'):
     """
-    Main function to demonstrate loading a save folder.
-    It will first create a dummy save folder if it doesn't exist.
+    Plot out the saved mesh and time step data.
     """
     print(f"\nLoading from '{save_dir}'...")
 
     # Load mesh properties
     mesh_props_path = os.path.join(save_dir, 'mesh_props.npz')
     mesh_props = np.load(mesh_props_path)
-    print("Mesh properties keys:", list(mesh_props.keys()))
     mesh_props = dict(mesh_props)
     mesh_props = {k: torch.from_numpy(v) for k, v in mesh_props.items()}
-
-    # print("Centroids shape:", mesh_props['centroids'].shape)
+    print(f'{mesh_props.keys() = }')
 
     # Find and load time-step files
     time_files = sorted([f for f in os.listdir(save_dir) if f.startswith('t_') and f.endswith('.npz')])
@@ -91,7 +92,7 @@ def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/saves/12-11_19-10-
         print("No time-step files found.")
         return
 
-    print(f"Found {len(time_files)} time-step file(s). Loading the first one: {time_files[0]}")
+    print(f"Found {len(time_files)} time-step file(s)")
 
     # Load and process the first time step file
     # Sort time files by time value
@@ -101,7 +102,7 @@ def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/saves/12-11_19-10-
         file_path = os.path.join(save_dir, save_i)
         t, cell_primatives, bc_primatives = load_step(file_path)
 
-        print(f"Time: {save_i}")
+        print(f"Time: {t:.4g}")
         plot_interp(mesh_props['vertices'], cell_primatives.T[:2], mesh_props['triangles'], title=f't={t:.3g}')
 
 if __name__ == '__main__':

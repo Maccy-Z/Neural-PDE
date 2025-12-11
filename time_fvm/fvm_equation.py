@@ -21,6 +21,7 @@ class PhysicalSetup:
         self.E_props = E_props
         self.device = device
 
+        self.T_0 = cfg.T_0
         self.gamma = cfg.gamma
         self.mu = cfg.viscosity
         self.mu_b = cfg.visc_bulk
@@ -51,9 +52,9 @@ class PhysicalSetup:
         div_V_edge = E_props.div_V_faces.mean(dim=1)  # shape = [n_edges]
 
         # Viscosity = mu * (T/T0)^(3/2) * (T0 + S) / (T + S)
-        mu = self.mu * (T / 273)**1.5 * (273 + self.S_const) / (T + self.S_const)  # shape = [n_edges, edges=2, n_comp=1]
+        mu = self.mu * (T /  self.T_0)**1.5 * (self.T_0 + self.S_const) / (T + self.S_const)  # shape = [n_edges, edges=2, n_comp=1]
         # Bulk viscosity: Proportional to T^2
-        mu_b = self.mu_b * T ** 2 / 77824
+        mu_b = self.mu_b * T ** 2 / self.T_0 ** 2
 
         eye = mu_b * torch.eye(2, device=self.device).unsqueeze(0)
         bulk_tau = div_V_edge.view(-1, 1, 1) * eye

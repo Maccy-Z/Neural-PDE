@@ -64,7 +64,7 @@ def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
         axes = [axes]
     else:
         n_plots = values.shape[0]
-        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 4))
+        fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 6))
 
     # Create a triangulation from the vertex locations.
     triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles)

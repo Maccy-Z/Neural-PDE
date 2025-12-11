@@ -13,8 +13,6 @@ class MeshProps:
     lengthscale: float
 
 
-
-
 def extract_interor_edges(triangles):
     """
     Extract all edges from the elements of the mesh.
@@ -112,6 +110,8 @@ def gen_rand_ellipses(
 
         # Check boundary containment (strict: must be fully inside)
         if not domain_box.contains(ellipse_geo):
+            continue
+        if ellipse_geo.distance(domain_box.boundary) < min_gap:
             continue
 
         # Check gap with existing ellipses

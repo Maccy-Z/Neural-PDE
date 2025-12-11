@@ -9,7 +9,7 @@ from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pde.graph_grid.U_graph import UValues, UGraph
 from pde.pdes.PDEs import Fluid, FluidLearned, NNFunc
 from pde.utils import setup_logging, ARTEFACT_DIR
-from pde.loss import DummyLoss, MSELoss2, MSELossNorm
+from pde.loss import DummyLoss, MSELossNorm
 from pde.run.generate_graph import mesh_graph, load_graph
 from pde.run.batching import GraphDataset, GraphSample
 

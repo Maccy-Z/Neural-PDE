@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from time_fvm.fvm_equation import FVMEquation, PhysicalSetup
     from time_fvm.config_fvm import ConfigFVM
 
-from time_fvm.saving import Saver
+from time_fvm.ds_generation.saving import Saver
 
 
 class FVMCells:
@@ -67,7 +67,7 @@ class TSolver(ABC):
         self.print_i = cfg.print_i
         self.plot_t = cfg.plot_t
         self.save_t = cfg.save_t
-        self.saver = Saver(self.eq.E_props.mesh)
+        self.saver = Saver(self.eq.E_props)
 
     def _solve(self):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)

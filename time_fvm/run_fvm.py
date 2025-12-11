@@ -7,21 +7,15 @@ from time_fvm.fvm_store import EdgeBCTypes as E
 from time_fvm.fvm_store import Edge
 from time_fvm.fvm_mesh import FVMMesh
 from time_fvm.fvm_equation import FVMEquation
-from mesh_gen.meshes_fvm import gen_mesh_fvm, gen_mesh_tunnel
+from mesh_gen.meshes_fvm import gen_mesh_tunnel, gen_rand_mesh
 from time_fvm.config_fvm import ConfigFVM
 from time_fvm.sparse_utils import plot_edges
 
-def mesh_graph(cfg: ConfigFVM, new):
+def mesh_graph(cfg: ConfigFVM):
     N_comp = 4
-    if new:
-        c_print(f'Creating new mesh', "green")
-
-        mesh_stuff = gen_mesh_tunnel(areas=[cfg.min_A, cfg.max_A], cell_lnscale=cfg.lnscale)
-        Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
-        pickle.dump(mesh_stuff, open("mesh_stuff.pkl", "wb"))
-    else:
-        mesh_stuff = pickle.load(open("mesh_stuff.pkl", "rb"))
-        Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
+    c_print(f'Creating new mesh', "green")
+    mesh_stuff = gen_rand_mesh(areas=[cfg.min_A, cfg.max_A], cell_lnscale=cfg.lnscale)
+    Xs, tri_idx, (int_edgs, bound_edgs), edge_tag = mesh_stuff
 
     Xs = torch.from_numpy(Xs).float()
     tri_idx = torch.from_numpy(tri_idx).int()
@@ -41,10 +35,6 @@ def mesh_graph(cfg: ConfigFVM, new):
     for bc_idx, (e_tag, e_vert) in enumerate(zip(edge_tag, bound_edgs, strict=True)):
         if e_tag == "NavierWall":
             bc_tags[bc_idx] = Edge([E.Dirich, E.Dirich, E.Neuman, E.Neuman], [0., 0, None, None], [None, None, 0, 0], tag=e_tag)
-        elif e_tag == "Side":
-            # bc_tags[bc_idx] = Edge([E.Neuman, E.Neuman, E.Dirich, E.Dirich], [None, None, 0.5, 100], [0, 0, None, None])
-            bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None], tag=e_tag)
-
         elif e_tag == "Left":
             X0, X1 = Xs[e_vert]
             x0, y0 = X0
@@ -53,7 +43,6 @@ def mesh_graph(cfg: ConfigFVM, new):
             T = 100 #if (y0+y1)/2 > 0.7 else 250
             # bc_tags[bc_idx] = Edge([E.Neuman, E.Dirich, E.Dirich, E.Dirich], [None, 0, 1.01, T], [0, None, None, None])
             bc_tags[bc_idx] = Edge([E.Inlet, E.Inlet, E.Inlet, E.Inlet], [None, None, None, None], [None, None, None, None], tag=e_tag)
-
         elif e_tag == "Right":
             bc_tags[bc_idx] = Edge([E.Farfield, E.Farfield, E.Farfield, E.Farfield], [None, None, None, None], [None, None, None, None], tag=e_tag)
         else:
@@ -83,15 +72,13 @@ def init_conds(centroids, cfg: ConfigFVM, load_state, vx=5., vy=0., rho=1., T=10
         # Convert to momentum
         us_init[:, 0] = us_init[:, 0] * us_init[:, 2]
         us_init[:, 1] = us_init[:, 1] * us_init[:, 2]
-
-
     return us_init
 
 
 def main():
     import pickle
     torch.manual_seed(0)
-    new = False
+    new_mesh = True
     load_state = False
 
     cfg = ConfigFVM()
@@ -107,17 +94,18 @@ def main():
     cfg.inlet_cfg.rho_nat = rho_nat
     cfg.inlet_cfg.V_x_nat = V_x_nat
 
-
-    prob_definition = mesh_graph(cfg, new)
-    Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp = prob_definition
-
-    if new:
-        c_print(f'Generating mesh...', "green")
+    if new_mesh:
+        c_print(f'Generating new mesh...', "green")
+        prob_definition = mesh_graph(cfg)
+        Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp = prob_definition
         mesh = FVMMesh(Xs, tri_idx, all_edgs, bc_edge_mask, device="cuda")
-        pickle.dump(mesh, open("mesh.pkl", "wb"))
+        pickle.dump({'mesh': mesh, "bc_tags": bc_tags, "N_comp": N_comp}, open("./artefacts/mesh.pkl", "wb"))
     else:
         c_print(f'Loading mesh', "green")
-        mesh = pickle.load(open("mesh.pkl", "rb"))
+        save_dict = pickle.load(open("./artefactss/mesh.pkl", "rb"))
+        mesh: FVMMesh = save_dict['mesh']
+        bc_tags = save_dict['bc_tags']
+        N_comp = save_dict['N_comp']
 
     print(f'{mesh.areas.min() = }')
 

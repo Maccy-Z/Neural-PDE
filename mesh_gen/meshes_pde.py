@@ -50,9 +50,6 @@ def gen_mesh_random():
               Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
               Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
               Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
-
-              # Ellipse(center=(0.7, 0.75), semi_major_axis=0.2, eccentricity=0.75, angle=np.pi/3,
-              #         lengthscale=lengthscale, hole=True, dist_req=True, name="circle"),
               ]
 
     _, rand_ellipses = gen_rand_ellipses(3, (xmax-xmin, ymax-ymin),

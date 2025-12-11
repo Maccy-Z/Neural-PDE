@@ -2,10 +2,10 @@ import math
 from cprint import c_print
 import torch
 
-from fvm_mesh import FVMMesh
+from time_fvm.fvm_mesh import FVMMesh
 from time_fvm.fvm_store import Edge, EdgeBCTypes
-from config_fvm import ConfigFVM
-from sparse_utils import lift_sparse_matrix, combine_edge_operators, to_csr
+from time_fvm.config_fvm import ConfigFVM
+from time_fvm.sparse_utils import lift_sparse_matrix, combine_edge_operators, to_csr
 from time_fvm.edge_boundary import BoundarySetter
 
 
@@ -113,7 +113,6 @@ class FVMEdgeInfo:
     dirich_mask: torch.Tensor  # shape = (n_edges, n_comp)
     neumann_mask: torch.Tensor  # shape = (n_edges, n_comp)
     edge_to_tri_bc: torch.Tensor  # shape = (n_edges_bc)
-    exit_cell2edge: torch.Tensor  # shape = (n_cells, 2)  # Exit edge for each cell
     bc_edge_side: torch.Tensor  # shape = (n_edges_bc, 2)  # Side of the edge for each boundary edge
     boundary_setter: BoundarySetter
 
@@ -133,6 +132,8 @@ class FVMEdgeInfo:
     Q_faces: torch.Tensor       # shape = (n_edges, 2, 1)  Face energy values
     phi: torch.Tensor  # shape = (n_edges, 1)  Face values = V_faces dot normals. After averaging over faces.
     cell_grads: torch.Tensor = None # shape = (n_cells, 2, n_comp)  Gradient at cells. Used for boundary setter as None.
+    bc_type_str: list[str]         # BC types for each bc edge. Used for saving mesh.
+
 
     def __init__(self, cfg: ConfigFVM, mesh: FVMMesh, n_comp, bc_tags, device="cpu"):
         self.device = device
@@ -193,7 +194,6 @@ class FVMEdgeInfo:
     def clear_temp(self):
         del self.edge_dists_bc, self.cell_dist_proj, self.edge_to_tri_main, self.dirich_val, self.neumann_val, self.cell_disps
         del self.dirich_mask, self.neumann_mask , self.bc_edge_mask
-        # del self.dUf_dUc
 
         torch.cuda.empty_cache()
         c_print(f'Deleted temp variables', color="magenta")
@@ -202,6 +202,7 @@ class FVMEdgeInfo:
     def _init_bc(self, bc_tags: dict[int, Edge]):
         self.n_edges_bc = self.bc_edge_mask.sum().item()
 
+        bc_type_str = []
         dirich_mask, neumann_mask = [], []
         dirich_val, neumann_val = [], []
         farfield_mask, inlet_mask = [], []
@@ -214,6 +215,9 @@ class FVMEdgeInfo:
             farfield_mask.append(e_type.farfield())
             inlet_mask.append(e_type.inlet())
 
+            bc_type_str.append(e_type.tag)
+
+        self.bc_type_str = bc_type_str
         self.dirich_mask, self.neumann_mask = torch.tensor(dirich_mask, device=self.device), torch.tensor(neumann_mask, device=self.device)
         dirich_val, neumann_val = torch.tensor(dirich_val, dtype=torch.float32, device=self.device), torch.tensor(neumann_val, dtype=torch.float32, device=self.device)
         self.dirich_val = dirich_val[self.dirich_mask]
