@@ -29,7 +29,7 @@ class Saver:
         np.savez_compressed(f'{self.save_dir}/mesh_props.npz', **mesh_props)
 
 
-    def save(self, step_num, t, E_props, primatives):
+    def save(self, t, E_props, primatives):
         bc_edge_mask = E_props.mesh.bc_edge_mask
         # Save centroid values
         primatives = primatives  # shape = [n_cells, comp=4]
@@ -69,7 +69,7 @@ def load_step(file_path):
     return data['t'], torch.from_numpy(cell_primatives).float(), torch.from_numpy(bc_primatives).float()
 
 
-def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/saves/08-04_01-01-27'):
+def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/saves/12-11_19-10-46'):
     """
     Main function to demonstrate loading a save folder.
     It will first create a dummy save folder if it doesn't exist.

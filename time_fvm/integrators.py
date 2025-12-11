@@ -3,7 +3,7 @@ import torch
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from time_fvm import FVMEquation
-
+from time_fvm.config_fvm import ConfigFVM
 from t_solvers import TSolver, FVMCells
 
 
@@ -57,8 +57,8 @@ class Adaptive:
 
 
 class RK3_SSP4(TSolver, Adaptive):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
         self._adapt_init(order=4, atol=1e-1, rtol=1e-1, mtol=5e-7, alphas=(0.8, 0.995), dt_min=self.dt)
@@ -92,8 +92,8 @@ class Adams3PC(TSolver, Adaptive):
     """ Adams–Bashforth–Moulton predictor corrector 3 solver
         Non-Markov solver.
     """
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
         self.prev_dUdt = deque(maxlen=2)
@@ -152,8 +152,8 @@ class Adams4PC(TSolver, Adaptive):
     """ Adams–Bashforth–Moulton predictor corrector 4 solver
         Non-Markov solver.
     """
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
         self.prev_dUdt = deque(maxlen=2)
@@ -297,16 +297,10 @@ class Butcher_Tables:
 
 
 class Butcher_adapt(TSolver, Adaptive):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, name):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, name, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         """
         Initializes the solver with a Butcher tableau.
-
-        Args:
-            A (torch.Tensor): 2D tensor of stage coefficients with shape (s, s),
-                              where s is the number of stages.
-            b (torch.Tensor): 1D tensor of weights for combining stages.
-            c (torch.Tensor): 1D tensor of time coefficients for each stage.
         """
 
         tables = Butcher_Tables(name, cells.device)
@@ -351,8 +345,8 @@ class Butcher_adapt(TSolver, Adaptive):
 
 
 class Euler(TSolver):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq = equation
 
     def _step(self, t):
@@ -365,8 +359,8 @@ class Euler(TSolver):
 
 
 class ExplMidpoint(TSolver):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
     def _step(self, t):
@@ -388,8 +382,8 @@ class ExplMidpoint(TSolver):
 
 
 class Heuns(TSolver):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
     def _step(self, t):
@@ -413,8 +407,8 @@ class Heuns(TSolver):
 
 
 class RK3_SSP(TSolver):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
     def _step(self, t):
@@ -438,8 +432,8 @@ class RK3_SSP(TSolver):
 
 
 class RK2_SSP(TSolver):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
     def _step(self, t):
@@ -457,8 +451,8 @@ class RK2_SSP(TSolver):
 
 
 class RK2_SSP3(TSolver):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
     def _step(self, t):
@@ -480,8 +474,8 @@ class RK2_SSP3(TSolver):
 
 
 class RK2_SSP4(TSolver):
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
     def _step(self, t):
@@ -506,13 +500,12 @@ class RK2_SSP4(TSolver):
         return U_i_1
 
 
-
 class Leapfrog2(TSolver):
     """ Leapfrog 2 solver
         Non-Markov solver.
     """
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
         self.U_tm1 = None
@@ -541,8 +534,8 @@ class LeapfrogAss(TSolver):
     """ Asselin leapfrog 1 solver
         Non-Markov solver.
     """
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
         self.U_hat_tm1 = None
@@ -574,8 +567,8 @@ class Magazenkov(TSolver):
         Non-Markov solver.
         Note: Takes two half-steps
     """
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
         self.dt = self.dt / 2 # Half step
 
@@ -586,9 +579,9 @@ class Magazenkov(TSolver):
     # def _init_states(self, t):
     #     prim, _ = self.cells.get_values()
     #     dUdt_0 = self.eq.forward(prim, t)
-
-        # for _ in range(1):
-        #     self.prev_dUdt.append(dUdt_0)
+    #
+    #     for _ in range(1):
+    #         self.prev_dUdt.append(dUdt_0)
 
     def _step(self, t):
         """
@@ -617,8 +610,8 @@ class Adams2(TSolver, Adaptive):
     """ Adams Bashforth 2 solver
         Non-Markov solver.
     """
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         self.eq: FVMEquation = equation
 
         self.prev_dUdt = deque(maxlen=2)
@@ -655,10 +648,9 @@ class Adams2(TSolver, Adaptive):
         return U_1_high
 
 
-
 class Butcher(TSolver):
-    def __init__(self, name, cells: FVMCells, dt: float, n_steps: int, equation):  # , A, b, c):
-        super().__init__(cells, dt, n_steps, eq=equation)
+    def __init__(self, name, cells: FVMCells, dt: float, n_steps: int, equation, cfg: ConfigFVM):
+        super().__init__(cells, dt, n_steps, eq=equation, cfg=cfg)
         """
         Initializes the solver with a Butcher tableau.
 

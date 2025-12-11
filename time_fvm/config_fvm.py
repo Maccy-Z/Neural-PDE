@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-import torch
 
 @dataclass
 class ConfigFarfield:
@@ -28,10 +27,8 @@ class ConfigInlet:
 
 @dataclass
 class ConfigFVM:
-
-    # solver parameters
+    # Temporal solver parameters
     dt: float = 1e-4
-    n_iter: int = 50000
 
     # mesh parameters
     min_A: float = 0.25e-3
@@ -52,8 +49,15 @@ class ConfigFVM:
     lim_p: int = 4          # Order of limiter (1 for BJ)
     lim_K: int = 0.1
 
-    # Exit parameters
+    # BC parameters
     exit_cfg: ConfigFarfield = None
+    inlet_cfg: ConfigInlet = None
+
+    # Save configuration
+    plot_t: float = 0.1   # Time interval between plots
+    save_t: float = 0.1    # Time interval between saves
+    print_i: int = 500   # Iterations between print statements
+    n_iter: int = 50000
 
     def __post_init__(self):
         self.exit_cfg = ConfigFarfield()

@@ -1,6 +1,6 @@
 from enum import Flag, auto
 from dataclasses import dataclass
-import torch
+
 
 class EdgeBCTypes(Flag):
     """ Point types for time dependent problems. """

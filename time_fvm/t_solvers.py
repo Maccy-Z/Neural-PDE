@@ -8,6 +8,7 @@ import time
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from time_fvm.fvm_equation import FVMEquation, PhysicalSetup
+    from time_fvm.config_fvm import ConfigFVM
 
 from time_fvm.saving import Saver
 
@@ -25,28 +26,16 @@ class FVMCells:
             assert init_val.shape == (n_cells, n_component), f'Incorrect us init shape {init_val.shape = }'
             self.state = init_val.to(device)
 
-        # self.C_v_inv = 1 / cfg.C_v
-
 
     def update_cells(self, state_new):
         """ Update cell values """
-        #assert not torch.any(torch.isnan(state_new)), "Error in state_new"
         self.state =  state_new
-
 
     def get_values(self):
         return self.phys_setup.state_to_primative(self.state)
 
     def convert_state_to_value(self, state):
         return self.phys_setup.state_to_primative(state)
-
-        # momentum, density, Q = state[:, [0, 1]], state[:,[2]], state[:,[3]]
-        #
-        # V = momentum / density
-        # T = self.C_v_inv * (Q / density - 0.5 * V.norm(dim=1, keepdim=True) ** 2)
-        # primatives = torch.cat([V, density, T], dim=-1)
-        #
-        # return primatives, state
 
     def save(self, name="state.pt"):
         torch.save(self.state, name)
@@ -63,7 +52,7 @@ class TSolver(ABC):
     cells: FVMCells
     eq: FVMEquation
 
-    def __init__(self, cells: FVMCells, dt: float, n_steps: int, eq=None):
+    def __init__(self, cells: FVMCells, dt: float, n_steps: int, eq, cfg: ConfigFVM):
         """
         Initialize the time-stepping solver.
 
@@ -75,21 +64,18 @@ class TSolver(ABC):
         self.n_steps = n_steps
         self.cells = cells
         self.eq: FVMEquation = eq
-        self.print_i = 200
-
+        self.print_i = cfg.print_i
+        self.plot_t = cfg.plot_t
+        self.save_t = cfg.save_t
         self.saver = Saver(self.eq.E_props.mesh)
 
     def _solve(self):
-        E_props = self.eq.E_props
-
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
-        plot_t = 0.05
-        next_plot_t = plot_t
-
-        dts = []
+        next_plot_t = self.plot_t
+        next_save_t = self.save_t
 
         st_time = time.time()
-        t = 0.
+        t, dts = 0., []
         for i in range(self.n_steps):
             t += self.dt
             self._solve_step(t)
@@ -103,7 +89,7 @@ class TSolver(ABC):
                 st_time = time.time()
 
             if t >= next_plot_t:
-                next_plot_t = t + plot_t
+                next_plot_t = t + self.plot_t
                 c_print(f'{t = :.5g}', color="bright_yellow")
 
                 primatives = self.cells.get_values()[0]
@@ -126,12 +112,16 @@ class TSolver(ABC):
                 # self.eq.plot_cells(primatives[:, 0], title=f'Vx at t={t:.4g}', Xlims=Xlims, show_index=True)
                 # self.eq.plot_flux(torch.ones_like(E_props.rho_faces[:, 0, 0]), title=f"P t={t:.4g}", Xlims=Xlims, show_index=True)
 
-                self.saver.save(i, t, E_props, primatives)
 
                 if torch.any(torch.isnan(primatives)):
                     print("Nan in primatives")
                     exit(9)
 
+            if t >= next_save_t:
+                next_save_t = t + self.save_t
+                c_print(f'Saving at t={t:.5g}', color="bright_cyan")
+                primatives = self.cells.get_values()[0]
+                self.saver.save(t, self.eq.E_props, primatives)
 
         dts = torch.stack(dts).cpu()
         kernel_size = 10
@@ -144,6 +134,7 @@ class TSolver(ABC):
 
 
     def _save_meshio(self, primatives):
+        """ Save as .vtu file for paraview """
         import meshio
         import glob, os
 
@@ -239,7 +230,6 @@ class TSolver(ABC):
 
         print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
         prof.export_chrome_trace("trace.json")
-
 
 
     @abstractmethod

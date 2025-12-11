@@ -181,7 +181,6 @@ class Heating(FVMEdgeFunc):
         self.kappa = cfg.thermal_cond
         self.device = device
 
-    #@torch.compile()
     def edge_fluxes(self, fluxes=None):
         E_props = self.E_props
         normals = E_props.normals       # shape = [n_edges, 2]
@@ -305,7 +304,7 @@ class FVMEquation:
         self.KT_diff = KTDiffusion(cfg.v_factor, self.phy_setup, E_props, device=device)
 
         # self.t_solver = Adams4PC(self.cells, cfg.dt, cfg.n_iter, self)
-        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP4")
+        self.t_solver = Butcher_adapt(self.cells, cfg.dt, cfg.n_iter, self, name="RK3_SSP4", cfg=cfg)
 
         E_props.clear_temp()
         c_print("Done FVMEquation", color="bright_magenta")
@@ -335,19 +334,6 @@ class FVMEquation:
         # Compute divergence
         divergence = self._flux_to_div(fluxes)
 
-        # For plotting
-        # self.divergence = divergence
-        # self.pressure_flux = self.P_force.edge_fluxes()
-        # self.pressure_div = self._flux_to_div(self.pressure_flux)
-        # self.advect_flux = self.U_advect.edge_fluxes()
-        # self.advect_div = self._flux_to_div(self.advect_flux)
-        # self.kt_flux = self.KT_diff.edge_fluxes(dt)
-        # self.kt_div = self._flux_to_div(self.kt_flux)
-        # self.divergence = divergence
-        # self.heat_flux = self.Heat.edge_fluxes()
-        # self.heat_div = self._flux_to_div(self.heat_flux)
-        # self.visc_flux = self.U_visc.edge_fluxes()
-        # self.visc_div = self._flux_to_div(self.visc_flux)
 
         return divergence
 
