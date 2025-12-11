@@ -1,6 +1,6 @@
 import  numpy as np
 
-from mesh_gen.generate_mesh import MeshProps, create_mesh, extract_mesh_data
+from mesh_gen.generate_mesh import MeshProps, create_mesh
 from mesh_gen.geometries import Line, Ellipse, Nozzle, Circle
 
 def gen_mesh_fvm(areas, cell_lnscale=2):
@@ -27,8 +27,8 @@ def gen_mesh_fvm(areas, cell_lnscale=2):
 
     ]
 
-    mesh, marker_tags = create_mesh(coords, mesh_props)
-    _point_props, _markers, _edges = extract_mesh_data(mesh)
+    mesh_specs, marker_tags = create_mesh(coords, mesh_props)
+    _point_props, _markers, _edges = mesh_specs
 
     points, triangles = _point_props
     _, f_markers = _markers
@@ -65,8 +65,8 @@ def gen_mesh_tunnel(areas, cell_lnscale=2):
 
     ]
 
-    mesh, marker_tags = create_mesh(coords, mesh_props, min_angle=30)
-    _point_props, _markers, _edges = extract_mesh_data(mesh)
+    mesh_specs, marker_tags = create_mesh(coords, mesh_props, min_angle=30)
+    _point_props, _markers, _edges = mesh_specs
 
     points, triangles = _point_props
     _, f_markers = _markers
