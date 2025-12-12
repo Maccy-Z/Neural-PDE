@@ -57,7 +57,8 @@ def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
     values = values.cpu().numpy()
     triangles = triangles.cpu().numpy()
 
-    # If values is 1D, expand to a batch of one.
+    # If values is 1D, expand to a batch of one
+    values = values.squeeze()
     if len(values.shape) == 1:
         values = values[None, :]
         fig, axes = plt.subplots(1, 1, figsize=(12, 9))

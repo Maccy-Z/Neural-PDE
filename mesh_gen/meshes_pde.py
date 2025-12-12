@@ -34,6 +34,7 @@ def gen_points_full():
     p_tags = [marker_tags[int(i)] for i in p_markers]
     return points, triangles, (int_edges, bound_edges), p_tags
 
+
 def gen_mesh_random():
     min_area = 0.5e-3
     max_area = 2e-3

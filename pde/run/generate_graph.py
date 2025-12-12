@@ -7,7 +7,7 @@ from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph, setup_graph
 from pde.graph_grid.graph_utils import plot_edges
-from mesh_gen.generate_mesh import gen_points_full, gen_mesh_random
+from mesh_gen.meshes_pde import gen_points_full, gen_mesh_random
 from pde.config import Config
 
 
@@ -149,7 +149,7 @@ def mesh_heat(cfg, max_degree=2, grad_neigh=25):
 def mesh_graph(cfg, max_degree=2, grad_neigh=25):
     N_comp = 3
     # Xs, triangles, (int_edges, bc_edges), p_tags = gen_points_full()
-    Xs, triangles, (int_edges, bc_edges), p_tags = gen_mesh_random()
+    Xs, triangles, (_, bc_edges), p_tags = gen_mesh_random()
 
     Xs = torch.from_numpy(Xs).float()
     triangles = torch.from_numpy(triangles).int()
@@ -162,8 +162,6 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
 
     # Process boundary points
     normals = boundary_normals(Xs, triangles, bc_edges)
-    bc_edges = torch.from_numpy(bc_edges)
-    bc_points = torch.unique(bc_edges.flatten(), dim=0)
 
     Xs_all = {}
     for i, (X, tag) in enumerate(zip(Xs, p_tags)):
@@ -173,8 +171,6 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
 
         if tag == "Normal":
             Xs_all[i] = Point(PT.Normal, X, value=value)
-            assert i not in bc_points, "Normal point is also a boundary point"
-            continue
 
         # Boundary conditions
         n_hat = normals[i].tolist()
@@ -195,7 +191,6 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
                         # Deriv(comp=[0], orders=[(1, 0)], value=0, weights=[1]),
                         # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
                         wall_deriv,
-
                         # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
                         Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
 
@@ -228,7 +223,7 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
         else:
             raise ValueError(f"Unknown point tag {tag}")
 
-    c_print(f'n_points: {len(Xs_all)}, n_bc: {len(bc_edges)}', color="bright_green")
+    c_print(f'n_points: {len(Xs_all)}', color="bright_green")
     # U_graph = UGraph(Xs_all, N_comp=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
     U_graph, Us_values = setup_graph(Xs_all, N_comp=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
     # with open("save_u_graph.pth", "wb") as f:

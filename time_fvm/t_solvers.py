@@ -71,7 +71,7 @@ class TSolver(ABC):
 
     def _solve(self):
         self.dt = torch.tensor(self.dt, device=self.cells.state.device)
-        next_plot_t = self.plot_t
+        next_plot_t = 0 # self.plot_t
         next_save_t = self.save_t
 
         st_time = time.time()

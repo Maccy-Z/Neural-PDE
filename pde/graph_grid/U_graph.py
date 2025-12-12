@@ -112,14 +112,14 @@ class UGraph:
             if p.derivatives is not None:
                 assert p.n_deriv == self.N_comp, "Number of BC components must match number of components."
 
-    def __init__(self, setup_dict: dict[int, Point], N_comp, grad_neigh, max_degree:int = 2, tri=None, device="cpu"):
+    def __init__(self, setup_dict: dict[int, Point], N_comp, grad_neigh, tri, max_degree:int = 2,  device="cpu"):
         """ Initialize the graph with a set of points.
         Args:
             setup_dict: dict[node_id, Point]. Dictionary of each type of point
             N_comp: Number of components in U
             grad_neigh: Number of neighbors to use for gradient calculations
             max_degree: Maximum derivative degree to compute
-            tri: Triangle mesh for the domain, for plotting
+            tri: Triangle mesh for the domain, for generating stencils
             device: Device to use
          """
         self.tri = tri
@@ -279,7 +279,7 @@ class UGraph:
         Us, Xs = Us_values.Us, Us_values.Xs
         plot_points(Xs, Us.T, Xlims=Xlims, show_index=show_index, title=title)
 
-def setup_graph(setup_dict: dict[int, Point], N_comp, grad_neigh, max_degree:int = 2, tri=None, device="cpu") -> tuple[UGraph, UValues]:
+def setup_graph(setup_dict: dict[int, Point], N_comp, grad_neigh, tri, max_degree:int = 2, device="cpu") -> tuple[UGraph, UValues]:
     """ Create UGraph and UValues. """
     U_graph = UGraph(setup_dict, N_comp, grad_neigh, max_degree=max_degree, tri=tri, device=device)
 

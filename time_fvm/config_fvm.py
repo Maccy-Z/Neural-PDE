@@ -37,8 +37,8 @@ class ConfigFVM:
 
     # Physical parameters
     T_0: float = 100        # Reference temperature
-    viscosity: float = 200e-5     # At room temp
-    visc_bulk: float = 200e-5
+    viscosity: float = 50e-5     # At room temp
+    visc_bulk: float = 50e-5
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant
 
@@ -55,7 +55,7 @@ class ConfigFVM:
     inlet_cfg: ConfigInlet = None
 
     # Save configuration
-    plot_t: float = 0.1   # Time interval between plots
+    plot_t: float = 0.2   # Time interval between plots
     save_t: float = 0.1    # Time interval between saves
     print_i: int = 500   # Iterations between print statements
     n_iter: int = 50000     # Max number of iterations

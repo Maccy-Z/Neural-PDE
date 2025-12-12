@@ -86,7 +86,7 @@ def main():
     # Useful to set some parameters here
     T_nat = 100
     rho_nat = 1
-    V_x_nat = 6.5
+    V_x_nat = cfg.inlet_cfg.V_x_nat
     cfg.exit_cfg.T_far = T_nat
     cfg.exit_cfg.rho_far = rho_nat
     cfg.exit_cfg.v_far = V_x_nat
