@@ -17,7 +17,7 @@ class CUDSSSolver:
         self.col_indices = torch.tensor([], device='cuda', dtype=torch.int32)
 
         self.options = nvmath_advanced.DirectSolverOptions(logger=logging.Logger("CUDSSSolver"),
-                                                           multithreading_lib="/home/maccyz/miniforge3/envs/test/lib/python3.13/site-packages/nvidia/cu12/lib/libcudss_mtlayer_gomp.so.0")
+                                                           multithreading_lib="/home/maccyz/miniforge3/envs/neural_pde/lib/python3.13/site-packages/nvidia/cu12/lib/libcudss_mtlayer_gomp.so.0")
         self.ir_n_steps = cfg['ir_n_steps']
 
         self.n_uses = 0 # Replan every so often. Matching step depends on values.

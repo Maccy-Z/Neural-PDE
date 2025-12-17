@@ -171,6 +171,7 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
 
         if tag == "Normal":
             Xs_all[i] = Point(PT.Normal, X, value=value)
+            continue
 
         # Boundary conditions
         n_hat = normals[i].tolist()

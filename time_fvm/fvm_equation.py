@@ -2,7 +2,7 @@ import torch
 from abc import ABC
 from cprint import c_print
 
-from sparse_utils import plot_points, plot_edges, plot_interp
+from sparse_utils import plot_points, plot_edges, plot_interp_cell
 from fvm_mesh import FVMMesh
 from edge_process import FVMEdgeInfo
 from t_solvers import FVMCells
@@ -385,7 +385,7 @@ class FVMEquation:
         plot_points(self.mesh.centroids.cpu(), values.T, show_index=show_index, title=title, lims=lims, Xlims=Xlims)
 
     def plot_interp(self, values, title="Cell Values", Xlims=None, resolution=2000):
-        plot_interp(self.mesh.vertices, values.T, self.mesh.triangles, title=title, Xlims=Xlims, resolution=resolution)
+        plot_interp_cell(self.mesh.vertices, values.T, self.mesh.triangles, title=title, Xlims=Xlims)
 
     def pretty_plot(self, primatives, Xlims=None, title=None):
         Vx, Vy, rho, T = primatives[:, 0], primatives[:, 1], primatives[:, 2], primatives[:, 3]
@@ -399,6 +399,6 @@ class FVMEquation:
         plot_vals = torch.stack([P, M_num, self.divergence[:, 3] ], dim=0)
 
         title = [f"Pressure: {title}", f"Mach number: {title}", f'Heating: {title}']
-        plot_interp(self.mesh.vertices, plot_vals, self.mesh.triangles, title=title, Xlims=Xlims)
+        plot_interp_cell(self.mesh.vertices, plot_vals, self.mesh.triangles, title=title, Xlims=Xlims)
 
 

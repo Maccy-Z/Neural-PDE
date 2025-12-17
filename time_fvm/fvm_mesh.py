@@ -47,7 +47,11 @@ class FVMMesh:
     n_cells: int
     n_edges: int
     n_bc_edge: int
-
+    # Local only for saving / plotting
+    edges: torch.Tensor  # shape = (n_edges, 2)
+    vertices: torch.Tensor  # shape = (n_vertices, 2)
+    triangles: torch.Tensor  # shape = (n_cells, 3)
+    # Used for FVM calculations
     bc_edge_mask: torch.Tensor  # shape = (n_edges)
     areas: torch.Tensor  # shape = (n_cells)
     normals: torch.Tensor  # shape = (n_edges, 2)

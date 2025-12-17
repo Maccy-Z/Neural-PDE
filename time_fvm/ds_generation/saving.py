@@ -5,7 +5,7 @@ import torch
 from cprint import c_print
 
 from time_fvm.fvm_mesh import FVMMesh
-from time_fvm.sparse_utils import plot_interp
+from time_fvm.sparse_utils import plot_interp_cell
 from time_fvm.edge_process import FVMEdgeInfo
 
 
@@ -18,18 +18,21 @@ class Saver:
             self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
 
+        # Save mesh properties
         mesh = E_props.mesh
         # Mesh property: main
-        centroids = mesh.centroids  # shape = [n_cells, comp=2]
-        triangles = mesh.triangles  # shape = [n_cells, comp=3]
-        vertices = mesh.vertices
+        centroids = mesh.centroids.cpu().numpy()  # shape = [n_cells, 2]
+        triangles = mesh.triangles.cpu().numpy()  # shape = [n_cells, 3]
+        vertices = mesh.vertices.cpu().numpy()    # shape = [n_vertices, 2]
+        edges = mesh.edges.cpu().numpy()          # shape = [n_edges, 2]
         # Mesh property: BC edges
-        bc_edge_mask = mesh.bc_edge_mask
-        bc_midpoints = mesh.midpoints[bc_edge_mask]  # shape = [n_bc_edge, comp=2]
-        bc_normals = mesh.normals[bc_edge_mask]  # shape = [n_bc_edge, comp=2]
-        bc_type_str = E_props.bc_type_str           # shape = [n_bc_edge]
-        mesh_props = {"triangles": triangles.cpu().numpy(), "vertices": vertices.cpu().numpy(), "centroids": centroids.cpu().numpy(),
-                      "bc_midpoints": bc_midpoints.numpy(), "bc_normals": bc_normals.numpy(), "bc_type_str": bc_type_str}
+        bc_edge_mask = mesh.bc_edge_mask.numpy()                # shape = [n_edges]
+        bc_midpoints = mesh.midpoints[bc_edge_mask].numpy()     # shape = [n_bc_edge, 2]
+        bc_normals = mesh.normals[bc_edge_mask].numpy()         # shape = [n_bc_edge, 2]
+        bc_type_str = E_props.bc_type_str                       # shape = [n_bc_edge]
+        mesh_props = {"triangles": triangles, "vertices": vertices, "centroids": centroids, "edges": edges,
+                      "bc_midpoints": bc_midpoints, "bc_normals": bc_normals,
+                      "bc_edge_masK": bc_edge_mask, "bc_type_str": bc_type_str}
         np.savez_compressed(f'{self.save_dir}/mesh_props.npz', **mesh_props)
         c_print(f"Saved mesh properties to '{self.save_dir}/mesh_props.npz'", color="green")
 
@@ -103,7 +106,7 @@ def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/saves/12-11_20-42-
         t, cell_primatives, bc_primatives = load_step(file_path)
 
         print(f"Time: {t:.4g}")
-        plot_interp(mesh_props['vertices'], cell_primatives.T[:2], mesh_props['triangles'], title=f't={t:.3g}')
+        plot_interp_cell(mesh_props['vertices'], cell_primatives.T[:2], mesh_props['triangles'], title=f't={t:.3g}')
 
 if __name__ == '__main__':
     main()

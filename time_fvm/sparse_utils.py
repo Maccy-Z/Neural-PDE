@@ -42,15 +42,15 @@ def plot_points(Xs, values, lims=None, title="", show_index=False, Xlims=None):
     plt.show()
 
 
-def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
+def plot_interp_cell(Xs, values, triangles, Xlims=None, title="", edgecolors="none"):
     """
     Xs: Tensor of vertex coordinates (N x 2)
     values: Tensor of face-based values.
             If values is 1D, it's assumed to be defined on the triangulation faces.
-            If 2D, each row is treated as a separate batch.
-    lims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
+            If 2D, each row is treated as a separate batch. shape = (B, M)
+    triangles: Tensor of triangle vertex indices (M x 3).
+    Xlims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
     title: Plot title.
-    resolution: (Unused here; kept for interface consistency)
     """
     # Convert to numpy arrays.
     Xs = Xs.cpu().numpy()
@@ -97,14 +97,85 @@ def plot_interp(Xs, values, triangles, Xlims=None, title="", resolution=1000):
     # Loop over each batch and plot only the triangles inside the region.
     for i, ax in enumerate(axes):
         ax.set_title(f"{title[i]}")
-
         # Filter the face-based values for the triangles inside the region.
         new_facecolors = values[i][in_region]
 
         # Plot using the new triangulation and corresponding facecolors.
-        tc = ax.tripcolor(new_triang, facecolors=new_facecolors, edgecolors='none',
+        tc = ax.tripcolor(new_triang, facecolors=new_facecolors, edgecolors=edgecolors,
                           cmap='viridis', shading='flat')
         fig.colorbar(tc, ax=ax)
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+        ax.set_aspect('equal', adjustable='box')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_interp_vertex(Xs, values, triangles=None, Xlims=None, title="", edgecolors="none"):
+    """
+    Xs:     shape = [n_points, 2] Tensor of vertex coordinates
+    values: shape = [n_plots, n_points]. Tensor of face-based values.
+            If values is 1D, it's assumed to be defined on the triangulation faces.
+            If 2D, each row is treated as a separate batch.
+    Xlims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
+    title: Plot title.
+    """
+
+    # Convert to numpy arrays.
+    Xs = Xs.cpu().numpy()
+    values = values.cpu().numpy()
+
+    # If values is 1D, expand to a batch of one.
+    if len(values.shape) == 1:
+        values = values[None, :]
+        fig, axes = plt.subplots(1, 1, figsize=(6, 4))
+        axes = [axes]
+    else:
+        n_plots, n_points = values.shape
+        if n_plots > n_points:
+            print("Warning ")
+            raise ValueError(f"Number of plots ({n_plots}) exceeds number of points ({n_points}).")
+
+        fig, axes = plt.subplots(n_plots, 1, figsize=(6, n_plots * 4))
+        if n_plots == 1:
+            axes = [axes]
+
+    # Make title into list[str] for each plot.
+    if isinstance(title, str):
+        title = [title] * len(axes)
+
+    # Determine plot limits.
+    if Xlims is not None:
+        xlim, ylim = Xlims
+    else:
+        xlim = (Xs[:, 0].min(), Xs[:, 0].max())
+        ylim = (Xs[:, 1].min(), Xs[:, 1].max())
+
+
+    triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles)
+    # Filter out triangles that are outside the specified region.
+    tri_mask = []
+    for tri_indices in triang.triangles:
+        x_vert, y_vert = Xs[tri_indices, 0], Xs[tri_indices, 1]
+        if np.all((x_vert[0] >= xlim[0]) & (x_vert[0] <= xlim[1]) &
+                  (y_vert[1] >= ylim[0]) & (y_vert[1] <= ylim[1])):
+            tri_mask.append(True)
+        else:
+            tri_mask.append(False)
+    tri_mask = np.array(tri_mask)
+    vert_idx = np.unique(triang.triangles[tri_mask])
+    vertex_mask = np.zeros(Xs.shape[0], dtype=bool)
+    vertex_mask[vert_idx] = True
+    triang.set_mask(~tri_mask)
+
+    # Loop over each batch and plot only the triangles inside the region.
+    for i, ax in enumerate(axes):
+        ax.set_title(f"{title[i]}")
+        v = np.ma.array(values[i], mask=~vertex_mask)
+        tc = ax.tripcolor(triang, v, shading='flat', cmap='viridis', edgecolors=edgecolors)
+        fig.colorbar(tc, ax=ax)
+
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
         ax.set_aspect('equal', adjustable='box')
@@ -302,40 +373,6 @@ def invert_selection_matrix(num_blocks, block_size, selected_indices, device=Non
     return S_inv
 
 
-# def create_selection_matrix(num_blocks, block_size, selected_indices, device=None, dtype=torch.float32):
-#     """
-#     Create a selection matrix that extracts specified indices from each block of a flattened tensor.
-#
-#     Given a flattened tensor composed of num_blocks blocks (each of length block_size),
-#     this function builds a selection matrix E such that:
-#
-#         E @ x == x.view(num_blocks, block_size)[:, selected_indices]
-#
-#     The resulting matrix E has shape (num_blocks * len(selected_indices), num_blocks * block_size).
-#
-#     Args:
-#         num_blocks (int): The number of blocks in the flattened tensor.
-#         block_size (int): The size of each block.
-#         selected_indices (list or 1D tensor): Indices to select from each block.
-#             Each value must satisfy 0 <= index < block_size.
-#         device (torch.device, optional): The device on which to create the tensor.
-#         dtype (torch.dtype, optional): The data type of the resulting tensor.
-#
-#     Returns:
-#         torch.Tensor: The selection matrix of shape (num_blocks * len(selected_indices), num_blocks * block_size).
-#     """
-#     selected_indices = list(selected_indices)  # ensure it's a list
-#     num_selected = len(selected_indices)
-#     total_rows = num_blocks * num_selected
-#     total_cols = num_blocks * block_size
-#     E = torch.zeros(total_rows, total_cols, device=device, dtype=dtype)
-#
-#     for block in range(num_blocks):
-#         for j, sel in enumerate(selected_indices):
-#             row = block * num_selected + j
-#             col = block * block_size + sel
-#             E[row, col] = 1.0
-#     return E
 def create_selection_matrix(n_blocks, block_size, selected_dims, weights=None):
     """
     Constructs a sparse selection matrix A that selects (and optionally weights) entries

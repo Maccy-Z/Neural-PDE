@@ -79,6 +79,7 @@ def true_pde():
     """ Generate true solution using known PDE. """
     cfg = Config()
     U_graph, Us_values = mesh_graph(cfg)
+    U_graph.init_lin_solver(cfg)
     pde_fn = Fluid(cfg, device=cfg.device)
     # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
 
@@ -91,10 +92,10 @@ def true_pde():
 
     # Us = Us_values.Us
 
-    # Save the solution and graph
-    save_dict = {"Us_values": Us_values, "U_graph": U_graph}
-    with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
-        torch.save(save_dict, f)
+    # # Save the solution and graph
+    # save_dict = {"Us_values": Us_values, "U_graph": U_graph}
+    # with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
+    #     torch.save(save_dict, f)
     return None
 
 #
@@ -263,7 +264,6 @@ class Trainer(torch.nn.Module):
         print(self.metric_tracker.get_metrics("valid_loss"))
 
 
-
 if __name__ == "__main__":
     setup_logging(debug=4)
     torch.set_printoptions(linewidth=120, precision=7)
@@ -271,11 +271,10 @@ if __name__ == "__main__":
     # torch.autograd.set_detect_anomaly(True)
     # torch.use_deterministic_algorithms(True)
 
-    # true_pde()
-    # train_new()
-    # test_adjoint()
+    true_pde()
 
 
-    trainer = Trainer()
-    trainer.train_model()
-    trainer.plot_final_results()
+
+    # trainer = Trainer()
+    # trainer.train_model()
+    # trainer.plot_final_results()

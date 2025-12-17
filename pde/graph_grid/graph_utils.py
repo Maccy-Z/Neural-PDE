@@ -215,18 +215,16 @@ def test_grid(xmin: float, xmax: float, N: Tensor, device='cpu'):
 def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
     """
     Xs:     shape = [n_points, 2] Tensor of vertex coordinates
-    values: Tensor of face-based values.
+    values: shape = [n_plots, n_points]. Tensor of face-based values.
             If values is 1D, it's assumed to be defined on the triangulation faces.
-            If 2D, each row is treated as a separate batch. shape = [n_plots, n_points]
-    lims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
+            If 2D, each row is treated as a separate batch.
+    Xlims: Optional tuple ((xmin, xmax), (ymin, ymax)) to set the plot limits.
     title: Plot title.
-    resolution: (Unused here; kept for interface consistency)
     """
 
     # Convert to numpy arrays.
     Xs = Xs.cpu().numpy()
     values = values.cpu().numpy()
-
 
     # If values is 1D, expand to a batch of one.
     if len(values.shape) == 1:
@@ -243,8 +241,7 @@ def plot_interp(Xs, values, triangles=None, Xlims=None, title=""):
         if n_plots == 1:
             axes = [axes]
 
-
-
+    # Make title into list[str] for each plot.
     if isinstance(title, str):
         title = [title] * len(axes)
 
