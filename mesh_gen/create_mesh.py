@@ -128,7 +128,6 @@ def safe_run(args):
     return mesh_specs
 
 
-
 def create_mesh(coords: list, mesh_props, min_angle=None):
     # Collate together all facet objects
     points, segments = np.zeros((0, 2)), np.zeros((0, 2), dtype=int)
