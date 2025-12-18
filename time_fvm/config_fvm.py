@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class ConfigFarfield:
     mode: str = "farfield_blended"    # {decay, farfield, farfield_blended, adaptive, interior} BC
@@ -15,6 +16,7 @@ class ConfigFarfield:
 
     decay_beta: float = 0.1
 
+
 @dataclass
 class ConfigInlet:
     mode: str = "inlet"
@@ -23,7 +25,6 @@ class ConfigInlet:
     T_nat = 100
     rho_nat = 1
     V_x_nat = 5.5
-
 
 @dataclass
 class ConfigFVM:

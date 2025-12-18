@@ -223,7 +223,7 @@ def mesh_graph(cfg) -> tuple[UGraph, UValues]:
 
 
 def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
-    with open(f'{ARTEFACT_DIR}/fvm2pde_dataset/12-18_01-44-16.pkl', 'rb') as f:
+    with open(f'{ARTEFACT_DIR}/fvm2pde_dataset/12-18_18-27-06.pkl', 'rb') as f:
         ds: dict = pickle.load(f)
 
     Xs = ds['Xs']                       # shape = (N_us_tot, 2)

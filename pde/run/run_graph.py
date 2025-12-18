@@ -151,11 +151,10 @@ def setup(cfg: Config):
         graphs.append(U_graph)
         Us_values.append(Us_true)
 
-    loss_fn = MSELossNorm()
-
     dataset = GraphDataset(graphs, Us_values, N_steps=cfg.fwd_cfg.N_iter, cfg=cfg)
     norm_mean, norm_std = dataset.get_norm_stats()
 
+    loss_fn = MSELossNorm(norm_std[0])
     pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)
 
     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
@@ -178,16 +177,14 @@ def true_pde():
 
     pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
 
-    pde_adj.forward_solve(U_graph, Us_values)
-    U_graph.plot_interp(Us_values, title="Initial solution")
+    Us_history, _ = pde_adj.forward_solve(U_graph, Us_values)
+    U_graph.plot_interp(Us_values, title="Final solution")
 
-    # Us = Us_values.Us
+    for i, Us in enumerate(Us_history):
+        U_graph.plot_interp(Us, title=f'Solution step {i}')
+    # print(Us_history)
 
-    # # Save the solution and graph
-    # save_dict = {"Us_values": Us_values, "U_graph": U_graph}
-    # with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
-    #     torch.save(save_dict, f)
-    return None
+    return
 
 
 class Trainer(torch.nn.Module):

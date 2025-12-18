@@ -19,7 +19,6 @@ class LinearSolver:
     preproc: Callable
     postproc: Callable
     solver_cfg: dict = None
-    col_norms: torch.Tensor | None = None
 
     def __init__(self,device: str, cfg: FwdConfig|AdjConfig):
         self.cfg = cfg
@@ -52,12 +51,12 @@ class LinearSolver:
                 self.solver = self.cpu_sparse
 
     def solve(self, A, b, solver_opts=None) -> torch.Tensor:
-        A_proc, b_proc = self.preproc(A, b)
+        A_proc, b_proc, info = self.preproc(A, b)
         x = self.solver(A_proc, b_proc, solver_opts)
-        x = self.postproc(x)
+        x = self.postproc(x, info)
         return x
 
-    def cuda_sparse(self, A_cp: cp.ndarray, b: torch.Tensor, solver_opts=None):
+    def cuda_sparse(self, A_cp: sp.spmatrix, b: torch.Tensor, solver_opts=None):
         b_cupy = cp.from_dlpack(b)
 
         x = sp_linalg.spsolve(A_cp, b_cupy)
@@ -105,21 +104,21 @@ class LinearSolver:
 
     def preproc(self, A: torch.Tensor, b: torch.Tensor):
         """ Default preprocessing. """
-        return A, b
+        return A, b, None
 
-    def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def preproc_sparse(self, A: torch.Tensor, b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """ Normalise and simplify sparse matrix A before solving. """
         # Compress CSR matrix
         if self.cfg.csr_compress:
             crow_indices, col_indices, values = csr_compress(A) # crow_indices, col_indices, values
             A = torch.sparse_csr_tensor(crow_indices=crow_indices, col_indices=col_indices, values=values, size=A.size(), device=A.device)
         # Normalize rows and columns
-        A, b, self.col_norms = csr_normalise(A, b, norm_row=self.cfg.norm_row, norm_col=self.cfg.norm_col)
-        return A, b
+        A, b, col_norms = csr_normalise(A, b, norm_row=self.cfg.norm_row, norm_col=self.cfg.norm_col)
+        return A, b, col_norms
 
-    def postproc_sparse(self, x: torch.Tensor):
-        if self.col_norms is not None:
-            x = x / self.col_norms
+    def postproc_sparse(self, x: torch.Tensor, col_norms: torch.Tensor = None) -> torch.Tensor:
+        if col_norms is not None:
+            x = x / col_norms
         return x
 
     def cuda_amgx(self, A_cp: cp.ndarray, b: torch.Tensor, solver_opts=None):

@@ -4,6 +4,7 @@ from mesh_gen.mesh_gen_utils import MeshProps, gen_rand_ellipses
 from mesh_gen.geometries import Line, Ellipse, Nozzle, Circle
 from mesh_gen.create_mesh import create_mesh
 
+
 def gen_mesh_fvm(areas, cell_lnscale=2):
     xmin, xmax = -0.25, 6
     ymin, ymax = -2.25, 1.5
@@ -40,6 +41,7 @@ def gen_mesh_fvm(areas, cell_lnscale=2):
 
     return points, triangles, (int_edges, bound_edges), f_tag
 
+
 def gen_mesh_tunnel(areas, cell_lnscale=2):
     xmin, xmax = 0, 2
     ymin, ymax = 0, 1.5
@@ -71,6 +73,7 @@ def gen_mesh_tunnel(areas, cell_lnscale=2):
 
     return points, triangles, (int_edges, bound_edges), f_tag
 
+
 def gen_rand_mesh(areas, cell_lnscale=2):
     xmin, xmax = 0, 2
     ymin, ymax = 0, 1.5
@@ -86,7 +89,7 @@ def gen_rand_mesh(areas, cell_lnscale=2):
                 Line([[xmax, ymax], [xmax, ymin]], False, name="Right"),   # Right
                 Line([[0.75, 0.7], [2.5, 0.7]], True, real=False, name=None),  # Refinement wall
     ]
-    _, rand_ellipses = gen_rand_ellipses(1, (xmax-xmin-0.25, ymax-ymin),
+    _, rand_ellipses = gen_rand_ellipses(3, (xmax-xmin-0.4, ymax-ymin),
                                          min_major=0.15, max_major=0.2, min_ecc=0.2, max_ecc=0.85, min_gap=0.1)
 
     for spec in rand_ellipses:

@@ -104,6 +104,7 @@ class AdjConfig:
             self.solver_cfg = {'ir_n_steps': 2, 'max_n_uses': 300}
             self.gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
+
 @dataclass
 class Config:
     device: str = "cuda"
@@ -118,7 +119,7 @@ class Config:
     N: tuple[int] = (100, 125)
     # Derivative settings
     max_degree: int = 2     # Max degree of derivative to compute
-    grad_neigh: int = 16    # Number of neighbors to use for gradient computations
+    grad_neigh: int = 20    # Number of neighbors to use for gradient computations
 
     # Forward PDE solver config
     fwd_cfg: FwdConfig = field(default_factory=FwdConfig)
@@ -137,3 +138,4 @@ class Config:
 
     N_print = 50
     N_valid = 100
+

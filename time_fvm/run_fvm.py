@@ -1,8 +1,7 @@
 from cprint import c_print
-import pickle
 import torch
-import numpy as np
 
+from base_cfg import ARTEFACT_DIR
 from time_fvm.fvm_store import EdgeBCTypes as E
 from time_fvm.fvm_store import Edge
 from time_fvm.fvm_mesh import FVMMesh
@@ -98,10 +97,10 @@ def main():
         prob_definition = mesh_graph(cfg)
         Xs, tri_idx, all_edgs, bc_edge_mask, bc_tags, N_comp = prob_definition
         mesh = FVMMesh(Xs, tri_idx, all_edgs, bc_edge_mask, device="cuda")
-        pickle.dump({'mesh': mesh, "bc_tags": bc_tags, "N_comp": N_comp}, open("./artefacts/mesh.pkl", "wb"))
+        pickle.dump({'mesh': mesh, "bc_tags": bc_tags, "N_comp": N_comp}, open(f"{ARTEFACT_DIR}/fvm_mesh.pkl", "wb"))
     else:
         c_print(f'Loading mesh', "green")
-        save_dict = pickle.load(open("./artefactss/mesh.pkl", "rb"))
+        save_dict = pickle.load(open(f"{ARTEFACT_DIR}/fvm_mesh.pkl", "rb"))
         mesh: FVMMesh = save_dict['mesh']
         bc_tags = save_dict['bc_tags']
         N_comp = save_dict['N_comp']

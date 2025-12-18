@@ -4,6 +4,7 @@ from abc import abstractmethod
 
 from pde.graph_grid.U_graph import UValues
 
+
 class Loss(nn.Module):
     Us_pred: torch.Tensor = None
     loss_out: torch.Tensor = None
@@ -38,6 +39,7 @@ class Loss(nn.Module):
         self.requires_grad = requires_grad
         self.Us_pred.requires_grad_(requires_grad)
 
+
 class MSELoss(Loss):
     def __init__(self, us_true):
         super().__init__()
@@ -69,15 +71,29 @@ class MSELoss2(Loss):
         self.loss_out = loss
         return loss
 
+
 class MSELossNorm(Loss):
-    def __init__(self):
+    def __init__(self, norm_std: torch.Tensor = None):
+        """ Normalised MSE loss.
+            norm_std: shape [n_comp], standard deviation for each component to normalise by.
+                        If None, normalize each sample independently.
+        """
         super().__init__()
+
+        if norm_std is not None:
+            self.norm_std = norm_std.unsqueeze(0)      # Shape [1, n_comp]
+        else:
+            self.norm_std = None
 
     def forward(self, Us_pred: UValues, Us_true: UValues, requires_grad=True):
         Us_pred, Us_true = Us_pred.Us, Us_true.Us
         self.save_for_backward(Us_pred, requires_grad=requires_grad)
 
-        stds = Us_true.std(dim=0, keepdim=True) + 0.01
+        if self.norm_std is not None:
+            stds = self.norm_std
+        else:
+            stds = Us_true.std(dim=0, keepdim=True) + 0.01
+
         error = (Us_pred - Us_true) / stds
         loss = (error ** 2).mean()
         self.loss_out = loss
@@ -87,12 +103,8 @@ class DummyLoss(Loss):
     def __init__(self):
         super().__init__()
 
-    def forward(self, Us_pred, requires_grad=True):
-        self.save_for_backward(Us_pred, requires_grad=True)
-        loss = torch.sum(self.Us_pred ** 2)
-        self.loss_out = loss
-
-        return loss
+    def forward(self):
+        return None
 
 
 class MaskLoss(Loss):

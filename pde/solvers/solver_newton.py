@@ -145,7 +145,7 @@ class SolverNewton:
         return deltas
 
     @torch.no_grad()
-    def find_pde_root(self, pde_calc: GraphPDECalc, U_graph: UGraph, U_values: UValues, aux_input=None, solver_opts=None):
+    def find_root(self, pde_calc: GraphPDECalc, U_graph: UGraph, U_values: UValues, aux_input=None, solver_opts=None):
         """
         Find the root of the PDE using Newton Raphson:
             grad(F(x_n)) * (x_{n+1} - x_n) = -F(x_n)
@@ -153,10 +153,10 @@ class SolverNewton:
         aux_input: Additional conditioning for the PDE
         """
         converged = False
+        old_resid_norm = float('inf')
         best_alpha = 1.0
         Us_history: list[UValues] = [U_graph.new_Us(U_values.Us)]
         for i in range(self.N_iter):
-
             # Compute Jacobian, residuals and solve linear system
             with self.timer:
                 jacobian, old_resid = pde_calc.jacobian(U_values, aux_input)
@@ -193,6 +193,10 @@ class SolverNewton:
                 logging.debug(f"Newton solver converged early at iteration {i+1}.")
                 converged = True
                 # break
+            if old_resid_norm > new_resid_norm > old_resid_norm*0.98:
+                logging.warning(f"Newton solver residual stopped decreasing early {i+1}, Stopping. residual: {new_resid_norm:.3g}")
+                break
+            old_resid_norm = new_resid_norm
         else:
             logging.warning(f"Newton solver did not converge within the maximum iterations {i}. Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}")
 

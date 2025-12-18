@@ -39,11 +39,11 @@ class NeuralPDEGraph:
 
         self.timer = Timer(name="timer", logger=None)
 
-    def forward_solve(self, U_graph: UGraph, Us: UValues, aux_input=None):
+    def forward_solve(self, U_graph: UGraph, Us: UValues, aux_input=None) -> tuple[list[UValues], dict]:
         """ Solve PDE forward problem. """
         pde_calc = GraphPDECalc(U_graph, self.pde_fn, device=self.device)
 
-        Us_history, converged = self.newton_solver.find_pde_root(pde_calc, U_graph, Us, aux_input, U_graph.solver_opts['fwd'])
+        Us_history, converged = self.newton_solver.find_root(pde_calc, U_graph, Us, aux_input, U_graph.solver_opts['fwd'])
         return Us_history, converged
 
     def adjoint_solve(self, Us: UValues):

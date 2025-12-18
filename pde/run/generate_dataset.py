@@ -22,7 +22,6 @@ def gen_graph():
     _, solve_info = pde_adj.forward_solve(U_graph, Us_values)
 
     print(f'{solve_info = }')
-    # print(f'{solve_info['converged'] = }')
     U_graph.plot_interp_cell(Us_values, title=f'{"Converged" if solve_info["converged"] else "Not Converged"} solution')
 
     return solve_info, Us_values, U_graph
