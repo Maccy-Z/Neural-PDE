@@ -160,7 +160,7 @@ def _sample_interior_points(points, triangles, cell_pts, prob, n_vertices_new, *
 
     n_sel = int(selected_cells.size)
     if n_sel == 0:
-        return np.empty((0, 2), dtype=float), selected_cells
+        return np.empty((0, 2), dtype=float)
 
     r1 = rng.random(n_sel)
     r2 = rng.random(n_sel)
@@ -170,7 +170,7 @@ def _sample_interior_points(points, triangles, cell_pts, prob, n_vertices_new, *
         tri_vertices = points[triangles[ci]]
         interior_pts[k] = _sample_in_tri(tri_vertices, r1[k], r2[k])
 
-    return interior_pts, selected_cells
+    return interior_pts
 
 
 def _extract_boundary_loops_from_edges(boundary_edges):
@@ -273,83 +273,6 @@ def _compute_hole_seeds(points, hole_loops):
     return np.array(hole_seeds, dtype=float)
 
 
-# ---- NEW: subsample loops (edge decimation) -----------------
-
-def _subsample_loop(loop_indices, *, keep_ratio=1.0, min_points=8):
-    """
-    Uniformly subsample a closed loop of vertex indices.
-    Keeps roughly keep_ratio of vertices (uniformly spaced).
-    """
-    loop_indices = np.asarray(loop_indices, dtype=int)
-    L = int(loop_indices.size)
-    if L <= 3 or keep_ratio >= 1.0:
-        return loop_indices
-
-    n_keep = int(np.ceil(L * keep_ratio))
-    n_keep = max(3, min(L, n_keep))
-    n_keep = max(min_points, n_keep) if L >= min_points else L
-
-    if n_keep >= L:
-        return loop_indices
-
-    # Uniformly spaced picks along the loop
-    pos = np.linspace(0, L, n_keep, endpoint=False)
-    idx = np.unique(np.floor(pos).astype(int))
-    # If unique() reduced count due to flooring, pad deterministically
-    if idx.size < 3:
-        idx = np.array([0, L // 3, 2 * L // 3], dtype=int)
-    return loop_indices[idx]
-
-
-def _subsample_loops(points, outer_loop, hole_loops, *, boundary_keep_ratio=1.0, boundary_min_points=8):
-    outer2 = _subsample_loop(outer_loop, keep_ratio=boundary_keep_ratio, min_points=boundary_min_points)
-    holes2 = [
-        _subsample_loop(h, keep_ratio=boundary_keep_ratio, min_points=boundary_min_points)
-        for h in hole_loops
-    ]
-
-    # recompute hole points after subsampling (centroid of polygon vertices)
-    hole_points = np.array([points[h].mean(axis=0) for h in holes2], dtype=float) if holes2 else np.empty((0, 2))
-    return outer2, holes2, hole_points
-
-
-def _build_pslg(points, outer_loop, hole_loops, hole_points, interior_pts):
-    if hole_loops:
-        boundary_vertex_indices = np.unique(np.concatenate([outer_loop] + hole_loops))
-    else:
-        boundary_vertex_indices = np.unique(outer_loop)
-
-    boundary_vertices = points[boundary_vertex_indices]
-
-    remap = -np.ones(points.shape[0], dtype=int)
-    remap[boundary_vertex_indices] = np.arange(len(boundary_vertices))
-
-    vertices = np.vstack([boundary_vertices, interior_pts])
-
-    segments = []
-
-    def add_loop_segments(loop_indices):
-        remapped = remap[loop_indices]
-        if remapped.min() < 0:
-            raise ValueError("Loop contains non-boundary vertex.")
-        m = len(remapped)
-        for i in range(m):
-            a = int(remapped[i])
-            b = int(remapped[(i + 1) % m])
-            segments.append([a, b])
-
-    add_loop_segments(outer_loop)
-    for hl in hole_loops:
-        add_loop_segments(hl)
-
-    A = {
-        "vertices": vertices,
-        "segments": np.asarray(segments, dtype=int),
-        "holes": hole_points,
-    }
-    return A
-
-
 def _triangulate_pslg(A, opts="pq"):
     """
     Triangulate using meshpy instead of triangle.
@@ -365,18 +288,11 @@ def _triangulate_pslg(A, opts="pq"):
 
     # Set vertices with point markers if available
     point_markers = A.get("point_markers")
-    if point_markers is not None:
-        mesh_info.set_points(A["vertices"].tolist(), point_markers=point_markers.tolist())
-    else:
-        mesh_info.set_points(A["vertices"].tolist())
+    mesh_info.set_points(A["vertices"].tolist(), point_markers=point_markers.tolist())
 
     # Set segments (edges) with segment markers if available
-    # CRITICAL: Segment markers ensure Steiner points inherit the correct tag
     segment_markers = A.get("segment_markers")
-    if segment_markers is not None:
-        mesh_info.set_facets(A["segments"].tolist(), facet_markers=segment_markers.tolist())
-    else:
-        mesh_info.set_facets(A["segments"].tolist())
+    mesh_info.set_facets(A["segments"].tolist(), facet_markers=segment_markers.tolist())
 
     # Set holes if any
     if A["holes"].size > 0:
@@ -400,22 +316,17 @@ def _triangulate_pslg(A, opts="pq"):
     new_triangles = np.array(mesh.elements, dtype=int)
 
     # Extract boundary segments (facets)
-    if hasattr(mesh, 'facets') and mesh.facets:
-        boundary_edges_new = np.array(mesh.facets, dtype=int)
-    else:
-        boundary_edges_new = np.empty((0, 2), dtype=int)
+    boundary_edges_new = np.array(mesh.facets, dtype=int)
 
     # Extract point markers and convert back to tags
-    point_tags = None
-    if point_markers is not None and hasattr(mesh, 'point_markers'):
-        marker_to_tag = A.get("marker_to_tag", {})
-        mesh_point_markers = np.array(mesh.point_markers, dtype=int)
-        point_tags = []
-        for marker in mesh_point_markers:
-            if marker in marker_to_tag:
-                point_tags.append(marker_to_tag[marker])
-            else:
-                point_tags.append(None)  # Interior or unmarked point
+    marker_to_tag = A.get("marker_to_tag", {})
+    mesh_point_markers = np.array(mesh.point_markers, dtype=int)
+    point_tags = []
+    for marker in mesh_point_markers:
+        if marker in marker_to_tag:
+            point_tags.append(marker_to_tag[marker])
+        else:
+            point_tags.append(None)  # Interior or unmarked point
 
 
     return new_points, new_triangles, boundary_edges_new, point_tags
@@ -454,10 +365,7 @@ def _subsample_boundary_edges(points, bc_edges, bc_tags, *, boundary_keep_ratio=
 
     Returns:
         new_bc_points: subsampled boundary points
-        new_bc_vertex_ids: boundary vertex IDs (local indices 0 to len(new_bc_points)-1)
         new_bc_point_tags: corresponding tags for new points (one tag per point)
-        bc_vertex_indices: original vertex indices used in boundary
-        loop_groups: list of arrays, where each array contains vertex IDs for one independent loop
         new_bc_edges: edges with local vertex IDs
         new_bc_edge_tags: tag for each edge (preserves original edge tags)
     """
@@ -473,14 +381,13 @@ def _subsample_boundary_edges(points, bc_edges, bc_tags, *, boundary_keep_ratio=
         remap = -np.ones(points.shape[0], dtype=int)
         remap[bc_vertex_indices] = np.arange(len(bc_vertex_indices))
 
-        # Group edges by tag and build loop groups properly
+        # Group edges by tag
         unique_tags = list(set(bc_tags))
         tag_groups = {tag: [] for tag in unique_tags}
         for i, tag in enumerate(bc_tags):
             tag_groups[tag].append(bc_edges[i])
 
         point_tags = [None] * len(bc_vertex_indices)
-        loop_groups = []
         new_edges_list = []
         new_edge_tags_list = []
 
@@ -513,10 +420,6 @@ def _subsample_boundary_edges(points, bc_edges, bc_tags, *, boundary_keep_ratio=
                     visited.add(current)
 
                 if len(chain) >= 2:
-                    # Convert to local indices and store as loop group
-                    loop_local_ids = [remap[v] for v in chain]
-                    loop_groups.append(np.array(loop_local_ids, dtype=int))
-
                     # Assign tags to these points
                     for v in chain:
                         local_v = remap[v]
@@ -537,9 +440,8 @@ def _subsample_boundary_edges(points, bc_edges, bc_tags, *, boundary_keep_ratio=
                         new_edges_list.append([v1_local, v2_local])
                         new_edge_tags_list.append(tag)
 
-        bc_vertex_ids = np.arange(len(bc_vertex_indices), dtype=int)
         new_bc_edges = np.array(new_edges_list, dtype=int) if new_edges_list else np.empty((0, 2), dtype=int)
-        return bc_points, bc_vertex_ids, point_tags, bc_vertex_indices, loop_groups, new_bc_edges, new_edge_tags_list
+        return bc_points, point_tags, new_bc_edges, new_edge_tags_list
 
     # Group edges by tag
     unique_tags = list(set(bc_tags))
@@ -551,9 +453,8 @@ def _subsample_boundary_edges(points, bc_edges, bc_tags, *, boundary_keep_ratio=
     # For each tag, build ordered chains of vertices
     new_points_list = []
     new_point_tags_list = []
-    new_edges_list = []  # Track edges with local indices
-    new_edge_tags_list = []  # Track tag for each edge
-    loop_groups = []  # Track which vertices belong to each independent loop
+    new_edges_list = []
+    new_edge_tags_list = []
     global_to_local = {}  # Maps original vertex index to new local index
     current_idx = 0
 
@@ -604,23 +505,15 @@ def _subsample_boundary_edges(points, bc_edges, bc_tags, *, boundary_keep_ratio=
                 pos = np.linspace(0, L - 1, n_keep)
                 selected = chain[np.unique(np.round(pos).astype(int))]
 
-            # Track the local vertex IDs for this loop
-            loop_vertex_ids = []
-
             # Add points and create mapping
             for global_idx in selected:
                 if global_idx not in global_to_local:
                     global_to_local[global_idx] = current_idx
                     new_points_list.append(points[global_idx])
-                    new_point_tags_list.append(tag)  # Assign tag to point
-                    loop_vertex_ids.append(current_idx)
+                    new_point_tags_list.append(tag)
                     current_idx += 1
-                else:
-                    # Point already added (shouldn't happen in well-formed input)
-                    loop_vertex_ids.append(global_to_local[global_idx])
 
             # Create edges for this chain with proper tags
-            # IMPORTANT: All edges within a tag group get that tag
             for j in range(len(selected) - 1):
                 v1_global = selected[j]
                 v2_global = selected[j + 1]
@@ -629,29 +522,22 @@ def _subsample_boundary_edges(points, bc_edges, bc_tags, *, boundary_keep_ratio=
                 new_edges_list.append([v1_local, v2_local])
                 new_edge_tags_list.append(tag)
 
-            # Check if this is a closed loop
+            # Check if this is a closed loop and add closing edge
             if len(selected) >= 2:
                 first_v = selected[0]
                 last_v = selected[-1]
                 is_closed = (last_v in adj[first_v]) and (first_v in adj[last_v])
 
                 if is_closed:
-                    # Add closing edge
                     v1_local = global_to_local[last_v]
                     v2_local = global_to_local[first_v]
                     new_edges_list.append([v1_local, v2_local])
                     new_edge_tags_list.append(tag)
 
-            # Store this loop's vertex IDs
-            if len(loop_vertex_ids) >= 2:
-                loop_groups.append(np.array(loop_vertex_ids, dtype=int))
-
     new_bc_points = np.array(new_points_list, dtype=float)
-    new_bc_vertex_ids = np.arange(len(new_bc_points), dtype=int)
     new_bc_edges = np.array(new_edges_list, dtype=int) if new_edges_list else np.empty((0, 2), dtype=int)
-    bc_vertex_indices = np.array(list(global_to_local.keys()), dtype=int)
 
-    return new_bc_points, new_bc_vertex_ids, new_point_tags_list, bc_vertex_indices, loop_groups, new_bc_edges, new_edge_tags_list
+    return new_bc_points, new_point_tags_list, new_bc_edges, new_edge_tags_list
 
 
 def _build_pslg_from_boundary(bc_points, bc_edges, interior_pts, bc_point_tags=None, bc_edge_tags=None, holes=None):
@@ -769,9 +655,7 @@ def adaptive_remesh(
     boundary_min_points=8,
     holes=None,
 ):
-    """
-    Adaptive remeshing based on solution gradient.
-
+    """     Adaptive remeshing based on solution gradient.
     Args:
         points: (N, 2) current mesh vertices
         triangles: (M, 3) current triangulation
@@ -791,14 +675,12 @@ def adaptive_remesh(
 
     Returns:
         new_points: remeshed vertices
-    Returns:
-        new_points: remeshed vertices
         new_triangles: new triangulation
         u_nodes_new: interpolated solution at new vertices
-        u_cells_new: interpolated solution at new cell centers
+        final_bc_tags: preserved boundary tags (one tag per boundary point)
         new_bc_edges: new boundary edges (indices into new_points)
-        new_bc_tags: preserved boundary tags (one tag per boundary point)
     """
+
     points = np.asarray(points, float)
     triangles = np.asarray(triangles, int)
     u_cells = np.asarray(u_cells, float)
@@ -816,7 +698,6 @@ def adaptive_remesh(
         if len(loops) > 1:
             outer_loop, hole_loops = _split_outer_and_holes(points, loops)
             holes = _compute_hole_seeds(points, hole_loops)
-            print(f"Detected {len(hole_loops)} hole(s) in mesh")
         else:
             holes = np.empty((0, 2), dtype=float)
     else:
@@ -831,12 +712,12 @@ def adaptive_remesh(
     )
 
     # 6) Sample interior points
-    interior_pts, _ = _sample_interior_points(
+    interior_pts = _sample_interior_points(
         points, triangles, cell_pts, prob, n_vertices_new, seed=seed, r0=r0
     )
 
     # 7) Subsample boundary edges
-    new_bc_points, new_bc_vertex_ids, new_bc_tags, bc_vertex_indices, loop_groups, bc_edges_for_pslg, bc_edge_tags = _subsample_boundary_edges(
+    new_bc_points, new_bc_tags, bc_edges_for_pslg, bc_edge_tags = _subsample_boundary_edges(
         points,
         bc_edges,
         bc_tags,
@@ -848,30 +729,17 @@ def adaptive_remesh(
     # Use edges and edge tags directly from _subsample_boundary_edges
     A = _build_pslg_from_boundary(new_bc_points, bc_edges_for_pslg, interior_pts,
                                    bc_point_tags=new_bc_tags, bc_edge_tags=bc_edge_tags, holes=holes)
-    new_points, new_triangles, _, point_tags_from_meshpy = _triangulate_pslg(A, opts="pq")
-    cell_pts_new = new_points[new_triangles].mean(axis=1)
+    new_points, new_triangles, new_bc_edges, new_point_tags = _triangulate_pslg(A, opts="pq")
 
-    # 10) Interpolate solution
+    # 9) Interpolate solution
     u_nodes_new = _interpolate_with_nan_fix(cell_pts, u_cells, new_points)
-    u_cells_new = _interpolate_with_nan_fix(cell_pts, u_cells, cell_pts_new)
 
-    # 11) Extract boundary vertex IDs and tags from meshpy output
-    # Meshpy may have added boundary points, so we need to identify them from the point markers
-    if point_tags_from_meshpy is not None:
-        # Boundary vertices are those with non-None tags
-        boundary_mask = [tag is not None for tag in point_tags_from_meshpy]
-        final_bc_vertex_ids = np.where(boundary_mask)[0]
-        final_bc_tags = [tag for tag in point_tags_from_meshpy if tag is not None]
-    else:
-        # Fallback: assume first n_boundary points are boundary (old behavior)
-        n_boundary = new_bc_points.shape[0]
-        final_bc_vertex_ids = np.arange(n_boundary, dtype=int)
-        final_bc_tags = new_bc_tags
+
     return (
         new_points,
         new_triangles,
         u_nodes_new,
-        u_cells_new,
-        final_bc_vertex_ids,
-        final_bc_tags,
+        # final_bc_vertex_ids,
+        new_point_tags,
+        new_bc_edges,
     )

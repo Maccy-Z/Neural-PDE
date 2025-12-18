@@ -9,7 +9,7 @@ from pde.graph_grid.graph_store import P_Types as T
 from pde.findiff.findiff_coeff import gen_multi_idx_tuple, calc_coeff, nearest_neighbors
 from pde.findiff.fin_deriv_calc import FinDerivCalcSPMV, BCCalc
 from pde.graph_grid.graph_utils import plot_interp, plot_points
-from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSystemSimplifier, plot_sparsity
+from pde.utils_sparse import CSRSummer, CSRRowMultiplier, CSRTransposer, CSRSystemSimplifier
 from pde.solvers.nvmath_cudss import CUDSSSolver
 from pde.solvers.linear_solvers import LinMode
 from pde.config import Config
@@ -217,7 +217,7 @@ class UGraph:
         U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
         return U_dUs, Xs
 
-    def set_grid(self, new_Us, U_values: UValues):
+    def set_grid(self, new_Us: torch.Tensor, U_values: UValues):
         """
         Set grid to new values. Used for Jacobian computation.
         Enforce dirichlet boundary condition to BC values
@@ -279,7 +279,7 @@ class UGraph:
         Us, Xs = Us_values.Us, Us_values.Xs
         plot_points(Xs, Us.T, Xlims=Xlims, show_index=show_index, title=title)
 
-def setup_graph(setup_dict: dict[int, Point], N_comp, grad_neigh, tri, max_degree:int = 2, device="cpu") -> tuple[UGraph, UValues]:
+def setup_graph(setup_dict: dict[int, Point], tri, N_comp, grad_neigh, max_degree:int = 2, device="cpu") -> tuple[UGraph, UValues]:
     """ Create UGraph and UValues. """
     U_graph = UGraph(setup_dict, N_comp, grad_neigh, max_degree=max_degree, tri=tri, device=device)
 

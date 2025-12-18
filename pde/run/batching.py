@@ -3,6 +3,7 @@ import torch
 from pde.graph_grid.U_graph import UValues, UGraph
 from pde.config import Config
 
+
 class GraphSample:
     U_graph: UGraph
     Us_true: UValues
@@ -40,6 +41,7 @@ class GraphSample:
 
         return self.U_graph, self.Us_true, Us_step
 
+
 class GraphDataset:
     samples: list[GraphSample]
     """ Class to handle batching of UGraphs for PDE solving.  """
@@ -48,8 +50,8 @@ class GraphDataset:
         self.device = cfg.device
 
         samples = []
-        for g, u in zip(graphs, Us_trues, strict=True):
-            samples.append(GraphSample(g, u, N_steps, cfg))
+        for G, Us in zip(graphs, Us_trues, strict=True):
+            samples.append(GraphSample(G, Us, N_steps, cfg))
         self.samples = samples
 
     def get_norm_stats(self):

@@ -13,7 +13,7 @@ class Saver:
     def __init__(self, E_props: FVMEdgeInfo, save_dir=None):
         if save_dir is None:
             timestamp = datetime.now().strftime("%m-%d_%H-%M-%S")
-            self.save_dir = f'artefacts/saves/{timestamp}'
+            self.save_dir = f'/home/maccyz/Documents/Neural_PDE/artefacts/fvm_saves/{timestamp}'
         else:
             self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)

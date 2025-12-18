@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 from scipy import sparse as sp
 from cupyx.scipy import sparse as cpx_sparse
 
+
 def csr_torch_to_scipy(csr):
     crow_indices = csr.crow_indices().cpu().numpy()
     col_indices = csr.col_indices().cpu().numpy()
@@ -15,6 +16,7 @@ def csr_torch_to_scipy(csr):
     scipy_csr = sp.csr_matrix((values, col_indices, crow_indices), shape=shape)
 
     return scipy_csr
+
 
 def csr_scipy_to_torch(sparse_np):
     """
@@ -31,6 +33,7 @@ def csr_scipy_to_torch(sparse_np):
 
     return torch.sparse_coo_tensor(indices, values, shape).coalesce()
 
+
 def csr_torch_to_cupy(csr: torch.Tensor):
     """ Convert a torch sparse CSR tensor to a cupy sparse CSR matrix. """
     crow_indices = cp.from_dlpack(csr.crow_indices().int())
@@ -40,6 +43,7 @@ def csr_torch_to_cupy(csr: torch.Tensor):
 
     csr_cupy = cpx_sparse.csr_matrix((values, col_indices, crow_indices), shape=shape)
     return csr_cupy
+
 
 def csr_compress(csr: torch.Tensor):
     """ Compress a sparse CSR matrix by removing zero entries."""
@@ -85,6 +89,7 @@ def csr_compress(csr: torch.Tensor):
 
     return new_crow, new_col, new_vals
 
+
 def gen_rand_sp_matrix(rows, cols, density, device="cpu"):
     num_nonzeros = int(rows * cols * density)
     row_indices = torch.randint(0, rows, (num_nonzeros,))
@@ -93,6 +98,7 @@ def gen_rand_sp_matrix(rows, cols, density, device="cpu"):
 
     edge_index = torch.stack([row_indices, col_indices], dim=0)
     return torch.sparse_coo_tensor(edge_index, values, (rows, cols)).to(device).to_sparse_csr()
+
 
 def plot_sparsity(A):
     A = A.to_dense()# [:250, :250]
@@ -115,6 +121,7 @@ def plot_sparsity(A):
     plt.gca().invert_yaxis()
     plt.tight_layout()
     plt.show()
+
 
 def permutation_to_csr(perm, dtype=torch.float32, device="cpu"):
     """
@@ -154,9 +161,6 @@ def permutation_to_csr(perm, dtype=torch.float32, device="cpu"):
         device=device
     )
     return sparse_matrix
-
-
-import torch
 
 
 def csr_normalise(A: torch.Tensor, b: torch.Tensor, norm_row, norm_col):
@@ -581,9 +585,6 @@ class CSRPermuter:
     def vector_permute(self, b):
         """ Precomputed permutation of a vector."""
         return b[self.perm_from]
-
-
-import torch
 
 
 class CSRSystemSimplifier:

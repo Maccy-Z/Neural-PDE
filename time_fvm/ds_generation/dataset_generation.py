@@ -1,7 +1,10 @@
 import torch
 import numpy as np
 import os
+import pickle
+from cprint import c_print
 
+from base_cfg import BASE_DIR
 from time_fvm.ds_generation.downsampling import adaptive_remesh
 from time_fvm.sparse_utils import plot_interp_cell, plot_interp_vertex
 
@@ -46,11 +49,12 @@ class AveragedGraphs:
         return mean_cells.float(), mean_bc.float()
 
 
-def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/artefacts/saves/12-17_19-47-25'):
+def main(save_name=f'12-18_01-44-16'):
     """
     Plot out the saved mesh and time step data.
     """
-    print(f"\nLoading from '{save_dir}'...")
+    save_dir = f'{BASE_DIR}/artefacts/fvm_saves/{save_name}'
+    c_print(f"\nLoading from '{save_dir}'...", color="green")
 
     # Load mesh properties
     mesh_props_path = os.path.join(save_dir, 'mesh_props.npz')
@@ -58,11 +62,10 @@ def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/artefacts/saves/12
     mesh_props = dict(mesh_props)
 
     bc_edge_tags = mesh_props.pop('bc_type_str')
-    print(f'{mesh_props.keys() = }')
 
     # Find and load time-step files
     time_files = sorted([f for f in os.listdir(save_dir) if f.startswith('t_') and f.endswith('.npz')])
-    print(f"Found {len(time_files)} time-step file(s)")
+    c_print(f"Found {len(time_files)} time-step file(s)", color="green")
     print()
     # Average graphs over time
     averaged_graphs = AveragedGraphs()
@@ -79,35 +82,47 @@ def main(save_dir='/home/maccyz/Documents/Neural_PDE/time_fvm/artefacts/saves/12
 
     # Create new adaptively remeshed graph
     bc_edges = mesh_props['edges'][mesh_props['bc_edge_masK']]
-    new_points, new_triangles, u_nodes_new, u_cells_new, bc_vertices, bc_vertex_tags = adaptive_remesh(
+    new_points, new_triangles, Us_new, bc_p_tags, bc_edges = adaptive_remesh(
         points=mesh_props['vertices'],
         triangles=mesh_props['triangles'],
-        u_cells=mean_cells_norm[:, :2],   # Use x-velocity for adaptivity
+        u_cells=mean_cells_norm[:, :3],   # Use x-velocity for adaptivity
         bc_tags=bc_edge_tags,
         bc_edges=bc_edges,
-        n_vertices_new=mesh_props['vertices'].shape[0] // 5,  # Reduce to 1/4 vertices0
-        p_power=1.0, floor=0.2, g_quant=0.95,
-        r0=0.025,
-        boundary_keep_ratio=0.3,
+        n_vertices_new=mesh_props['vertices'].shape[0] // 2,  # Reduce to 1/4 vertices0
+        p_power=1.0, floor=0.95, g_quant=0.95,
+        r0=0.04,
+        boundary_keep_ratio=0.5,
     )
+    new_points, new_triangles = torch.from_numpy(new_points).float(), torch.from_numpy(new_triangles)
+    Us_new = torch.from_numpy(Us_new).float()
 
-    # plot_interp(mesh_props['vertices'], mean_cells.T[:2], mesh_props['triangles'], title=f'Average over {averaged_graphs.count} steps')
+    plot_interp_vertex(new_points, Us_new.T[:3], new_triangles, title='Adaptively remeshed x-velocity', edgecolors="k")
 
-    new_points, u_cells_new, new_triangles = torch.from_numpy(new_points).float(), torch.from_numpy(u_cells_new).float(), torch.from_numpy(new_triangles)
-    u_nodes_new = torch.from_numpy(u_nodes_new).float()
+    # Get point tags for every point
+    p_tags = []
+    for t in bc_p_tags:
+        if t is None:
+            p_tags.append('Normal')
+        else:
+            p_tags.append(str(t))
 
-    print(f'{new_points.shape = }, {u_nodes_new.shape = }, {new_triangles.shape = }')
-    plot_interp_vertex(new_points, u_nodes_new.T[:2], new_triangles, title='Adaptively remeshed x-velocity', edgecolors="k")
+    # Save new mesh
+    save_dict = {
+        'Xs': new_points.numpy(),
+        'triangles': new_triangles.numpy(),
+        'bc_edges': bc_edges,
+        'p_tags': p_tags,
+        'Us': Us_new.numpy(),
+    }
+    save_path = f'{BASE_DIR}/artefacts/fvm2pde_dataset/{save_name}.pkl'
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    with open(save_path, 'wb') as f:
+        pickle.dump(save_dict, f)
 
-    from matplotlib import pyplot as plt # For debugging
-    bc_vertex_tags = [str(t) for t in bc_vertex_tags]
-    bc_points = new_points[bc_vertices]
-    cmap = {"Left": "red", "Right": "blue", "NavierWall": "green"}
-    print(f'{bc_points.shape = }')
-    for p, t in zip(bc_points, bc_vertex_tags):
-        c = cmap[t]
-        plt.scatter(p[:1], p[1:], c=c)
-    plt.show()
+
+    c_print(f'N points: {new_points.shape[0]}, N bcs: {bc_edges.shape[0]}', color="green")
+
 
 if __name__ == '__main__':
     main()

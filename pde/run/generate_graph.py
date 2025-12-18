@@ -2,13 +2,15 @@ import numpy as np
 from collections import defaultdict
 import torch
 from cprint import c_print
+import pickle
 
+from pde.utils import ARTEFACT_DIR
 from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
-from pde.graph_grid.U_graph import UGraph, setup_graph
-from pde.graph_grid.graph_utils import plot_edges
+from pde.graph_grid.U_graph import UGraph, setup_graph, UValues
 from mesh_gen.meshes_pde import gen_points_full, gen_mesh_random
 from pde.config import Config
+from mesh_gen.mesh_gen_utils import plot_mesh
 
 
 def boundary_normals(points, triangles, bc_edges):
@@ -82,6 +84,11 @@ def boundary_normals(points, triangles, bc_edges):
     return normals_at_v
 
 
+def plot_helper(Xs, p_tags):
+    id_map = {s: i for i, s in enumerate(dict.fromkeys(p_tags))}
+    ids = [id_map[s] for s in p_tags]
+    plot_mesh(Xs, ids)
+
 def mesh_heat(cfg, max_degree=2, grad_neigh=25):
     cfg = Config()
     N_comp = 1
@@ -146,19 +153,14 @@ def mesh_heat(cfg, max_degree=2, grad_neigh=25):
     return U_graph, triangles
 
 
-def mesh_graph(cfg, max_degree=2, grad_neigh=25):
+def mesh_graph(cfg) -> tuple[UGraph, UValues]:
     N_comp = 3
     # Xs, triangles, (int_edges, bc_edges), p_tags = gen_points_full()
     Xs, triangles, (_, bc_edges), p_tags = gen_mesh_random()
+    plot_helper(Xs, p_tags)
 
     Xs = torch.from_numpy(Xs).float()
     triangles = torch.from_numpy(triangles).int()
-
-    # all_tags = np.concatenate([np.zeros(len(int_edges)), np.ones(len(bc_edges))], axis=0, dtype=np.float32)
-    # all_tags = torch.from_numpy(all_tags)
-    # all_edgs = torch.from_numpy(np.concatenate([int_edges, bc_edges], axis=0, dtype=np.int32))
-    # plot_edges(Xs, all_edgs, colors=all_tags)
-    # exit(7)
 
     # Process boundary points
     normals = boundary_normals(Xs, triangles, bc_edges)
@@ -180,7 +182,7 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
         wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (2, 0), (0, 2)], value=0,
                            weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[1], n_hat[1]])
 
-        if tag == "wall_bottom" or tag == "wall_top" or y <= 0 or y >= 1.5:
+        if tag == "Navier_wall":
             deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0.),
                      Deriv(comp=[1], orders=[(0, 0)], value=0.),
                      wall_deriv
@@ -199,7 +201,6 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
                         Deriv(comp=[2], orders=[(0, 0)], value=2.),
                      ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=[0, 0, 1], derivatives=deriv)
-
         elif tag == "wall_right":
             deriv = [
                         # Deriv(comp=[0], orders=[(1, 0)], value=0., weights=[1]),
@@ -212,28 +213,125 @@ def mesh_graph(cfg, max_degree=2, grad_neigh=25):
                         Deriv(comp=[2], orders=[(0, 0)], value=0.),
                      ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
-
-        elif tag == "circle":
-            deriv = [   Deriv(comp=[0], orders=[(0, 0)], value=0.),
-                        Deriv(comp=[1], orders=[(0, 0)], value=0.),
-
-                        # Deriv(comp=[2, 2], orders=[(1, 0), (0, 1)], value=0., weights=[n_hat[0], n_hat[1]]),
-                        wall_deriv,
-                     ]
-            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
         else:
             raise ValueError(f"Unknown point tag {tag}")
 
     c_print(f'n_points: {len(Xs_all)}', color="bright_green")
-    # U_graph = UGraph(Xs_all, N_comp=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
-    U_graph, Us_values = setup_graph(Xs_all, N_comp=N_comp, grad_neigh=grad_neigh, max_degree=max_degree, tri=triangles, device=cfg.device)
-    # with open("save_u_graph.pth", "wb") as f:
-    #     torch.save((U_graph, triangles), f)
 
+    U_graph, Us_values = setup_graph(Xs_all, N_comp=N_comp, grad_neigh=cfg.grad_neigh, max_degree=cfg.max_degree, tri=triangles, device=cfg.device)
     return U_graph, Us_values
 
 
-def load_graph(cfg)-> tuple[UGraph, torch.Tensor]:
-    u_graph, triangles = torch.load("../artefacts/save_u_graph.pth", weights_only=False)
-    return u_graph, triangles
+def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
+    with open(f'{ARTEFACT_DIR}/fvm2pde_dataset/12-18_01-44-16.pkl', 'rb') as f:
+        ds: dict = pickle.load(f)
+
+    Xs = ds['Xs']                       # shape = (N_us_tot, 2)
+    triangles = ds['triangles']         # shape = (N_tri, 3)
+    bc_edges = ds['bc_edges']           # shape = (N_bc_edges, 2)
+    p_tags = ds['p_tags']               # shape = (N_bc_edges,)
+    Us_true = ds['Us']                  # shape = (N_us_tot, N_comp)
+
+    # Xs, triangles, (_, bc_edges), p_tags = gen_mesh_random()
+    for i, (X, _) in enumerate(zip(Xs, p_tags)):
+        x, y = X
+        if x == 2 and y == 0:
+            p_tags[i] = "NavierWall"
+        elif x == 2 and y == 1.5:
+            p_tags[i] = "NavierWall"
+        elif x == 0 and y == 0:
+            p_tags[i] = "NavierWall"
+        elif x == 0 and y == 1.5:
+            p_tags[i] = "NavierWall"
+
+    plot_helper(Xs, p_tags)
+
+    Xs = torch.from_numpy(Xs).float()
+    triangles = torch.from_numpy(triangles).int()
+
+    N_comp = 3
+
+    # Process boundary points
+    normals = boundary_normals(Xs, triangles, bc_edges)
+
+    Xs_all = {}
+    for i, (X, tag) in enumerate(zip(Xs, p_tags)):
+        x, y = X
+        # if x == 2 and y == 0:
+        #     tag = "NavierWall"
+        # elif x == 2 and y == 1.5:
+        #     tag = "NavierWall"
+        # elif x == 0 and y == 0:
+        #     tag = "NavierWall"
+        # elif x == 0 and y == 1.5:
+        #     tag = "NavierWall"
+
+
+        value = [0 * x for _ in range(N_comp)]
+
+        if tag == "Normal":
+            Xs_all[i] = Point(PT.Normal, X, value=value)
+            continue
+
+        # Boundary conditions
+        n_hat = normals[i].tolist()
+        # wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1, 1, 0], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (1, 1), (2, 0), (0, 2), (1, 1)], value=0,
+        #       weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[0], n_hat[1], n_hat[1], n_hat[1]])
+        wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (2, 0), (0, 2)], value=0,
+                           weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[1], n_hat[1]])
+
+        if tag == "Navier_wall" or tag == "NavierWall":
+
+            deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0.),
+                     Deriv(comp=[1], orders=[(0, 0)], value=0.),
+                     wall_deriv
+                     ]
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
+
+        elif tag == "wall_left" or tag == "Left":
+
+            deriv = [
+                # Deriv(comp=[0], orders=[(1, 0)], value=0, weights=[1]),
+                # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
+                wall_deriv,
+                # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+                Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
+
+                # Pressure
+                Deriv(comp=[2], orders=[(0, 0)], value=2.),
+            ]
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=[0, 0, 1], derivatives=deriv)
+
+        elif tag == "wall_right" or tag == "Right":
+            deriv = [
+                # Deriv(comp=[0], orders=[(1, 0)], value=0., weights=[1]),
+                # Deriv(comp=[1, 0], orders=[(1, 0), (0, 1)], value=0, weights=[1, 1]),
+                wall_deriv,
+
+                # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
+                Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
+                # Pressure
+                Deriv(comp=[2], orders=[(0, 0)], value=0.),
+            ]
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
+
+        else:
+            raise ValueError(f"Unknown point tag {tag}")
+
+    c_print(f'n_points: {len(Xs_all)}', color="bright_green")
+
+    U_graph, Us_values = setup_graph(Xs_all, N_comp=N_comp, tri=triangles,
+                                     grad_neigh=cfg.grad_neigh, max_degree=cfg.max_degree, device=cfg.device)
+
+    #  Us_true = torch.from_numpy(Us_true).float().to(cfg.device)
+    # U_graph.set_grid(Us_true, Us_values)
+    return U_graph, Us_values
+
+
+
+if __name__ == "__main__":
+    torch.manual_seed(0)
+    load_ds_graph(Config())
+
+
 

@@ -9,7 +9,6 @@ from time_fvm.fvm_mesh import FVMMesh
 from time_fvm.fvm_equation import FVMEquation
 from mesh_gen.meshes_fvm import gen_mesh_tunnel, gen_rand_mesh
 from time_fvm.config_fvm import ConfigFVM
-from time_fvm.sparse_utils import plot_edges
 
 def mesh_graph(cfg: ConfigFVM):
     N_comp = 4

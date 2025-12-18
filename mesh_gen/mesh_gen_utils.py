@@ -6,6 +6,7 @@ import matplotlib.colors as mcolors
 from shapely.geometry import Point, Polygon, box
 from shapely import affinity
 
+
 @dataclass
 class MeshProps:
     min_area: float
@@ -43,6 +44,7 @@ def extract_mesh_data(mesh):
 
     int_edges = extract_interor_edges(triangles)
     return (points, triangles), (p_markers, f_markers), (int_edges, bound_edges)
+
 
 def gen_rand_ellipses(
         n_ellipses,
@@ -157,6 +159,7 @@ def plot_mesh(points, p_markers):
     # plt.grid(True)
     plt.tight_layout()
     plt.show()
+
 
 def plot_edges(coords, edge_idx, title=""):
     """ Plot the edges of the mesh.

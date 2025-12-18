@@ -116,6 +116,9 @@ class Config:
     xmin: float = 0
     xmax: float = 1
     N: tuple[int] = (100, 125)
+    # Derivative settings
+    max_degree: int = 2     # Max degree of derivative to compute
+    grad_neigh: int = 16    # Number of neighbors to use for gradient computations
 
     # Forward PDE solver config
     fwd_cfg: FwdConfig = field(default_factory=FwdConfig)

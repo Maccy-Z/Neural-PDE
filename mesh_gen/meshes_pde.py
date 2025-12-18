@@ -47,8 +47,8 @@ def gen_mesh_random():
     mesh_props = MeshProps(min_area, max_area, lengthscale=area_lnscale)
 
     coords = [
-              Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="wall_bottom"),
-              Line([[xmin, ymax], [xmax, ymax]], True, name="wall_top"),
+              Line([[xmin, ymin], [xmax, ymin]], dist_req=True, name="Navier_wall"),
+              Line([[xmin, ymax], [xmax, ymax]], True, name="Navier_wall"),
               Line([[xmin, ymin], [xmin, ymax]], True, name="wall_left"),
               Line([[xmax, ymax], [xmax, ymin]], True, name="wall_right"),
               ]
@@ -58,17 +58,16 @@ def gen_mesh_random():
 
     for spec in rand_ellipses:
         e = Ellipse(center=spec['center'], semi_major_axis=spec['semi_major'], eccentricity=spec['eccentricity'], angle=spec['angle'],
-                      lengthscale=lengthscale, hole=True, dist_req=True, name="circle")
+                      lengthscale=lengthscale, hole=True, dist_req=True, name="Navier_wall")
         coords.append(e)
-
 
     (point_props, markers, _edges), marker_tags = create_mesh(coords, mesh_props)
     points, triangles = point_props
     p_markers, _ = markers
-    int_edges, bound_edges = _edges
+    _, bound_edges = _edges
 
     p_tags = [marker_tags[int(i)] for i in p_markers]
-    return points, triangles, (int_edges, bound_edges), p_tags
+    return points, triangles, (None, bound_edges), p_tags
 
 
 def main():

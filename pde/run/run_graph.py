@@ -10,93 +10,9 @@ from pde.graph_grid.U_graph import UValues, UGraph
 from pde.pdes.PDEs import Fluid, FluidLearned, NNFunc
 from pde.utils import setup_logging, ARTEFACT_DIR
 from pde.loss import DummyLoss, MSELossNorm
-from pde.run.generate_graph import mesh_graph, load_graph
+from pde.run.generate_graph import mesh_graph
 from pde.run.batching import GraphDataset, GraphSample
 
-class MetricTracker:
-    tracking_dict: dict[str, list[torch.Tensor]]
-    def __init__(self, cfg: Config):
-        self.tracking_dict = {}
-
-    def add_metric(self, new_vals: dict[str, torch.Tensor]):
-        for key in new_vals.keys():
-            if key not in self.tracking_dict:
-                self.tracking_dict[key] = []
-
-        for key, val in new_vals.items():
-                self.tracking_dict[key].append(val)
-
-    def get_mean_metrics(self, keys: list[str]) -> dict[str, torch.Tensor]:
-        """ Return average metrics, and reset. """
-        return_dict = {}
-        for key in keys:
-            if key not in self.tracking_dict:
-                raise ValueError(f"Key {key} not found in tracking_dict")
-            all_metrics = torch.stack(self.tracking_dict[key])
-            mean_metric = all_metrics.mean()
-            return_dict[key] = mean_metric
-            # Reset
-            self.tracking_dict[key] = []
-
-        return return_dict
-
-    def get_metrics(self, key: str) -> torch.Tensor:
-        """ Return metrics, and reset. """
-        if key not in self.tracking_dict:
-            raise ValueError(f"Key {key} not found in tracking_dict")
-        all_metrics = torch.stack(self.tracking_dict[key])
-        # Reset
-        self.tracking_dict[key] = []
-
-        return all_metrics
-
-def setup(cfg: Config):
-    # U_graph, _ = mesh_graph(cfg)
-    save_files = os.listdir(ARTEFACT_DIR / "dataset")
-    save_files = sorted([f for f in save_files if f.endswith(".pth")])
-    graphs, Us_values = [], []
-    for f in save_files:
-        save_dict = torch.load(ARTEFACT_DIR / "dataset" / f, weights_only=False)
-        Us_true = save_dict["Us_values"]
-        U_graph = save_dict["U_graph"]
-        graphs.append(U_graph)
-        Us_values.append(Us_true)
-
-    loss_fn = MSELossNorm()
-
-    dataset = GraphDataset(graphs, Us_values, N_steps=cfg.fwd_cfg.N_iter, cfg=cfg)
-    norm_mean, norm_std = dataset.get_norm_stats()
-
-    pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)
-
-    # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=cfg.mup_lr, betas=cfg.mup_betas, weight_decay=1e-4)
-    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=cfg.scalar_lr)  # , betas=(0.95, 0.95))
-
-    return dataset, pde_fn, loss_fn, optim, optim_other
-
-def true_pde():
-    """ Generate true solution using known PDE. """
-    cfg = Config()
-    U_graph, Us_values = mesh_graph(cfg)
-    U_graph.init_lin_solver(cfg)
-    pde_fn = Fluid(cfg, device=cfg.device)
-    # pde_fn = HeatLearned(cfg, device=cfg.DEVICE)
-
-    loss_fn = DummyLoss()
-
-    pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
-
-    pde_adj.forward_solve(U_graph, Us_values)
-    U_graph.plot_interp(Us_values, title="Initial solution")
-
-    # Us = Us_values.Us
-
-    # # Save the solution and graph
-    # save_dict = {"Us_values": Us_values, "U_graph": U_graph}
-    # with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
-    #     torch.save(save_dict, f)
-    return None
 
 #
 # def train_adjoint():
@@ -184,6 +100,96 @@ def true_pde():
 #     pde_adj.forward_solve()
 #     pde_adj.plot_interp(title="Predicted solution")
 
+
+class MetricTracker:
+    tracking_dict: dict[str, list[torch.Tensor]]
+    def __init__(self, cfg: Config):
+        self.tracking_dict = {}
+
+    def add_metric(self, new_vals: dict[str, torch.Tensor]):
+        for key in new_vals.keys():
+            if key not in self.tracking_dict:
+                self.tracking_dict[key] = []
+
+        for key, val in new_vals.items():
+                self.tracking_dict[key].append(val)
+
+    def get_mean_metrics(self, keys: list[str]) -> dict[str, torch.Tensor]:
+        """ Return average metrics, and reset. """
+        return_dict = {}
+        for key in keys:
+            if key not in self.tracking_dict:
+                raise ValueError(f"Key {key} not found in tracking_dict")
+            all_metrics = torch.stack(self.tracking_dict[key])
+            mean_metric = all_metrics.mean()
+            return_dict[key] = mean_metric
+            # Reset
+            self.tracking_dict[key] = []
+
+        return return_dict
+
+    def get_metrics(self, key: str) -> torch.Tensor:
+        """ Return metrics, and reset. """
+        if key not in self.tracking_dict:
+            raise ValueError(f"Key {key} not found in tracking_dict")
+        all_metrics = torch.stack(self.tracking_dict[key])
+        # Reset
+        self.tracking_dict[key] = []
+
+        return all_metrics
+
+
+def setup(cfg: Config):
+    # Load save dataset
+    save_files = os.listdir(ARTEFACT_DIR / "pde_dataset")
+    save_files = sorted([f for f in save_files if f.endswith(".pth")])
+    graphs, Us_values = [], []
+    for f in save_files:
+        save_dict = torch.load(ARTEFACT_DIR / "pde_dataset" / f, weights_only=False)
+        Us_true = save_dict["Us_values"]
+        U_graph = save_dict["U_graph"]
+        graphs.append(U_graph)
+        Us_values.append(Us_true)
+
+    loss_fn = MSELossNorm()
+
+    dataset = GraphDataset(graphs, Us_values, N_steps=cfg.fwd_cfg.N_iter, cfg=cfg)
+    norm_mean, norm_std = dataset.get_norm_stats()
+
+    pde_fn = NNFunc(cfg, norm_mean=norm_mean, norm_std=norm_std, device=cfg.device)
+
+    # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
+    optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=cfg.mup_lr, betas=cfg.mup_betas, weight_decay=1e-4)
+    optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=cfg.scalar_lr)  # , betas=(0.95, 0.95))
+
+    return dataset, pde_fn, loss_fn, optim, optim_other
+
+
+def true_pde():
+    """ Generate true solution using known PDE. """
+    from generate_graph import load_ds_graph
+    cfg = Config()
+    # U_graph, Us_values = mesh_graph(cfg)
+    U_graph, Us_values = load_ds_graph(cfg)
+    U_graph.init_lin_solver(cfg)
+    pde_fn = Fluid(cfg, device=cfg.device)
+
+    loss_fn = DummyLoss()
+
+    pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
+
+    pde_adj.forward_solve(U_graph, Us_values)
+    U_graph.plot_interp(Us_values, title="Initial solution")
+
+    # Us = Us_values.Us
+
+    # # Save the solution and graph
+    # save_dict = {"Us_values": Us_values, "U_graph": U_graph}
+    # with open(ARTEFACT_DIR / "Us_solution.pth", "wb") as f:
+    #     torch.save(save_dict, f)
+    return None
+
+
 class Trainer(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -265,7 +271,7 @@ class Trainer(torch.nn.Module):
 
 
 if __name__ == "__main__":
-    setup_logging(debug=4)
+    setup_logging(debug=3)
     torch.set_printoptions(linewidth=120, precision=7)
     torch.manual_seed(1)
     # torch.autograd.set_detect_anomaly(True)
