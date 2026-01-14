@@ -67,7 +67,7 @@ class FwdConfig:
     solve_acc: float = 0.001
 
     # Forward linear solver settings
-    lin_mode: LinMode = LinMode.CUDSS
+    lin_mode: LinMode = LinMode.DENSE
     solver_cfg: dict = None
     gmres_cfg = {"maxiter": 60, "restart": 60, "rtol": 1e-3}
 
@@ -111,7 +111,7 @@ class Config:
 
     # Phyiscal Parameters
     mu = 1.
-    rho = 1000
+    rho = 50
 
     # Grid settings
     xmin: float = 0

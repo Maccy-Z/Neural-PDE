@@ -114,7 +114,7 @@ def main(save_name=f'12-18_18-27-06'):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     with open(save_path, 'wb') as f:
         pickle.dump(save_dict, f)
-
+    c_print(f'Saved new remeshed graph to {save_path}', color="green")
 
     new_points, new_triangles = torch.from_numpy(new_points).float(), torch.from_numpy(new_triangles)
     Us_new = torch.from_numpy(Us_new).float()

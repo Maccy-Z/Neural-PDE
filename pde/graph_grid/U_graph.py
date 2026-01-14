@@ -58,6 +58,7 @@ def tri_to_n_hop(tris, hops=6):
 
     return n_hop_reach_cols
 
+
 class UValues:
     """ Holds numerical values at each node. """
     Xs: Tensor   # [N_us_tot, 2]                # Coordinates of nodes
@@ -204,9 +205,6 @@ class UGraph:
             self.solver_opts['fwd'] = CUDSSSolver(cfg.fwd_cfg.solver_cfg)
         if cfg.adj_cfg.lin_mode == LinMode.CUDSS:
             self.solver_opts['adj'] = CUDSSSolver(cfg.adj_cfg.solver_cfg)
-        #
-        # print(f'{self.solver_opts = }')
-        # exit(5)
 
     def get_Us_dUs(self, U_values: UValues):
         """ Get U values and their derivatives at each point. """
@@ -217,6 +215,8 @@ class UGraph:
         U_dUs = torch.stack(list(grads_dict.values()), dim=1)    # shape = [N_pde, N_derivs, N_component]
         return U_dUs, Xs
 
+
+    # --------------- Grid manipulation functions ---------------
     def set_grid(self, new_Us: torch.Tensor, U_values: UValues):
         """
         Set grid to new values. Used for Jacobian computation.
@@ -234,7 +234,7 @@ class UGraph:
         deltas = deltas.view(-1, self.N_comp)
         self.set_grid(U_values.Us - deltas, U_values)
 
-    def new_Us(self, Us: torch.Tensor) -> UValues:
+    def new_grid(self, Us: torch.Tensor) -> UValues:
         """ Create new UValues object from Us tensor, respecting boundary conditions. """
         Us_values = UValues(self._Xs, Us.clone())
         self.set_grid(Us, Us_values)
@@ -251,16 +251,17 @@ class UGraph:
         Us_test[self.dirich_mask] = self.bc_calc.dirich_bc_vals()
         return UValues(Us_old.Xs, Us_test)
 
-    def get_zero_U_values(self, Us_old) -> UValues:
-        """ Get UValues object with all zeros (except BCs). """
+    def zero_grid_like(self, Us_old) -> UValues:
+        """ Get Us_zeros like Us_old with all zeros (except BCs). """
         zeros = torch.zeros_like(Us_old.Us)
         Us_zeros = UValues(Us_old.Xs, zeros)
         self.set_grid(zeros, Us_zeros)
         return Us_zeros
 
     def get_all_us_Xs(self, U_values: UValues):
-        """ Return all grid points, including fake boundaries. """
+        """ Return values and Xs. """
         return U_values.Us, self._Xs
+
 
     # --------------- Plotting functions ---------------
     def plot_interp(self, Us_values: UValues, Xlims=None, title="Interpolated solution"):
@@ -278,6 +279,7 @@ class UGraph:
     def plot_points(self, Us_values: UValues, Xlims=None, show_index=False, title=""):
         Us, Xs = Us_values.Us, Us_values.Xs
         plot_points(Xs, Us.T, Xlims=Xlims, show_index=show_index, title=title)
+
 
 def setup_graph(setup_dict: dict[int, Point], tri, N_comp, grad_neigh, max_degree:int = 2, device="cpu") -> tuple[UGraph, UValues]:
     """ Create UGraph and UValues. """

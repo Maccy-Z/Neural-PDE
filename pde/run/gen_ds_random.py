@@ -4,8 +4,8 @@ from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pde.pdes.PDEs import Fluid, FluidLearned, NNFunc
 from pde.utils import setup_logging, ARTEFACT_DIR
-from pde.loss import DummyLoss, MSELoss2, MSELossNorm
-from pde.run.generate_graph import mesh_graph, load_graph
+from pde.loss import DummyLoss
+from pde.run.generate_graph import mesh_graph
 
 
 def gen_graph():
@@ -25,6 +25,7 @@ def gen_graph():
     U_graph.plot_interp_cell(Us_values, title=f'{"Converged" if solve_info["converged"] else "Not Converged"} solution')
 
     return solve_info, Us_values, U_graph
+
 
 def gen_dataset():
     i = 0

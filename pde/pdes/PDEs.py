@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from pde.config import Config
 from .MLP_mup import MLP_mup, get_MLP_mup, MLP
+from pde.utils import unwrap_vmap
 
 class PDEFunc(torch.nn.Module, ABC):
     def __init__(self, cfg: Config, device='cpu'):
@@ -94,6 +95,8 @@ class Fluid(PDEFunc):
             return.shape = [n_comp]
         """
         x, y = Xs
+        # u_dus = 1e5 * torch.tanh(u_dus / 1e5)
+
         u = u_dus[0]
         dudx, dudy = u_dus[1], u_dus[2]
         d2udx2, d2udy2 = u_dus[3], u_dus[5]
@@ -106,15 +109,17 @@ class Fluid(PDEFunc):
         dpdx = dudx[2]
         dpdy = dudy[2]
 
+
+        # advect_x = 1e2 * torch.tanh(advect_x / 1e3)
+        # advect_y = 1e2 * torch.tanh(advect_y / 1e3)
+
         resid_x = -dpdx + laplace_Vx - advect_x
         resid_y = -dpdy + laplace_Vy - advect_y
 
         divergence = dudx[0] + dudy[1]
 
-        """ Testing """
-        # resid_x = u[0] # -dpdx + laplace_Vx
-        # resid_y = 2*u[1] # -dpdy + laplace_Vy
-        # divergence =  1 - 1 / 2 * x - u[2]
+        # print("gradient:", torch.func.debug_unwrap(u_dus).abs().max())
+        # print("Advection:", torch.func.debug_unwrap(advect_x).abs().max())
 
         resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
 

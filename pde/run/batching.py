@@ -14,7 +14,7 @@ class GraphSample:
         self.Us_true = Us_true
 
         # Initialise saved Us as zeros
-        self.Us_saved = [U_graph.get_zero_U_values(Us_true) for _ in range(N_steps+1)]
+        self.Us_saved = [U_graph.zero_grid_like(Us_true) for _ in range(N_steps + 1)]
 
         # Initialise solver
         self.U_graph.init_lin_solver(cfg)
@@ -33,7 +33,7 @@ class GraphSample:
         """
         # TODO: implement sampling strategy
         if i % 51 == 0:
-            Us_step = self.U_graph.get_zero_U_values(self.Us_true)  # U_graph.set_grid(torch.zeros_like(Us_true), U_values)
+            Us_step = self.U_graph.zero_grid_like(self.Us_true)  # U_graph.set_grid(torch.zeros_like(Us_true), U_values)
         elif i % 11 == 0:
             Us_step = self.Us_true  # U_graph.set_grid(Us_true, U_values)
         else:

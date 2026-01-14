@@ -104,10 +104,8 @@ class EfficientIntervalOptimizer:
         if f_zero is not None:
             f_alpha = loss_func(pred_alpha)
             if f_alpha > f_zero*1.01:
-                logging.info(f"When doing interval optimisation, {pred_alpha = } is still too high. {f_alpha = }, {f_zero = }.")
+                logging.info(f"When doing interval optimisation, {pred_alpha = :.3g} is still too high. f(alpha)={f_alpha.item():.4g}, f(zero)={f_zero.item():.4g}.")
                 pred_alpha = pred_alpha / 2
-                # print(loss_func(0.))
-                # exit(5)
         return pred_alpha
 
 
@@ -155,7 +153,7 @@ class SolverNewton:
         converged = False
         old_resid_norm = float('inf')
         best_alpha = 1.0
-        Us_history: list[UValues] = [U_graph.new_Us(U_values.Us)]
+        Us_history: list[UValues] = [U_graph.new_grid(U_values.Us)]
         for i in range(self.N_iter):
             # Compute Jacobian, residuals and solve linear system
             with self.timer:
@@ -183,7 +181,7 @@ class SolverNewton:
                 max_abs_residual = torch.max(new_resid.abs())
             t_line = self.timer.last
 
-            Us_history.append(U_graph.new_Us(U_values.Us))
+            Us_history.append(U_graph.new_grid(U_values.Us))
 
             logging.info(f'NR Iteration {i}: Linear residual: {lin_error_norm:.3g}, Norm residual: {new_resid_norm:.3g}, Max residual: {max_abs_residual:.3g}')
             logging.debug(f'jacob time: {t_jacob:.4f}, solve time: {t_solve:.4g}, Line+postproc time: {t_line:.4f}s')

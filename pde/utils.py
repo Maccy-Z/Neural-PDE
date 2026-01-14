@@ -1,3 +1,5 @@
+import torch
+
 from base_cfg import BASE_DIR
 
 
@@ -61,6 +63,11 @@ ARTEFACT_DIR = BASE_DIR / "artefacts"
 #
 #     raise ValueError(f"Value {value} not found in dictionary")
 
+def unwrap_vmap(x: torch.Tensor) -> torch.Tensor:
+    # Strip all functorch wrappers (BatchedTensor, GradTrackingTensor, ...)
+    while torch._C._functorch.is_functorch_wrapped_tensor(x):
+        x = torch._C._functorch.get_unwrapped(x)
+    return x
 
 def setup_logging(debug=True):
     import logging

@@ -222,8 +222,8 @@ def mesh_graph(cfg) -> tuple[UGraph, UValues]:
     return U_graph, Us_values
 
 
-def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
-    with open(f'{ARTEFACT_DIR}/fvm2pde_dataset/12-18_18-27-06.pkl', 'rb') as f:
+def load_ds_graph(file, cfg: Config) -> tuple[UGraph, UValues]:
+    with open(file, 'rb') as f:
         ds: dict = pickle.load(f)
 
     Xs = ds['Xs']                       # shape = (N_us_tot, 2)
@@ -244,9 +244,10 @@ def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
         elif x == 0 and y == 1.5:
             p_tags[i] = "NavierWall"
 
-    plot_helper(Xs, p_tags)
+    # plot_helper(Xs, p_tags)
 
     Xs = torch.from_numpy(Xs).float()
+    Us_true = torch.from_numpy(Us_true).float()
     triangles = torch.from_numpy(triangles).int()
 
     N_comp = 3
@@ -255,19 +256,9 @@ def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
     normals = boundary_normals(Xs, triangles, bc_edges)
 
     Xs_all = {}
-    for i, (X, tag) in enumerate(zip(Xs, p_tags)):
+    for i, (X, tag, U) in enumerate(zip(Xs, p_tags, Us_true)):
         x, y = X
-        # if x == 2 and y == 0:
-        #     tag = "NavierWall"
-        # elif x == 2 and y == 1.5:
-        #     tag = "NavierWall"
-        # elif x == 0 and y == 0:
-        #     tag = "NavierWall"
-        # elif x == 0 and y == 1.5:
-        #     tag = "NavierWall"
-
-
-        value = [0 * x for _ in range(N_comp)]
+        value = U.tolist() #[0 * x for _ in range(N_comp)]
 
         if tag == "Normal":
             Xs_all[i] = Point(PT.Normal, X, value=value)
@@ -281,7 +272,6 @@ def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
                            weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[1], n_hat[1]])
 
         if tag == "Navier_wall" or tag == "NavierWall":
-
             deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0.),
                      Deriv(comp=[1], orders=[(0, 0)], value=0.),
                      wall_deriv
@@ -289,9 +279,7 @@ def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
 
         elif tag == "wall_left" or tag == "Left":
-
             deriv = [
-                # Deriv(comp=[0], orders=[(1, 0)], value=0, weights=[1]),
                 # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
                 wall_deriv,
                 # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
@@ -323,8 +311,6 @@ def load_ds_graph(cfg: Config) -> tuple[UGraph, UValues]:
     U_graph, Us_values = setup_graph(Xs_all, N_comp=N_comp, tri=triangles,
                                      grad_neigh=cfg.grad_neigh, max_degree=cfg.max_degree, device=cfg.device)
 
-    #  Us_true = torch.from_numpy(Us_true).float().to(cfg.device)
-    # U_graph.set_grid(Us_true, Us_values)
     return U_graph, Us_values
 
 

@@ -222,7 +222,6 @@ class Trainer(torch.nn.Module):
             # Adjoint gradient
             init_loss, final_loss, resid = self.pde_adj.single_step(U_graph, Us_step, Us_true)
 
-            # torch.nn.utils.clip_grad_value_(self.pde_fn.parameters(), clip_value=0.5)
             torch.nn.utils.clip_grad_norm_(self.pde_fn.parameters(), max_norm=cfg.clip_norm)
             self.optim.step(), self.optim_other.step()
 
@@ -245,14 +244,14 @@ class Trainer(torch.nn.Module):
         valid_losses = []
         for sample in self.ds_valid.samples:
             U_graph, Us_true = sample.U_graph, sample.Us_true
-            Us_test = U_graph.get_zero_U_values(Us_true)
+            Us_test = U_graph.zero_grid_like(Us_true)
             Us_history, convergence = self.pde_adj.forward_solve(U_graph, Us_test)
 
             valid_loss = self.loss_fn(Us_test, Us_true, requires_grad=False)
             valid_losses.append(valid_loss)
             # Update saved states
             sample.update_Us_last(Us_test)
-            sample.update_Us_all(Us_history)
+            # sample.update_Us_all(Us_history)
 
         valid_loss_mean = torch.stack(valid_losses).mean()
         self.metric_tracker.add_metric({"valid_loss": valid_loss_mean})
@@ -260,7 +259,7 @@ class Trainer(torch.nn.Module):
 
     def plot_final_results(self):
         U_g_plot, Us_plot = self.ds_valid.samples[0].U_graph, self.ds_valid.samples[0].Us_true
-        Us_test = U_g_plot.new_Us(torch.zeros_like(Us_plot.Us))
+        Us_test = U_g_plot.new_grid(torch.zeros_like(Us_plot.Us))
         self.pde_adj.forward_solve(U_g_plot, Us_test)
         U_g_plot.plot_interp(Us_test)
 
@@ -274,10 +273,10 @@ if __name__ == "__main__":
     # torch.autograd.set_detect_anomaly(True)
     # torch.use_deterministic_algorithms(True)
 
-    true_pde()
+    # true_pde()
 
 
 
-    # trainer = Trainer()
-    # trainer.train_model()
-    # trainer.plot_final_results()
+    trainer = Trainer()
+    trainer.train_model()
+    trainer.plot_final_results()
