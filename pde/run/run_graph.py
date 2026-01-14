@@ -7,7 +7,7 @@ import os
 from pde.config import Config
 from pde.NeuralPDE_Graph import NeuralPDEGraph
 from pde.graph_grid.U_graph import UValues, UGraph
-from pde.pdes.PDEs import Fluid, FluidLearned, NNFunc
+from pde.pdes.PDEs import Fluid, NNFunc
 from pde.utils import setup_logging, ARTEFACT_DIR
 from pde.loss import DummyLoss, MSELossNorm
 from pde.run.generate_graph import mesh_graph
@@ -244,7 +244,7 @@ class Trainer(torch.nn.Module):
         valid_losses = []
         for sample in self.ds_valid.samples:
             U_graph, Us_true = sample.U_graph, sample.Us_true
-            Us_test = U_graph.zero_grid_like(Us_true)
+            Us_test = U_graph.smooth_grid_like(Us_true)
             Us_history, convergence = self.pde_adj.forward_solve(U_graph, Us_test)
 
             valid_loss = self.loss_fn(Us_test, Us_true, requires_grad=False)

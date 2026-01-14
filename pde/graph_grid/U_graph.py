@@ -258,6 +258,45 @@ class UGraph:
         self.set_grid(zeros, Us_zeros)
         return Us_zeros
 
+    def smooth_grid_like(self, Us_old):
+        """ Smooth initial data on the grid. """
+
+        def kernel_weighted_sum(X_known, U_known, X_query, sigma=0.1, eps=1e-12):
+            """
+            X_known: (Nk, d)
+            U_known: (Nk,) or (Nk, c)
+            X_query: (M, d)
+            returns: (M,) or (M, c)
+            """
+            if U_known.ndim == 1:
+                U_known = U_known[:, None]
+
+            # distances from queries to known points: (M, Nk)
+            D = torch.cdist(X_query, X_known)
+
+            # Use all known points
+            Dk = D  # (M, Nk)
+            Uk = U_known[None, :, :].expand(X_query.shape[0], -1, -1)  # (M, Nk, c)
+
+            # Weights
+            # W = torch.exp(-(Dk ** 2) / (2 * sigma ** 2))  # (M, Nk)
+            # W = torch.exp(-Dk / sigma)  # (M, Nk)
+            W = 1 / Dk ** sigma  # (M, Nk)
+            W = W / (W.sum(dim=1, keepdim=True) + eps)  # normalize
+
+            Uq = (W[..., None] * Uk).sum(dim=1)  # (M,c)
+            return Uq.squeeze(-1)
+
+        Us_smooth = self.zero_grid_like(Us_old)
+
+        for i in range(self.N_comp):
+            Xs_dirich = Us_smooth.Xs[self.dirich_mask[:, i]]
+            Xs_main = Us_smooth.Xs[~self.dirich_mask[:, i]]
+            Us_dirich = Us_smooth.Us[self.dirich_mask[:, i]][:, i]
+            Us_main = kernel_weighted_sum(Xs_dirich, Us_dirich, Xs_main, sigma=1.5)
+            Us_smooth.Us[~self.dirich_mask[:, i], i] = Us_main
+        return Us_smooth
+
     def get_all_us_Xs(self, U_values: UValues):
         """ Return values and Xs. """
         return U_values.Us, self._Xs

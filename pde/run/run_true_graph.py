@@ -25,10 +25,12 @@ def true_pde():
     U_graph.init_lin_solver(cfg)
 
 
-    Us_values = U_graph.zero_grid_like(Us_values)
+    Us_values = U_graph.smooth_grid_like(Us_values)
+    # Us_values = U_graph.zero_grid_like(Us_values)
+
     pde_adj = NeuralPDEGraph(pde_fn, cfg, loss_fn)
-    U_graph.plot_interp(Us_values)
-    exit(5)
+    # U_graph.plot_interp(Us_values)
+    # exit(5)
 
     Us_history, _ = pde_adj.forward_solve(U_graph, Us_values)
 

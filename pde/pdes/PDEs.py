@@ -126,68 +126,11 @@ class Fluid(PDEFunc):
         return resid
 
 
-class FluidLearned(PDEFunc):
-    # scaling = [ 0.0125,  0.033, 0.033, 0.27, 0.27, 0.27]
-    def __init__(self, cfg: Config, device='cpu'):
-        super().__init__(cfg=cfg, device=device)
-        self.to(device)
-
-        # self.mu = cfg.mu
-        # self.rho = cfg.rho
-        self.rhos = nn.Parameter(torch.tensor([0., 0.], device=device), requires_grad=True)
-        self.mu = nn.Parameter(torch.tensor(1., device=device), requires_grad=True)
-
-        self.rescaling = torch.tensor([ [1.2500e-02, 1.2500e-02, 4.7587e-01],
-                                        [3.3000e-02, 3.3000e-02, 6.8853e-01],
-                                        [3.3000e-02, 3.3000e-02, 4.9480e-01],
-                                        [2.7000e-01, 2.7000e-01, 6.0260e+01],
-                                        [2.7000e-01, 2.7000e-01, 1.6940e+01],
-                                        [2.7000e-01, 2.7000e-01, 6.0878e+01]], device=device)
-
-    def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):
-        """ u_dus.shape = [n_grads, n_comp]
-            Xs.shape = [2]
-
-            return.shape = [n_comp]
-        """
-
-        x, y = Xs
-        # Rescale input equations
-        u_dus = u_dus / self.rescaling
-
-
-        u = u_dus[0]
-        dudx, dudy = u_dus[1], u_dus[2]
-        d2udx2, d2udy2 = u_dus[3], u_dus[5]
-
-        # u = u / self.scaling[0]
-        # dudx, dudy = dudx / self.scaling[1], dudy / self.scaling[1]
-        # d2udx2, d2udy2 = d2udx2 / self.scaling[3], d2udy2 / self.scaling[3]
-        # mu = self.mu * self.rescaling[3, 0]
-        # a = self.a * self.scaling[0] * self.scaling[1]
-
-        # Momentum equations
-        dpdx = dudx[2]
-        dpdy = dudy[2]
-        advect_x = u[0] * dudx[0] + u[1] * dudy[0]
-        advect_y = u[0] * dudx[1] + u[1] * dudy[1]
-        laplace_Vx = d2udx2[0] + d2udy2[0]
-        laplace_Vy = d2udx2[1] + d2udy2[1]
-
-        resid_x = -dpdx + self.mu * laplace_Vx - self.rhos[0] * advect_x
-        resid_y = -dpdy + self.mu * laplace_Vy - self.rhos[1] * advect_y
-        divergence = dudx[0] + dudy[1]
-
-        resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
-        return resid
-
-
 class NNFunc(PDEFunc):
     def __init__(self, cfg, norm_mean, norm_std, device='cuda'):
         super().__init__(cfg=cfg, device=device)
 
-        self.mlp: MLP_mup = get_MLP_mup(in_dim=8, out_dim=3, width=1024, n_hidden=1, activation=F.relu
-                                        , zero_out=True)
+        self.mlp: MLP_mup = get_MLP_mup(in_dim=8, out_dim=3, width=1024, n_hidden=1, activation=F.relu, zero_out=True)
         # self.mlp = MLP(in_dim=8, out_dim=3, width=32, n_hidden=0, activation=F.leaky_relu)
 
         mu = torch.tensor(1, device=device, dtype=torch.float32)
@@ -195,12 +138,6 @@ class NNFunc(PDEFunc):
 
 
         self.to(device)
-        # self.norm_std = torch.tensor([ [1.2500e-02, 1.2500e-02, 4.7587e-01],
-        #                                 [3.3000e-02, 3.3000e-02, 6.8853e-01],
-        #                                 [3.3000e-02, 3.3000e-02, 4.9480e-01],
-        #                                 [2.7000e-01, 2.7000e-01, 6.0260e+01],
-        #                                 [2.7000e-01, 2.7000e-01, 1.6940e+01],
-        #                                 [2.7000e-01, 2.7000e-01, 6.0878e+01]], device=device)
         self.norm_mean = norm_mean
         self.norm_std = norm_std
 
@@ -217,15 +154,13 @@ class NNFunc(PDEFunc):
         d2udx2, d2udy2 = u_dus[3], u_dus[5]
 
         # Base residual
-        # advect_x = (u[0] * dudx[0] + u[1] * dudy[0])
-        # advect_y = (u[0] * dudx[1] + u[1] * dudy[1])
         laplace_Vx = d2udx2[0] + d2udy2[0]
         laplace_Vy = d2udx2[1] + d2udy2[1]
         dpdx = dudx[2]
         dpdy = dudy[2]
 
-        resid_x = -dpdx + mu * laplace_Vx #- advect_x
-        resid_y = -dpdy + mu * laplace_Vy #- advect_y
+        resid_x = -dpdx + mu * laplace_Vx
+        resid_y = -dpdy + mu * laplace_Vy
 
         divergence = dudx[0] + dudy[1]
 
@@ -236,9 +171,5 @@ class NNFunc(PDEFunc):
         in_state = torch.stack([u[0], u[1], dudx[0], dudx[1], d2udx2[0], d2udx2[1], d2udy2[0], d2udy2[1]], dim=0)
 
         f = self.mlp(in_state)  # [3]
-        # f = self.lin1(in_state)
-        # f = F.leaky_relu(f)
-        # f = self.lin2(f).squeeze()
-        # f[2] *= 0
         resid = resid + f
         return resid

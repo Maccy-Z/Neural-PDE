@@ -162,7 +162,6 @@ class SolverNewton:
             with self.timer:
                 deltas = self.newton_step(pde_calc, jacobian, old_resid, solver_opts)
             t_solve = self.timer.last
-
             # Find best alpha using line search
             with self.timer:
                 zero_alpha_norm = old_resid.norm()
