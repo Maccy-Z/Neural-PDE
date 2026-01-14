@@ -10,9 +10,9 @@ from pde.graph_grid.U_graph import UValues, UGraph
 from pde.pdes.PDEs import Fluid, NNFunc
 from pde.utils import setup_logging, ARTEFACT_DIR
 from pde.loss import DummyLoss, MSELossNorm
-from pde.run.generate_graph import mesh_graph
 from pde.run.batching import GraphDataset, GraphSample
-
+from pde.schedulers import CosineAnnealingWarmupScheduler
+from pde.run.run_utils import MetricTracker
 
 #
 # def train_adjoint():
@@ -101,52 +101,16 @@ from pde.run.batching import GraphDataset, GraphSample
 #     pde_adj.plot_interp(title="Predicted solution")
 
 
-class MetricTracker:
-    tracking_dict: dict[str, list[torch.Tensor]]
-    def __init__(self, cfg: Config):
-        self.tracking_dict = {}
-
-    def add_metric(self, new_vals: dict[str, torch.Tensor]):
-        for key in new_vals.keys():
-            if key not in self.tracking_dict:
-                self.tracking_dict[key] = []
-
-        for key, val in new_vals.items():
-                self.tracking_dict[key].append(val)
-
-    def get_mean_metrics(self, keys: list[str]) -> dict[str, torch.Tensor]:
-        """ Return average metrics, and reset. """
-        return_dict = {}
-        for key in keys:
-            if key not in self.tracking_dict:
-                raise ValueError(f"Key {key} not found in tracking_dict")
-            all_metrics = torch.stack(self.tracking_dict[key])
-            mean_metric = all_metrics.mean()
-            return_dict[key] = mean_metric
-            # Reset
-            self.tracking_dict[key] = []
-
-        return return_dict
-
-    def get_metrics(self, key: str) -> torch.Tensor:
-        """ Return metrics, and reset. """
-        if key not in self.tracking_dict:
-            raise ValueError(f"Key {key} not found in tracking_dict")
-        all_metrics = torch.stack(self.tracking_dict[key])
-        # Reset
-        self.tracking_dict[key] = []
-
-        return all_metrics
-
-
 def setup(cfg: Config):
     # Load save dataset
-    save_files = os.listdir(ARTEFACT_DIR / "pde_dataset")
+    ds_dir = ARTEFACT_DIR / "dataset_fvm"
+    save_files = os.listdir(ds_dir)
     save_files = sorted([f for f in save_files if f.endswith(".pth")])
     graphs, Us_values = [], []
     for f in save_files:
-        save_dict = torch.load(ARTEFACT_DIR / "pde_dataset" / f, weights_only=False)
+        save_dict = torch.load(ds_dir / f, weights_only=False)
         Us_true = save_dict["Us_values"]
+        Us_true.to(cfg.device)
         U_graph = save_dict["U_graph"]
         graphs.append(U_graph)
         Us_values.append(Us_true)
@@ -206,14 +170,24 @@ class Trainer(torch.nn.Module):
     def train_model(self):
         cfg = self.cfg
 
+        # Create cosine annealing schedulers with warmup
+        scheduler = CosineAnnealingWarmupScheduler(
+            self.optim,
+            warmup_steps=cfg.warmup_steps,
+            max_steps=cfg.N_steps,
+            min_lr_ratio=cfg.min_lr_ratio
+        )
+        scheduler_other = CosineAnnealingWarmupScheduler(
+            self.optim_other,
+            warmup_steps=cfg.warmup_steps,
+            max_steps=cfg.N_steps,
+            min_lr_ratio=cfg.min_lr_ratio
+        )
+
         st = time.time()
         ds_train_iter = iter(self.ds_train)
         for i in range(self.cfg.N_steps):
-            # LR schedule
-            if i == 1000 or i == 1500:
-                for pg in self.optim.param_groups:
-                    pg['lr'] *= 0.5
-
+            self.pde_fn.train()
             sample = next(ds_train_iter)
             self.optim.zero_grad(), self.optim_other.zero_grad()
 
@@ -225,13 +199,17 @@ class Trainer(torch.nn.Module):
             torch.nn.utils.clip_grad_norm_(self.pde_fn.parameters(), max_norm=cfg.clip_norm)
             self.optim.step(), self.optim_other.step()
 
+            # Step the learning rate schedulers
+            scheduler.step()
+            scheduler_other.step()
+
             self.metric_tracker.add_metric({"loss": final_loss})
 
             if i % cfg.N_print == 0:
                 dt = time.time() - st
                 st = time.time()
                 avg_loss = self.metric_tracker.get_mean_metrics(["loss"])["loss"].item()
-                c_print(f'{i}/2000 loss: {avg_loss:.3g}, T = {dt:.3g}', color="bright_green")
+                c_print(f'{i}/{cfg.N_steps} loss: {avg_loss:.3g}, T = {dt:.3g}', color="bright_green")
                 # c_print(f'{Us_step.Us.mean():.4g}, {Us_true.Us.mean():.4g}', color="bright_blue")
 
             if i % cfg.N_valid == 0:
@@ -240,6 +218,7 @@ class Trainer(torch.nn.Module):
     @torch.no_grad()
     def _valid_step(self):
         """ Run validation. Initialise with zero field and update last prediction. """
+        self.pde_fn.eval()
 
         valid_losses = []
         for sample in self.ds_valid.samples:
@@ -250,20 +229,26 @@ class Trainer(torch.nn.Module):
             valid_loss = self.loss_fn(Us_test, Us_true, requires_grad=False)
             valid_losses.append(valid_loss)
             # Update saved states
-            sample.update_Us_last(Us_test)
-            # sample.update_Us_all(Us_history)
+            sample.update_Us_all(Us_history)
 
         valid_loss_mean = torch.stack(valid_losses).mean()
         self.metric_tracker.add_metric({"valid_loss": valid_loss_mean})
         print(f'{valid_loss_mean = }')
 
-    def plot_final_results(self):
-        U_g_plot, Us_plot = self.ds_valid.samples[0].U_graph, self.ds_valid.samples[0].Us_true
-        Us_test = U_g_plot.new_grid(torch.zeros_like(Us_plot.Us))
-        self.pde_adj.forward_solve(U_g_plot, Us_test)
-        U_g_plot.plot_interp(Us_test)
+    def plot_final_results(self, plot_history=True):
+        c_print("Validation loss history: ", color="bright_magenta")
+        c_print(self.metric_tracker.get_metrics("valid_loss"), color="bright_magenta")
 
-        print(self.metric_tracker.get_metrics("valid_loss"))
+        U_g_plot, Us_plot = self.ds_valid.samples[0].U_graph, self.ds_valid.samples[0].Us_true
+
+        Us_test = U_g_plot.smooth_grid_like(Us_plot)
+        Us_history, _ = self.pde_adj.forward_solve(U_g_plot, Us_test)
+
+        if plot_history:
+            for i, Us in enumerate(Us_history):
+                U_g_plot.plot_interp(Us, title=f'Solution step {i}')
+        else:
+            U_g_plot.plot_interp(Us_test)
 
 
 if __name__ == "__main__":
@@ -272,10 +257,6 @@ if __name__ == "__main__":
     torch.manual_seed(1)
     # torch.autograd.set_detect_anomaly(True)
     # torch.use_deterministic_algorithms(True)
-
-    # true_pde()
-
-
 
     trainer = Trainer()
     trainer.train_model()

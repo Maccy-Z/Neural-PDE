@@ -38,7 +38,7 @@ class ConfigFVM:
 
     # Physical parameters
     T_0: float = 100        # Reference temperature
-    viscosity: float = 50e-5     # At room temp
+    viscosity: float = 3e-3     # At reference temp
     visc_bulk: float = 50e-5
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant

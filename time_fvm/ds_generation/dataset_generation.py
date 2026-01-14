@@ -5,7 +5,7 @@ import pickle
 from cprint import c_print
 
 from base_cfg import BASE_DIR
-from time_fvm.ds_generation.downsampling3 import adaptive_remesh
+from time_fvm.ds_generation.downsampling import adaptive_remesh
 from time_fvm.sparse_utils import plot_interp_cell, plot_interp_vertex
 
 
@@ -49,7 +49,7 @@ class AveragedGraphs:
         return mean_cells.float(), mean_bc.float()
 
 
-def main(save_name=f'12-18_18-27-06'):
+def main(save_name=f'01-14_21-08-43'):
     """
     Plot out the saved mesh and time step data.
     """
@@ -75,7 +75,7 @@ def main(save_name=f'12-18_18-27-06'):
         t, cell_primitives, bc_primitives = load_step(file_path)
 
         # print(f'{t = }')
-        if t > 1: # Skip initial transients
+        if t > 1.: # Skip initial transients
             averaged_graphs.add_step(cell_primitives, bc_primitives)
     mean_cells, mean_bc = averaged_graphs.get_average()
     mean_cells_norm = (mean_cells - mean_cells.mean(dim=0, keepdim=True)) / (mean_cells.std(dim=0, keepdim=True) + 1e-12)
@@ -85,7 +85,7 @@ def main(save_name=f'12-18_18-27-06'):
     new_points, new_triangles, Us_new, bc_p_tags, bc_edges = adaptive_remesh(
         points=mesh_props['vertices'],
         triangles=mesh_props['triangles'],
-        u_cells=mean_cells_norm[:, :3],   # Use x-velocity for adaptivity
+        u_cells=mean_cells_norm,   # Use x-velocity for adaptivity
         bc_tags=bc_edge_tags,
         bc_edges=bc_edges,
         p_power=1.0, floor=0.5, g_quant=0.95,
@@ -119,7 +119,7 @@ def main(save_name=f'12-18_18-27-06'):
     new_points, new_triangles = torch.from_numpy(new_points).float(), torch.from_numpy(new_triangles)
     Us_new = torch.from_numpy(Us_new).float()
     c_print(f'N points: {new_points.shape[0]}, N bcs: {bc_edges.shape[0]}', color="green")
-    plot_interp_vertex(new_points, Us_new.T[:3], new_triangles, title='Adaptively remeshed x-velocity', edgecolors="k")
+    plot_interp_vertex(new_points, Us_new.T[:3], new_triangles, title='Adaptively remeshed')#, edgecolors="k")
 
 
 if __name__ == '__main__':

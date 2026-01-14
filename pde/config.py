@@ -119,7 +119,7 @@ class Config:
     N: tuple[int] = (100, 125)
     # Derivative settings
     max_degree: int = 2     # Max degree of derivative to compute
-    grad_neigh: int = 20    # Number of neighbors to use for gradient computations
+    grad_neigh: int = 16    # Number of neighbors to use for gradient computations
 
     # Forward PDE solver config
     fwd_cfg: FwdConfig = field(default_factory=FwdConfig)
@@ -129,12 +129,16 @@ class Config:
 
     # Training settings
     N_steps = 2001
-    mup_lr = 0.02
+    mup_lr = 0.01
     mup_betas = (0.9, 0.99)
     mup_wd = 1e-4
     scalar_lr = 0.001
 
-    clip_norm = 0.5
+    clip_norm = 0.75
+
+    # Learning rate schedule
+    warmup_steps = 100
+    min_lr_ratio = 0.1  # Minimum learning rate as a fraction of initial lr
 
     N_print = 50
     N_valid = 100

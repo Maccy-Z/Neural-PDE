@@ -1,95 +1,176 @@
+import math
 import numpy as np
 from collections import defaultdict
 from scipy.interpolate import LinearNDInterpolator, NearestNDInterpolator
 from meshpy.triangle import MeshInfo, build
+from shapely.geometry import Point, Polygon
+from shapely.prepared import prep
 
 
-def weighted_poisson_points_fast(
-    P, w, n_samples, r0, seed=None, max_trials=300000, batch=4096
-):
+def poisson_disk_variable_r(polygon, r_of, r_min, r_max, clearance_of=None, k=30, seed=0):
+    """
+    Bridson-style Poisson disk sampling with variable radius r(p).
+    Enforces separation: ||p-q|| >= 0.5*(r(p)+r(q))
+    Optionally enforces boundary clearance: dist(p, polygon.boundary) >= clearance_of(p)
+
+    Args:
+        polygon: shapely Polygon object (supports holes)
+        r_of: function that returns radius at point p (tuple or array)
+        r_min: minimum radius globally
+        r_max: maximum radius globally
+        clearance_of: optional function returning clearance distance at point p
+        k: number of attempts per active point
+        seed: random seed
+
+    Returns:
+        (N, 2) array of sampled points
+    """
     rng = np.random.default_rng(seed)
+    minx, miny, maxx, maxy = polygon.bounds
 
-    P = np.asarray(P, float)
-    if P.ndim != 2 or P.shape[1] != 2:
-        raise ValueError("P must have shape (N, 2).")
-    N = P.shape[0]
+    # Prepare geometry for faster containment checks (5-10x speedup)
+    prepared_polygon = prep(polygon)
 
-    w = np.asarray(w, float)
-    w = np.clip(w, 1e-12, None)
-    p = w / w.sum()
-    cdf = np.cumsum(p)
-    w_mean = w.mean()
+    # Grid based on global r_min (safe)
+    cell = r_min / math.sqrt(2)
+    inv_cell = 1.0 / cell
+    gw = int(math.ceil((maxx - minx) * inv_cell))
+    gh = int(math.ceil((maxy - miny) * inv_cell))
+    grid = -np.ones((gh, gw), dtype=int)
 
-    radii = r0 / np.sqrt(w / w_mean)
+    # Use numpy array for points instead of list for faster indexing
+    pts = np.empty((10000, 2), dtype=float)  # Pre-allocate, will grow if needed
+    n_pts = 0
+    active = []
 
-    r_min = float(radii.min())
-    cell_size = r_min / np.sqrt(2.0)
-    if not np.isfinite(cell_size) or cell_size <= 0:
-        cell_size = r0 / np.sqrt(2.0)
-    inv_cell = 1.0 / cell_size
+    # Cache for r_of values to avoid recomputation
+    r_cache = np.empty(10000, dtype=float)
 
-    grid = {}
-    selected_idx = []
-    selected_xy = []
+    def grid_coords(px, py):
+        gx = int((px - minx) * inv_cell)
+        gy = int((py - miny) * inv_cell)
+        return gx, gy
 
-    def cell_of(x0, x1):
-        return (int(np.floor(x0 * inv_cell)), int(np.floor(x1 * inv_cell)))
+    def far_enough_from_boundary(px, py):
+        if clearance_of is None:
+            return True
+        # Avoid creating Point object - use prepared geometry if available
+        p_point = Point(px, py)
+        return p_point.distance(polygon.boundary) >= float(clearance_of((px, py)))
 
-    trials = 0
-    while trials < max_trials and len(selected_idx) < n_samples:
-        k = min(batch, max_trials - trials)
-        u = rng.random(k)
-        cand = np.searchsorted(cdf, u, side="right")
-        trials += k
+    def too_close(px, py, rp):
+        # Conservative scan radius to not miss conflicts
+        scan_R = 0.5 * (rp + r_max)
+        n = int(math.ceil(scan_R * inv_cell))
 
-        for i in cand:
-            if len(selected_idx) >= n_samples:
+        gx, gy = grid_coords(px, py)
+        x0, x1 = max(gx - n, 0), min(gx + n + 1, gw)
+        y0, y1 = max(gy - n, 0), min(gy + n + 1, gh)
+
+        # Vectorized approach: collect all valid point indices first
+        grid_slice = grid[y0:y1, x0:x1]
+        valid_mask = grid_slice >= 0
+
+        if not np.any(valid_mask):
+            return False
+
+        # Get all valid point indices
+        point_indices = grid_slice[valid_mask]
+
+        # Vectorized distance computation
+        neighbor_pts = pts[point_indices]
+        dx = neighbor_pts[:, 0] - px
+        dy = neighbor_pts[:, 1] - py
+        dist_sq = dx*dx + dy*dy
+
+        # Vectorized minimum separation check
+        neighbor_radii = r_cache[point_indices]
+        min_sep = 0.5 * (rp + neighbor_radii)
+        min_sep_sq = min_sep * min_sep
+
+        return np.any(dist_sq < min_sep_sq)
+
+    # Initial point - generate batch to improve polygon.contains performance
+    batch_size = 100
+    for attempt in range(200):  # 200 * 100 = 20000 max attempts
+        candidates = rng.uniform([minx, miny], [maxx, maxy], size=(batch_size, 2))
+
+        for px, py in candidates:
+            p_point = Point(px, py)
+            if prepared_polygon.contains(p_point) and far_enough_from_boundary(px, py):
+                pts[0] = [px, py]
+                r_cache[0] = float(r_of((px, py)))
+                n_pts = 1
+                active.append(0)
+                gx, gy = grid_coords(px, py)
+                if 0 <= gx < gw and 0 <= gy < gh:
+                    grid[gy, gx] = 0
                 break
+        if n_pts > 0:
+            break
 
-            x0, x1 = float(P[i, 0]), float(P[i, 1])
-            ri = float(radii[i])
-            ri2 = ri * ri
+    if n_pts == 0:
+        return np.empty((0, 2), dtype=float)
 
-            gx, gy = cell_of(x0, x1)
-            m = int(np.ceil(ri * inv_cell))
+    # Main loop
+    while active:
+        # Pick random active point
+        active_pick = rng.integers(0, len(active))
+        a_idx = active[active_pick]
+        base_x, base_y = pts[a_idx]
+        r_base = r_cache[a_idx]
+        found = False
 
-            ok = True
-            for dx in range(-m, m + 1):
-                for dy in range(-m, m + 1):
-                    lst = grid.get((gx + dx, gy + dy))
-                    if not lst:
-                        continue
-                    for j in lst:
-                        y0, y1 = selected_xy[j]
-                        d0 = x0 - y0
-                        d1 = x1 - y1
-                        if d0 * d0 + d1 * d1 < ri2:
-                            ok = False
-                            break
-                    if not ok:
-                        break
-                if not ok:
-                    break
+        # Generate k candidate points at once
+        angles = rng.uniform(0.0, 2.0 * math.pi, k)
+        radii = rng.uniform(r_base, 2.0 * r_base, k)
 
-            if ok:
-                selected_idx.append(int(i))
-                selected_xy.append((x0, x1))
-                j = len(selected_xy) - 1
-                grid.setdefault((gx, gy), []).append(j)
+        for ang, rad in zip(angles, radii):
+            px = base_x + rad * math.cos(ang)
+            py = base_y + rad * math.sin(ang)
 
-    return np.array(selected_idx, dtype=int)
+            # Bounds check
+            if not (minx <= px <= maxx and miny <= py <= maxy):
+                continue
 
+            # Polygon containment check (most expensive - use prepared geometry)
+            if not prepared_polygon.contains(Point(px, py)):
+                continue
 
-def _sample_in_tri(tri_pts, r1, r2):
-    s = np.sqrt(r1)
-    l1 = 1.0 - s
-    l2 = s * r2
-    l3 = s * (1.0 - r2)
-    return (
-        l1[..., None] * tri_pts[0]
-        + l2[..., None] * tri_pts[1]
-        + l3[..., None] * tri_pts[2]
-    )
+            # Get radius for this point
+            rp = float(r_of((px, py)))
+
+            # Boundary clearance
+            if clearance_of is not None:
+                if not far_enough_from_boundary(px, py):
+                    continue
+
+            # Check separation from existing points
+            if too_close(px, py, rp):
+                continue
+
+            # Accept point
+            # Grow arrays if needed
+            if n_pts >= len(pts):
+                pts = np.resize(pts, (len(pts) * 2, 2))
+                r_cache = np.resize(r_cache, len(r_cache) * 2)
+
+            pts[n_pts] = [px, py]
+            r_cache[n_pts] = rp
+            active.append(n_pts)
+            gx, gy = grid_coords(px, py)
+            if 0 <= gx < gw and 0 <= gy < gh:
+                grid[gy, gx] = n_pts
+            n_pts += 1
+            found = True
+            break
+
+        if not found:
+            # Remove from active list efficiently (swap with last)
+            active[active_pick] = active[-1]
+            active.pop()
+
+    return pts[:n_pts].copy()
 
 
 def _tri_centroids_and_areas(points, triangles):
@@ -144,31 +225,38 @@ def _cell_gradient_magnitude(cell_pts, u_cells, neighbors):
     return grad_mag
 
 
-def _sampling_prob_from_gradient(grad_mag, cell_areas, *, p_power=1.0, floor=0.1, g_quant=0.95):
-    g_norm = grad_mag / np.quantile(grad_mag, g_quant)
-    rho = floor + (1.0 - floor) * (g_norm ** p_power)
-    weights = rho * cell_areas
-    return weights / weights.sum()
+def _sample_interior_points(polygon, grad_mag, r_min, r_max, *, p_power=1.0, floor=0.1, clearance_of=None, seed=None):
+    """
+    Sample interior points using Poisson disk sampling with variable radius based on gradient.
 
+    Args:
+        polygon: shapely Polygon object defining the domain (with holes)
+        grad_mag: interpolator or callable that returns gradient magnitude at a point
+        r_min: minimum radius for sampling
+        r_max: maximum radius for sampling
+        p_power: gradient weighting power
+        floor: minimum relative density
+        clearance_of: optional function returning clearance distance at point p
+        seed: random seed
 
-def _sample_interior_points(points, triangles, cell_pts, prob, n_vertices_new, *, seed=None, r0=0.02):
-    rng = np.random.default_rng(seed)
+    Returns:
+        (N, 2) array of sampled interior points
+    """
+    # Create a radius function based on gradient magnitude
+    # Higher gradient -> smaller radius -> denser sampling
+    def r_of(p):
+        g = grad_mag(p)
+        # Normalize gradient (simple approach)
+        g_norm = max(0.0, min(1.0, g))  # Clamp to [0, 1]
+        # Invert: high gradient -> small radius
+        rho = floor + (1.0 - floor) * (1.0 - g_norm ** p_power)
+        return r_min + (r_max - r_min) * rho
 
-    selected_cells = weighted_poisson_points_fast(
-        cell_pts, prob, n_vertices_new, r0, seed=seed
+    # Sample using Poisson disk
+    interior_pts = poisson_disk_variable_r(
+        polygon, r_of=r_of, r_min=r_min, r_max=r_max,
+        clearance_of=clearance_of, k=30, seed=seed
     )
-
-    n_sel = int(selected_cells.size)
-    if n_sel == 0:
-        return np.empty((0, 2), dtype=float)
-
-    r1 = rng.random(n_sel)
-    r2 = rng.random(n_sel)
-
-    interior_pts = np.empty((n_sel, 2), dtype=float)
-    for k, ci in enumerate(selected_cells):
-        tri_vertices = points[triangles[ci]]
-        interior_pts[k] = _sample_in_tri(tri_vertices, r1[k], r2[k])
 
     return interior_pts
 
@@ -642,7 +730,6 @@ def adaptive_remesh(
     points,
     triangles,
     u_cells,
-    n_vertices_new,
     bc_edges,
     bc_tags,
     *,
@@ -650,25 +737,28 @@ def adaptive_remesh(
     floor=0.1,
     g_quant=0.95,
     seed=None,
-    r0=0.02,
+    r_min=0.01,
+    r_max=0.1,
     boundary_keep_ratio=0.5,
     boundary_min_points=8,
     holes=None,
 ):
-    """     Adaptive remeshing based on solution gradient.
+    """
+    Adaptive remeshing based on solution gradient using simplified Poisson disk sampling.
+
     Args:
         points: (N, 2) current mesh vertices
         triangles: (M, 3) current triangulation
         u_cells: (M, d) solution values at cell centers
-        n_vertices_new: target number of interior vertices
         bc_edges: (K, 2) boundary edges [v1_idx, v2_idx] (indices into points)
         bc_tags: list of K string tags corresponding to each boundary edge
         ----- Mesh adaptivity parameters -----
         p_power: gradient weighting power
-        floor: minimum sampling probability
+        floor: minimum sampling density (0 to 1)
         g_quant: gradient quantile for normalization
         seed: random seed
-        r0: base Poisson disk radius
+        r_min: minimum radius for Poisson sampling (dense regions)
+        r_max: maximum radius for Poisson sampling (coarse regions)
         boundary_keep_ratio: fraction of boundary vertices to keep
         boundary_min_points: minimum boundary points per tag group
         holes: optional (H, 2) array of hole seed points (if None, auto-detect from mesh)
@@ -680,6 +770,7 @@ def adaptive_remesh(
         final_bc_tags: preserved boundary tags (one tag per boundary point)
         new_bc_edges: new boundary edges (indices into new_points)
     """
+
 
     points = np.asarray(points, float)
     triangles = np.asarray(triangles, int)
@@ -706,17 +797,20 @@ def adaptive_remesh(
     # 4) |∇u| per cell
     grad_mag = _cell_gradient_magnitude(cell_pts, u_cells, neighbors)
 
-    # 5) Sampling probability
-    prob = _sampling_prob_from_gradient(
-        grad_mag, cell_areas, p_power=p_power, floor=floor, g_quant=g_quant
-    )
+    # 5) Create gradient magnitude interpolator (for use in sampling)
+    # Normalize gradient for use in radius function
+    g_max = np.quantile(grad_mag, g_quant)
+    grad_mag_norm = np.clip(grad_mag / (g_max + 1e-12), 0.0, 1.0)
 
-    # 6) Sample interior points
-    interior_pts = _sample_interior_points(
-        points, triangles, cell_pts, prob, n_vertices_new, seed=seed, r0=r0
-    )
+    # Create interpolator for normalized gradient
+    from scipy.interpolate import LinearNDInterpolator
+    grad_interp_lin = LinearNDInterpolator(cell_pts, grad_mag_norm, fill_value=0.0)
 
-    # 7) Subsample boundary edges
+    def grad_interp(p):
+        val = float(grad_interp_lin(p))
+        return val
+
+    # 6) Subsample boundary edges first
     new_bc_points, new_bc_tags, bc_edges_for_pslg, bc_edge_tags = _subsample_boundary_edges(
         points,
         bc_edges,
@@ -725,21 +819,106 @@ def adaptive_remesh(
         boundary_min_points=boundary_min_points,
     )
 
-    # 8) Build PSLG and triangulate
-    # Use edges and edge tags directly from _subsample_boundary_edges
+    # 7) Build shapely Polygon from boundary loops
+    # Extract boundary loops from the subsampled boundary
+    loops = _extract_boundary_loops_from_boundary_points(new_bc_points, bc_edges_for_pslg)
+
+    if len(loops) == 0:
+        raise RuntimeError("No boundary loops detected from subsampled boundary")
+
+    # Separate outer boundary and holes
+    if len(loops) > 1:
+        outer_loop_coords = loops[0]  # Assume first is outer
+        hole_coords = loops[1:]
+        polygon = Polygon(shell=outer_loop_coords, holes=hole_coords)
+    else:
+        outer_loop_coords = loops[0]
+        polygon = Polygon(shell=outer_loop_coords)
+
+    # 8) Sample interior points using Poisson disk with gradient-based variable radius
+    # Optional: add boundary clearance
+    def clearance_of(p):
+        # Clearance proportional to local radius
+        g = grad_interp(p)
+        rho = floor + (1.0 - floor) * (1.0 - g ** p_power)
+        r_local = r_min + (r_max - r_min) * rho
+        return 0.75 * r_local  # Keep points away from boundary
+
+    interior_pts = _sample_interior_points(
+        polygon, grad_interp, r_min, r_max,
+        p_power=p_power, floor=floor,
+        clearance_of=clearance_of, seed=seed
+    )
+
+    # 9) Build PSLG and triangulate
     A = _build_pslg_from_boundary(new_bc_points, bc_edges_for_pslg, interior_pts,
                                    bc_point_tags=new_bc_tags, bc_edge_tags=bc_edge_tags, holes=holes)
     new_points, new_triangles, new_bc_edges, new_point_tags = _triangulate_pslg(A, opts="pq")
 
-    # 9) Interpolate solution
+    # 10) Interpolate solution
     u_nodes_new = _interpolate_with_nan_fix(cell_pts, u_cells, new_points)
-
 
     return (
         new_points,
         new_triangles,
         u_nodes_new,
-        # final_bc_vertex_ids,
         new_point_tags,
         new_bc_edges,
     )
+
+
+def _extract_boundary_loops_from_boundary_points(bc_points, bc_edges):
+    """
+    Extract boundary loops as coordinate arrays from boundary points and edges.
+
+    Args:
+        bc_points: (N, 2) array of boundary vertex coordinates
+        bc_edges: (M, 2) array of boundary edge indices
+
+    Returns:
+        loops: list of (K, 2) arrays, each containing coordinates of a closed loop
+    """
+    if len(bc_edges) == 0:
+        return []
+
+    # Build adjacency
+    adj = defaultdict(list)
+    for a, b in bc_edges:
+        adj[a].append(b)
+        adj[b].append(a)
+
+    visited_edges = set()
+
+    def edge_key(i, j):
+        return (min(i, j), max(i, j))
+
+    loops = []
+    for start in list(adj.keys()):
+        if all(edge_key(start, nb) in visited_edges for nb in adj[start]):
+            continue
+
+        loop = [start]
+        curr = start
+
+        while True:
+            next_v = None
+            for nb in adj[curr]:
+                ek = edge_key(curr, nb)
+                if ek not in visited_edges:
+                    next_v = nb
+                    visited_edges.add(ek)
+                    break
+
+            if next_v is None or next_v == start:
+                break
+
+            loop.append(next_v)
+            curr = next_v
+
+        if len(loop) >= 3:
+            # Convert indices to coordinates
+            loop_coords = bc_points[loop]
+            loops.append(loop_coords)
+
+    return loops
+

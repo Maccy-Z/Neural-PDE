@@ -67,10 +67,15 @@ class UValues:
         self.Xs = Xs
         self.Us = Us
 
+    # @torch.no_grad()
+    # def cuda(self):
+    #     self.Us = self.Us.cuda(non_blocking=True)
+    #     self.Xs = self.Xs.cuda(non_blocking=True)
     @torch.no_grad()
-    def cuda(self):
-        self.Us = self.Us.cuda(non_blocking=True)
-        self.Xs = self.Xs.cuda(non_blocking=True)
+    def to(self, device):
+        self.Us = self.Us.to(device)
+        self.Xs = self.Xs.to(device)
+
 
     def clone(self):
         return UValues(self.Xs.clone(), self.Us.clone())
@@ -251,14 +256,14 @@ class UGraph:
         Us_test[self.dirich_mask] = self.bc_calc.dirich_bc_vals()
         return UValues(Us_old.Xs, Us_test)
 
-    def zero_grid_like(self, Us_old) -> UValues:
+    def zero_grid_like(self, Us_old: UValues) -> UValues:
         """ Get Us_zeros like Us_old with all zeros (except BCs). """
         zeros = torch.zeros_like(Us_old.Us)
         Us_zeros = UValues(Us_old.Xs, zeros)
         self.set_grid(zeros, Us_zeros)
         return Us_zeros
 
-    def smooth_grid_like(self, Us_old):
+    def smooth_grid_like(self, Us_old: UValues):
         """ Smooth initial data on the grid. """
 
         def kernel_weighted_sum(X_known, U_known, X_query, sigma=0.1, eps=1e-12):
@@ -324,8 +329,8 @@ def setup_graph(setup_dict: dict[int, Point], tri, N_comp, grad_neigh, max_degre
     """ Create UGraph and UValues. """
     U_graph = UGraph(setup_dict, N_comp, grad_neigh, max_degree=max_degree, tri=tri, device=device)
 
-    Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32).to(device)
+    #Xs = torch.stack([point.X for point in setup_dict.values()]).to(torch.float32).to(device)
     Us = torch.tensor([point.value for point in setup_dict.values()], dtype=torch.float32, device=device)
 
-    Us_values = UValues(Xs, Us)
+    Us_values = U_graph.new_grid(Us)
     return U_graph, Us_values

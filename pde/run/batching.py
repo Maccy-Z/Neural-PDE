@@ -25,7 +25,6 @@ class GraphSample:
 
     def update_Us_all(self, Us_preds: list[UValues]):
         """ Update all saved Us. """
-        assert len(Us_preds) == len(self.Us_saved), f"Number of predicted Us must match number of saved Us, {len(Us_preds)} != {len(self.Us_saved)}"
         self.Us_saved = Us_preds
 
     def get_Us_sample(self, i) -> tuple[UGraph, UValues, UValues]:
@@ -33,11 +32,11 @@ class GraphSample:
         """
         # TODO: implement sampling strategy
         if i % 51 == 0:
-            Us_step = self.U_graph.smooth_grid_like(self.Us_true)  # U_graph.set_grid(torch.zeros_like(Us_true), U_values)
+            Us_step = self.U_graph.smooth_grid_like(self.Us_true)
         elif i % 11 == 0:
-            Us_step = self.Us_true  # U_graph.set_grid(Us_true, U_values)
+            Us_step = self.Us_true
         else:
-            Us_step = self.Us_saved[-1]  # U_graph.set_grid(Us_init, U_values)
+            Us_step = self.Us_saved[-1]
 
         return self.U_graph, self.Us_true, Us_step
 

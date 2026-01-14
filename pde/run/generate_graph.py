@@ -4,7 +4,6 @@ import torch
 from cprint import c_print
 import pickle
 
-from pde.utils import ARTEFACT_DIR
 from pde.graph_grid.graph_store import Point, Deriv
 from pde.graph_grid.graph_store import P_Types as PT
 from pde.graph_grid.U_graph import UGraph, setup_graph, UValues
@@ -157,7 +156,7 @@ def mesh_graph(cfg) -> tuple[UGraph, UValues]:
     N_comp = 3
     # Xs, triangles, (int_edges, bc_edges), p_tags = gen_points_full()
     Xs, triangles, (_, bc_edges), p_tags = gen_mesh_random()
-    plot_helper(Xs, p_tags)
+    # plot_helper(Xs, p_tags)
 
     Xs = torch.from_numpy(Xs).float()
     triangles = torch.from_numpy(triangles).int()
@@ -223,6 +222,8 @@ def mesh_graph(cfg) -> tuple[UGraph, UValues]:
 
 
 def load_ds_graph(file, cfg: Config) -> tuple[UGraph, UValues]:
+    N_comp = 3
+
     with open(file, 'rb') as f:
         ds: dict = pickle.load(f)
 
@@ -230,7 +231,7 @@ def load_ds_graph(file, cfg: Config) -> tuple[UGraph, UValues]:
     triangles = ds['triangles']         # shape = (N_tri, 3)
     bc_edges = ds['bc_edges']           # shape = (N_bc_edges, 2)
     p_tags = ds['p_tags']               # shape = (N_bc_edges,)
-    Us_true = ds['Us']                  # shape = (N_us_tot, N_comp)
+    Us_true = ds['Us'][:, :N_comp]                  # shape = (N_us_tot, N_comp)
 
     # Xs, triangles, (_, bc_edges), p_tags = gen_mesh_random()
     for i, (X, _) in enumerate(zip(Xs, p_tags)):
@@ -250,58 +251,48 @@ def load_ds_graph(file, cfg: Config) -> tuple[UGraph, UValues]:
     Us_true = torch.from_numpy(Us_true).float()
     triangles = torch.from_numpy(triangles).int()
 
-    N_comp = 3
-
     # Process boundary points
     normals = boundary_normals(Xs, triangles, bc_edges)
 
     Xs_all = {}
     for i, (X, tag, U) in enumerate(zip(Xs, p_tags, Us_true)):
         x, y = X
-        value = U.tolist() #[0 * x for _ in range(N_comp)]
+        U_value = U.tolist() #[0 * x for _ in range(N_comp)]
 
         if tag == "Normal":
-            Xs_all[i] = Point(PT.Normal, X, value=value)
+            Xs_all[i] = Point(PT.Normal, X, value=U_value)
             continue
 
         # Boundary conditions
         n_hat = normals[i].tolist()
-        # wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1, 1, 0], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (1, 1), (2, 0), (0, 2), (1, 1)], value=0,
-        #       weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[0], n_hat[1], n_hat[1], n_hat[1]])
         wall_deriv = Deriv(comp=[2, 2, 0, 0, 1, 1], orders=[(1, 0), (0, 1), (2, 0), (0, 2), (2, 0), (0, 2)], value=0,
                            weights=[-n_hat[0], -n_hat[1], n_hat[0], n_hat[0], n_hat[1], n_hat[1]])
 
         if tag == "Navier_wall" or tag == "NavierWall":
-            deriv = [Deriv(comp=[0], orders=[(0, 0)], value=0.),
-                     Deriv(comp=[1], orders=[(0, 0)], value=0.),
+            deriv = [Deriv(comp=[0], orders=[(0, 0)], value=U_value[0]),
+                     Deriv(comp=[1], orders=[(0, 0)], value=U_value[1]),
+                     # Pressure
                      wall_deriv
                      ]
-            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=U_value, derivatives=deriv)
 
         elif tag == "wall_left" or tag == "Left":
             deriv = [
-                # Deriv(comp=[0, 1], orders=[(1, 0), (0, 1)], value=0.),
-                wall_deriv,
-                # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
-                Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
-
+                Deriv(comp=[0], orders=[(0, 0)], value=U_value[0]),
+                Deriv(comp=[1], orders=[(1, 0)], value=U_value[1]),
                 # Pressure
-                Deriv(comp=[2], orders=[(0, 0)], value=2.),
+                Deriv(comp=[2], orders=[(0, 0)], value=U_value[2]),
             ]
-            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=[0, 0, 1], derivatives=deriv)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=[0, 0, 0.], derivatives=deriv)
 
         elif tag == "wall_right" or tag == "Right":
             deriv = [
-                # Deriv(comp=[0], orders=[(1, 0)], value=0., weights=[1]),
-                # Deriv(comp=[1, 0], orders=[(1, 0), (0, 1)], value=0, weights=[1, 1]),
-                wall_deriv,
-
-                # Deriv(comp=[2, 1, 1], orders=[(0, 1), (2, 0), (0, 2)], value=0, weights=[-1, 1, 1]),
-                Deriv(comp=[1], orders=[(1, 0)], value=0, weights=[1]),
+                Deriv(comp=[0], orders=[(0, 0)], value=U_value[0]),
+                Deriv(comp=[1], orders=[(0, 0)], value=U_value[1]),
                 # Pressure
-                Deriv(comp=[2], orders=[(0, 0)], value=0.),
+                Deriv(comp=[2], orders=[(0, 0)], value=U_value[2]),
             ]
-            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=value, derivatives=deriv)
+            Xs_all[i] = Point(PT.NeumOffsetBC, X, value=U_value, derivatives=deriv)
 
         else:
             raise ValueError(f"Unknown point tag {tag}")

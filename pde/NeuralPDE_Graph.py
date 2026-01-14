@@ -46,22 +46,22 @@ class NeuralPDEGraph:
         Us_history, converged = self.newton_solver.find_root(pde_calc, U_graph, Us, aux_input, U_graph.solver_opts['fwd'])
         return Us_history, converged
 
-    def adjoint_solve(self, Us: UValues):
-        """ Solve for adjoint. Call self.backward to get gradients, using adjoints. """
-        adjoint, loss = self.pde_adjoint.adjoint_solve(self.pde_calc, Us, Us)
-        self.adjoint = adjoint
-        return loss
-
-    def backward(self):
-        """ Once adjoint is calculated, backpropagate through PDE to get gradients.
-            dL/dP = - adjoint * df/dP
-         """
-        residuals = self.pde_adjoint.backpropagate(self.pde_calc, self.adjoint)  # Shape = [N, ..., Nparams]
-
-        # Delete adjoint to stop reuse.
-        self.adjoint = None
-
-        return residuals
+    # def adjoint_solve(self, Us: UValues):
+    #     """ Solve for adjoint. Call self.backward to get gradients, using adjoints. """
+    #     adjoint, loss = self.pde_adjoint.adjoint_solve(self.pde_calc, Us, Us)
+    #     self.adjoint = adjoint
+    #     return loss
+    #
+    # def backward(self):
+    #     """ Once adjoint is calculated, backpropagate through PDE to get gradients.
+    #         dL/dP = - adjoint * df/dP
+    #      """
+    #     residuals = self.pde_adjoint.backpropagate(self.pde_calc, self.adjoint)  # Shape = [N, ..., Nparams]
+    #
+    #     # Delete adjoint to stop reuse.
+    #     self.adjoint = None
+    #
+    #     return residuals
 
     def single_step(self, U_graph: UGraph, Us_current: UValues, Us_true: UValues):
         """ Perform a single step of the Newton solver and compute the exact derivative:
