@@ -5,7 +5,7 @@ from mesh_gen.geometries import Line, Ellipse, Nozzle, Circle
 from mesh_gen.create_mesh import create_mesh
 
 
-def gen_mesh_fvm(areas, cell_lnscale=2):
+def gen_mesh_nozzle(areas, cell_lnscale=2):
     xmin, xmax = -0.25, 6
     ymin, ymax = -2.25, 1.5
 

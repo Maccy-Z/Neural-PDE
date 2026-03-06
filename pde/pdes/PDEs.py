@@ -130,16 +130,47 @@ class NNFunc(PDEFunc):
     def __init__(self, cfg, norm_mean, norm_std, device='cuda'):
         super().__init__(cfg=cfg, device=device)
 
-        self.mlp: MLP_mup = get_MLP_mup(in_dim=8, out_dim=3, width=1024, n_hidden=1, activation=F.relu, zero_out=True)
+        self.mlp: MLP_mup = get_MLP_mup(in_dim=18, out_dim=3, width=1024, n_hidden=2, activation=F.relu, zero_out=True)
         # self.mlp = MLP(in_dim=8, out_dim=3, width=32, n_hidden=0, activation=F.leaky_relu)
 
         mu = torch.tensor(1, device=device, dtype=torch.float32)
         self.other_params = nn.ParameterDict({"mu": torch.nn.Parameter(mu)})
 
-
         self.to(device)
         self.norm_mean = norm_mean
         self.norm_std = norm_std
+
+
+    # def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):#
+    #     """ us_dus.shape = (BS)[N_grads+1, N_vector] """
+    #     mu = self.other_params['mu']
+    #
+    #     # Rescale input equations
+    #     u_dus = (u_dus - self.norm_mean) / self.norm_std
+    #
+    #     u = u_dus[0]
+    #     dudx, dudy = u_dus[1], u_dus[2]
+    #     d2udx2, d2udy2 = u_dus[3], u_dus[5]
+    #
+    #     # Base residual
+    #     laplace_Vx = d2udx2[0] + d2udy2[0]
+    #     laplace_Vy = d2udx2[1] + d2udy2[1]
+    #     dpdx = dudx[2]
+    #     dpdy = dudy[2]
+    #
+    #     resid_x = laplace_Vx
+    #     resid_y = laplace_Vy
+    #
+    #     divergence = d2udx2[2] + d2udy2[2]
+    #
+    #     resid = torch.stack([resid_x, resid_y, divergence], dim=-1)
+    #
+    #     # Neural Network component
+    #     # in_state = torch.stack([u[0], u[1], dudx[0], dudx[1], d2udx2[0], d2udx2[1], d2udy2[0], d2udy2[1]], dim=0)
+    #     in_state = u_dus.flatten() # [(N_grads+1)*N_vector]
+    #     f = self.mlp(in_state)
+    #     resid = resid + f
+    #     return resid
 
 
     def forward(self, u_dus: torch.Tensor, Xs: torch.Tensor, aux_input=None):#
@@ -168,8 +199,8 @@ class NNFunc(PDEFunc):
 
         # Neural Network component
         # in_state = torch.stack([advect_x, advect_y], dim=0)
-        in_state = torch.stack([u[0], u[1], dudx[0], dudx[1], d2udx2[0], d2udx2[1], d2udy2[0], d2udy2[1]], dim=0)
-
+        #in_state = torch.stack([u[0], u[1], dudx[0], dudx[1], d2udx2[0], d2udx2[1], d2udy2[0], d2udy2[1]], dim=0)
+        in_state = u_dus.flatten()
         f = self.mlp(in_state)  # [3]
         resid = resid + f
         return resid

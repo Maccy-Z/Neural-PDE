@@ -63,7 +63,7 @@ amgx_cfg = {
 @dataclass
 class FwdConfig:
     # Newton Raphson PDE solver settings
-    N_iter: int = 7
+    N_iter: int = 5
     solve_acc: float = 0.001
 
     # Forward linear solver settings
@@ -130,15 +130,15 @@ class Config:
     # Training settings
     N_steps = 2001
     mup_lr = 0.01
-    mup_betas = (0.9, 0.99)
+    mup_betas = (0.9, 0.95)
     mup_wd = 1e-4
     scalar_lr = 0.001
 
-    clip_norm = 0.75
+    clip_norm = 0.5
 
     # Learning rate schedule
     warmup_steps = 100
-    min_lr_ratio = 0.1  # Minimum learning rate as a fraction of initial lr
+    min_lr_ratio = 0.01  # Minimum learning rate as a fraction of initial lr
 
     N_print = 50
     N_valid = 100

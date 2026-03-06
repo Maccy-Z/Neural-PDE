@@ -1,4 +1,28 @@
 from dataclasses import dataclass
+from abc import ABC
+
+
+@dataclass
+class ConfigFVM(ABC):
+    N_comp: int = 4     # Number of components in the state vector (e.g., [momentum_x, momentum_y, density, energy])
+
+    # mesh parameters
+    min_A: float = float("nan")
+    max_A: float = float("nan")
+    lnscale: float = float("nan")
+
+    # Save configuration
+    plot_t: float = 0.05   # Time interval between plots
+    save_t: float = 0.5    # Time interval between saves
+    print_i: int = 500   # Iterations between print statements
+    n_iter: int = 50000     # Max number of iterations
+    end_t: float = 20       # Max simulation time.
+
+    def __post_init__(self):
+        self.exit_cfg = ConfigFarfield()
+        self.inlet_cfg = ConfigInlet()
+
+        self.R = (self.gamma - 1) * self.C_v        # specific gas constant
 
 
 @dataclass
@@ -6,7 +30,7 @@ class ConfigFarfield:
     mode: str = "farfield_blended"    # {decay, farfield, farfield_blended, adaptive, interior} BC
 
     # Farfield physical parameters
-    v_far: float = 5
+    v_far: float = 0
     rho_far: float = 1
     T_far: float = 100
 
@@ -24,15 +48,59 @@ class ConfigInlet:
     # Target inlet physical parameters
     T_nat = 100
     rho_nat = 1
-    V_x_nat = 5.5
+    V_x_nat = 0
+
 
 @dataclass
-class ConfigFVM:
+class ConfigEllipse(ConfigFVM):
     # Temporal solver parameters
     dt: float = 1e-4
 
     # mesh parameters
-    min_A: float = 0.25e-3
+    min_A: float = 0.5e-3
+    max_A: float = 1e-3
+    lnscale: float = 2
+
+    # Physical parameters
+    T_0: float = 100        # Reference temperature
+    viscosity: float = 1e-3     # At reference temp
+    visc_bulk: float = 50e-5
+    thermal_cond: float = 1e-6
+    S_const: float = 110.4       # Sutherland's constant
+
+    gamma: float = 1.2  # Ratio of specific heats
+    C_v: float = 2     # Specific heat at constant volume
+
+    # Stability parameters
+    v_factor: float = 0.1     # Clamp KT diffusion term to v_factor * c to reduce viscosity.
+    lim_p: int = 4          # Order of limiter (1 for BJ)
+    lim_K: int = 0.1
+
+    # BC parameters
+    exit_cfg: ConfigFarfield = None
+    inlet_cfg: ConfigInlet = None
+
+    # Save configuration
+    plot_t: float = 0.1   # Time interval between plots
+    save_t: float = 0.5    # Time interval between saves
+    print_i: int = 500   # Iterations between print statements
+    n_iter: int = 50000     # Max number of iterations
+    end_t: float = 20       # Max simulation time.
+
+    def __post_init__(self):
+        self.exit_cfg = ConfigFarfield()
+        self.inlet_cfg = ConfigInlet()
+
+        self.R = (self.gamma - 1) * self.C_v        # specific gas constant
+
+
+@dataclass
+class ConfigNozzle(ConfigFVM):
+    # Temporal solver parameters
+    dt: float = 1e-4
+
+    # mesh parameters
+    min_A: float = 0.5e-3
     max_A: float = 1e-3
     lnscale: float = 2
 
@@ -55,15 +123,3 @@ class ConfigFVM:
     exit_cfg: ConfigFarfield = None
     inlet_cfg: ConfigInlet = None
 
-    # Save configuration
-    plot_t: float = 0.2   # Time interval between plots
-    save_t: float = 0.1    # Time interval between saves
-    print_i: int = 500   # Iterations between print statements
-    n_iter: int = 50000     # Max number of iterations
-    end_t: float = 20       # Max simulation time.
-
-    def __post_init__(self):
-        self.exit_cfg = ConfigFarfield()
-        self.inlet_cfg = ConfigInlet()
-
-        self.R = (self.gamma - 1) * self.C_v        # specific gas constant

@@ -27,6 +27,23 @@ class GraphSample:
         """ Update all saved Us. """
         self.Us_saved = Us_preds
 
+    # def get_Us_sample(self, i) -> tuple[UGraph, UValues, UValues]:
+    #     """ Return a single sample to train on.
+    #     """
+    #     # TODO: implement sampling strategy
+    #
+    #     r = torch.rand(1).item()
+    #     if r < 0.5 == 0:
+    #         Us_step = self.U_graph.smooth_grid_like(self.Us_true)
+    #     elif r < 0.95 == 0:
+    #         n_saved = len(self.Us_saved)
+    #         j = torch.randint(0, n_saved, (1,))[0].item()
+    #         Us_step = self.Us_saved[j]
+    #     else:
+    #         Us_step = self.Us_true
+    #
+    #     return self.U_graph, self.Us_true, Us_step
+
     def get_Us_sample(self, i) -> tuple[UGraph, UValues, UValues]:
         """ Return a single sample to train on.
         """
@@ -80,7 +97,6 @@ class GraphDataset:
 
         batch_mean = torch.stack(batch_means, dim=0).mean(dim=0)
         batch_std = torch.stack(batch_stds, dim=0).mean(dim=0)
-
         return batch_mean, batch_std
 
     def __iter__(self):

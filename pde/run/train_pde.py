@@ -14,92 +14,6 @@ from pde.run.batching import GraphDataset, GraphSample
 from pde.schedulers import CosineAnnealingWarmupScheduler
 from pde.run.run_utils import MetricTracker
 
-#
-# def train_adjoint():
-#     """ Train PDE using adjoint method."""
-#     cfg = Config()
-#     U_graph, triangles = mesh_graph(cfg)
-#
-#     Us_true = torch.load("../Us_solution.pth", weights_only=True)
-#     U_graph.set_grid(Us_true)
-#     U_values = U_graph.U_values
-#     loss_fn = MSELossNorm(Us_true)
-#
-#     pde_fn = NNFunc(cfg, device=cfg.device)
-#     pde_adj = NeuralPDEGraph(pde_fn, U_graph, U_values, cfg, loss_fn=loss_fn)
-#
-#     # optim = torch.optim.SGD(pde_fn.parameters(), lr=0.01, momentum=0.9)
-#     optim = mup.MuAdamW(pde_fn.mlp.parameters(), lr=0.02, betas=(0.9, 0.99), weight_decay=1e-4)
-#     optim_other = torch.optim.Adam(pde_fn.other_params.parameters(), lr=0.005)#, betas=(0.95, 0.95))
-#
-#     pred_loss_hist = []
-#     t = time.time()
-#     for i in range(2001):
-#         U_graph.set_grid(Us_true.clone())
-#
-#         converged = pde_adj.forward_solve()
-#         loss = pde_adj.adjoint_solve()
-#         pde_adj.backward()
-#
-#         torch.nn.utils.clip_grad_value_(pde_fn.parameters(), clip_value=0.5)
-#         if i % 25 == 0:
-#             c_print(f'{i}/400 loss: {loss.detach().cpu().item():.3g}'  # , {loss.detach().cpu().item():.2g}'
-#                     , color="bright_green")
-#
-#         if i == 1000 or i == 1500:
-#             for pg in optim.param_groups:
-#                 pg['lr'] *= 0.5
-#
-#         optim.step(), optim_other.step()
-#         optim.zero_grad(), optim_other.zero_grad()
-#
-#         if i % 100 == 0:
-#             U_graph.set_grid(Us_true * 0)
-#             pde_adj.forward_solve()
-#             Us_pred = U_graph.get_all_us_Xs()[0]
-#             pred_loss = loss_fn(Us_pred, requires_grad=False)
-#             pred_loss_hist.append(pred_loss.detach().cpu().item())
-#             print(f'{pred_loss = }')
-#
-#
-#     U_graph.set_grid(Us_true)
-#     pde_adj.plot_interp(title="True solution")
-#     pde_adj.forward_solve()
-#     pde_adj.plot_interp(title="Predicted solution")
-#
-#     print(pred_loss_hist)
-#
-# def train_resid():
-#     """ Train model using residual loss only. """
-#     cfg = Config()
-#     U_graph, triangles = mesh_graph(cfg)
-#     # U_graph, triangles = mesh_heat(cfg, max_degree=1, grad_neigh=9)
-#
-#     Us_true = torch.load("../Us_solution.pth", weights_only=True)
-#     U_graph.set_grid(Us_true.clone())
-#     loss_fn = MSELoss2(Us_true)
-#
-#     pde_fn, optim, optim_other = init_setup(cfg)
-#     pde_adj = NeuralPDEGraph(pde_fn, U_graph, cfg, loss_fn, triangles)
-#
-#     for i in range(1001):
-#
-#         residuals = pde_adj.pde_calc.residuals()
-#         loss = (residuals**2).mean()
-#         loss.backward()
-#
-#         if i % 50 == 0:
-#             c_print(f'{i}/1000 loss: {loss.detach().cpu().item():.3g}', color="bright_green")
-#
-#         optim.step()#, optim_other.step()
-#         optim.zero_grad(), optim_other.zero_grad()
-#
-#     # residuals = residuals.view(-1, 3).detach()
-#     # pde_adj.plot_interp(residuals, title="Updated solution")
-#     pde_adj.plot_interp(title="Initial solution")
-#     pde_adj.forward_solve()
-#     pde_adj.plot_interp(title="Predicted solution")
-
 
 def setup(cfg: Config):
     # Load save dataset
@@ -254,7 +168,7 @@ class Trainer(torch.nn.Module):
 if __name__ == "__main__":
     setup_logging(debug=3)
     torch.set_printoptions(linewidth=120, precision=7)
-    torch.manual_seed(1)
+    torch.manual_seed(0)
     # torch.autograd.set_detect_anomaly(True)
     # torch.use_deterministic_algorithms(True)
 

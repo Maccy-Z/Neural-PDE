@@ -14,8 +14,6 @@ def convert_graph(save_file):
     """ Generate true solution using known PDE. """
     cfg = Config()
     U_graph, Us_values = load_ds_graph(save_file, cfg)
-    pde_fn = Fluid(cfg, device=cfg.device)
-    loss_fn = DummyLoss()
     U_graph.plot_interp(Us_values, title=f'FVM solution')
 
     return Us_values, U_graph

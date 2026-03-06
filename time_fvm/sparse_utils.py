@@ -2,6 +2,7 @@ import torch
 from matplotlib import pyplot as plt
 import numpy as np
 import matplotlib.tri as tri
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 def plot_points(Xs, values, lims=None, title="", show_index=False, Xlims=None):
     Xs = Xs.cpu()
@@ -57,21 +58,30 @@ def plot_interp_cell(Xs, values, triangles, Xlims=None, title="", edgecolors="no
     values = values.cpu().numpy()
     triangles = triangles.cpu().numpy()
 
-    # If values is 1D, expand to a batch of one
+    # If values is 1D, expand to a batch of one.
     values = values.squeeze()
     if len(values.shape) == 1:
         values = values[None, :]
-        fig, axes = plt.subplots(1, 1, figsize=(12, 9))
-        axes = [axes]
-    else:
-        n_plots = values.shape[0]
+
+    n_plots = values.shape[0]
+    if n_plots <= 3:
         fig, axes = plt.subplots(n_plots, 1, figsize=(8, n_plots * 6))
+    else:
+        # Use a near-square layout for larger batches.
+        n_cols = int(np.ceil(np.sqrt(n_plots)))
+        n_rows = int(np.ceil(n_plots / n_cols))
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(6 * n_cols, 5 * n_rows))
+
+    axes = np.atleast_1d(axes).ravel()
+    plot_axes = axes[:n_plots]
+    for ax in axes[n_plots:]:
+        ax.axis('off')
 
     # Create a triangulation from the vertex locations.
     triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles)
 
     if isinstance(title, str):
-        title = [title] * len(axes)
+        title = [title] * n_plots
 
     # Determine plot limits.
     if Xlims is not None:
@@ -95,7 +105,7 @@ def plot_interp_cell(Xs, values, triangles, Xlims=None, title="", edgecolors="no
     new_triang = tri.Triangulation(Xs[:, 0], Xs[:, 1], triangles=new_triangles)
 
     # Loop over each batch and plot only the triangles inside the region.
-    for i, ax in enumerate(axes):
+    for i, ax in enumerate(plot_axes):
         ax.set_title(f"{title[i]}")
         # Filter the face-based values for the triangles inside the region.
         new_facecolors = values[i][in_region]
@@ -103,7 +113,12 @@ def plot_interp_cell(Xs, values, triangles, Xlims=None, title="", edgecolors="no
         # Plot using the new triangulation and corresponding facecolors.
         tc = ax.tripcolor(new_triang, facecolors=new_facecolors, edgecolors=edgecolors,
                           cmap='viridis', shading='flat')
-        fig.colorbar(tc, ax=ax)
+
+        # Attach a dedicated colorbar axis to keep colorbar height matched to this subplot.
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="4%", pad=0.08)
+        fig.colorbar(tc, cax=cax)
+
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)
         ax.set_aspect('equal', adjustable='box')
@@ -174,7 +189,10 @@ def plot_interp_vertex(Xs, values, triangles=None, Xlims=None, title="", edgecol
         ax.set_title(f"{title[i]}")
         v = np.ma.array(values[i], mask=~vertex_mask)
         tc = ax.tripcolor(triang, v, shading='flat', cmap='viridis', edgecolors=edgecolors)
-        fig.colorbar(tc, ax=ax)
+
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="4%", pad=0.08)
+        fig.colorbar(tc, cax=cax)
 
         ax.set_xlim(xlim)
         ax.set_ylim(ylim)

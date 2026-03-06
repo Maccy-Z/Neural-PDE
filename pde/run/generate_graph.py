@@ -272,7 +272,7 @@ def load_ds_graph(file, cfg: Config) -> tuple[UGraph, UValues]:
             deriv = [Deriv(comp=[0], orders=[(0, 0)], value=U_value[0]),
                      Deriv(comp=[1], orders=[(0, 0)], value=U_value[1]),
                      # Pressure
-                     wall_deriv
+                     Deriv(comp=[2], orders=[(0, 0)], value=U_value[2])
                      ]
             Xs_all[i] = Point(PT.NeumOffsetBC, X, value=U_value, derivatives=deriv)
 
