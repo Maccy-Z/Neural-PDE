@@ -4,6 +4,7 @@ from abc import ABC
 
 @dataclass
 class ConfigFVM(ABC):
+    problem_setup: str = None    # {ellipse, nozzle}
     N_comp: int = 4     # Number of components in the state vector (e.g., [momentum_x, momentum_y, density, energy])
 
     # mesh parameters
@@ -48,22 +49,25 @@ class ConfigInlet:
     # Target inlet physical parameters
     T_nat = 100
     rho_nat = 1
-    V_x_nat = 0
+    V_x_nat = 5.5
 
+# ------------------------------- Ellipse-specific configurations -------------------------------
 
 @dataclass
 class ConfigEllipse(ConfigFVM):
+    problem_setup: str = "ellipse"    # {ellipse, nozzle}
+
     # Temporal solver parameters
     dt: float = 1e-4
 
     # mesh parameters
-    min_A: float = 0.5e-3
-    max_A: float = 1e-3
+    min_A: float = 0.25e-3
+    max_A: float = 0.5e-3
     lnscale: float = 2
 
     # Physical parameters
     T_0: float = 100        # Reference temperature
-    viscosity: float = 1e-3     # At reference temp
+    viscosity: float = 3e-3     # At reference temp
     visc_bulk: float = 50e-5
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant
@@ -93,9 +97,37 @@ class ConfigEllipse(ConfigFVM):
 
         self.R = (self.gamma - 1) * self.C_v        # specific gas constant
 
+# ------------------------------- Nozzle-specific configurations -------------------------------
+@dataclass
+class NozzleFarfield(ConfigFarfield):
+    mode: str = "farfield_blended"    # {decay, farfield, farfield_blended, adaptive, interior} BC
+
+    # Farfield physical parameters
+    v_far: float = 0
+    rho_far: float = 1
+    T_far: float = 100
+
+    # Farfield limit / simulation parameters
+    decay_tau: float = 0.05
+    beta_tau: float = 0.33
+
+    decay_beta: float = 0.1
+
+
+@dataclass
+class NozzleInlet(ConfigInlet):
+    mode: str = "inlet"
+
+    # Target inlet physical parameters
+    T_nat = 100
+    rho_nat = 1
+    V_x_nat = 0
+
 
 @dataclass
 class ConfigNozzle(ConfigFVM):
+    problem_setup: str = "nozzle"
+
     # Temporal solver parameters
     dt: float = 1e-4
 
@@ -106,7 +138,7 @@ class ConfigNozzle(ConfigFVM):
 
     # Physical parameters
     T_0: float = 100        # Reference temperature
-    viscosity: float = 3e-3     # At reference temp
+    viscosity: float = 1e-3     # At reference temp
     visc_bulk: float = 50e-5
     thermal_cond: float = 1e-6
     S_const: float = 110.4       # Sutherland's constant
@@ -123,3 +155,7 @@ class ConfigNozzle(ConfigFVM):
     exit_cfg: ConfigFarfield = None
     inlet_cfg: ConfigInlet = None
 
+    def __post_init__(self):
+        self.exit_cfg = NozzleFarfield()
+        self.inlet_cfg = NozzleInlet()
+        self.R = (self.gamma - 1) * self.C_v        # specific gas constant
